@@ -26,8 +26,9 @@ export class ClaudeCodeProvider {
     return (this._avail = { ok: true, path: p, version: (v.stdout || v.stderr).trim().split('\n')[0] });
   }
 
-  buildArgs({ system, model, mode, extraAllowedTools = [], maxTurns }) {
+  buildArgs({ system, model, mode, extraAllowedTools = [], maxTurns, addDirs = [] }) {
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+    for (const d of addDirs) args.push('--add-dir', d);   // allegati dell'utente leggibili
     if (system) args.push('--append-system-prompt', system);
     if (model) args.push('--model', model);
     if (maxTurns) args.push('--max-turns', String(maxTurns));

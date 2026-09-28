@@ -22,7 +22,7 @@ export function rosterText(agents) {
     .join('\n');
 }
 
-export function directorPlanPrompt({ req, agents, chat, projectBrief }) {
+export function directorPlanPrompt({ req, agents, chat, projectBrief, running = [] }) {
   const history = chat.map((m) => `${m.role === 'user' ? 'UTENTE' : (m.agentName || 'STUDIO')}: ${truncate(m.text, 600)}`).join('\n');
   return `Sei la Regia dello studio. Ricevi una richiesta dall'utente e decidi come gestirla.
 
@@ -38,8 +38,12 @@ ${truncate(projectBrief, 3500)}
 ## Conversazione recente
 ${history || '(nessuna)'}
 
+## Lavori già in corso (altre richieste, in parallelo)
+${running.length ? running.map((r) => `- ${r.id}: ${truncate(r.text, 160)} [${r.status}]`).join('\n') : '(nessuno)'}
+
 ## Nuova richiesta dell'utente (${req.id})
-${req.text}
+${req.continues ? `È la RISPOSTA dell'utente alla tua domanda sulla richiesta ${req.continues}. Richiesta originale: "${req.originalText}"\nRisposta: ` : ''}${req.text}
+${req.attachments?.length ? `\n## Allegati dell'utente (puoi aprirli con Read)\n${req.attachments.map((a) => `- ${a.path} (${a.type || 'file'}, ${a.name})`).join('\n')}` : ''}
 
 ## Come rispondere
 Puoi leggere i file del repository (sei nella cartella del gioco) se ti serve per capire, ma NON modificare niente.
@@ -50,7 +54,9 @@ Puoi leggere i file del repository (sei nella cartella del gioco) se ti serve pe
 - Quando cambiano personaggi, luoghi o fatti del mondo, aggiungi alla fine un task "lore" per il Custode della Bibbia (se c'è).
 - Le istruzioni di ogni task devono essere autosufficienti e concrete (file, comportamento atteso, criteri di accettazione).
 - Se la richiesta chiede di scegliere tu un miglioramento, sceglilo tu e scrivilo nelle istruzioni: non rimandare la scelta all'utente. Preferisci il più piccolo e sicuro possibile (un testo, un'indicazione a schermo, un valore di bilanciamento, un feedback visivo), con pochi casi limite e verificabile nel browser automatico (window.game).
-- Chiedi all'utente SOLO se serve un giudizio umano (gusto, direzione creativa ambigua): in quel caso "needsUser": true e la domanda in "reply".
+- Se la richiesta è ambigua in un modo che cambia il risultato (cosa esattamente, dove, quanto, che stile), NON tirare a indovinare: fai tu le domande, poche e precise (al massimo 3, numerate, ognuna con 2-3 opzioni suggerite), con "needsUser": true, "tasks": [] e le domande in "reply". Quando l'utente risponde, riceverai la richiesta originale insieme alla risposta.
+- Se invece è chiara (o l'utente ti ha detto di decidere tu), procedi senza domande.
+- Le richieste in parallelo lavorano in copie separate del gioco: non serve aspettare le altre. Se la nuova richiesta dipende da una in corso o la contraddice, dillo nella "reply".
 - "reply" è il messaggio breve (italiano, asciutto) che l'utente legge subito.
 
 Rispondi con UN SOLO blocco JSON:
@@ -66,7 +72,8 @@ export function taskPrompt({ task, req, agent, deps, contextList, qaCmd, extra }
   const depText = deps.length ? deps.map((d) => `### ${d.id} — ${d.agentName} (${d.kind}): ${d.title}\n${truncate(d.result?.summary || '', 1500)}\n${d.result?.handoff ? 'Passaggio di consegne: ' + truncate(d.result.handoff, 2500) : ''}\n${d.result?.output ? truncate(d.result.output, 3000) : ''}`).join('\n\n') : '(nessuno)';
   const out = [`# Task ${task.id} — ${task.title}`,
     `Sei ${agent.name} (${agent.role}) nello studio virtuale che sviluppa TQ:EVS.`,
-    `Richiesta originale dell'utente (${req.id}): "${req.text}"`,
+    `Richiesta originale dell'utente (${req.id}): "${req.originalText ? req.originalText + '" — chiarimenti: "' + req.text : req.text}"`,
+    req.attachments?.length ? `Allegati dell'utente (reference, screenshot di bug…), apribili con Read:\n${req.attachments.map((a) => `- ${a.path} (${a.name})`).join('\n')}` : '',
     '',
     '## Istruzioni del task',
     task.instructions || task.title,

@@ -157,7 +157,7 @@ function msgHTML(m) {
   return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}" data-id="${esc(m.id)}">
     ${m.role !== 'user' && a ? `<div class="mav">${avatarHTML(a, { size: 30 })}</div>` : ''}
     <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.requestId ? ' · ' + esc(m.requestId) : ''}</span></div>
-    <div class="mtext">${md(m.text)}</div>${chips}${m.kind === 'report' ? reportHTML(m.report) : ''}${actions}</div></div>`;
+    <div class="mtext">${md(m.text)}</div>${m.attachments?.length ? `<div class="msg-att">${m.attachments.map((a) => /^image\//.test(a.type) ? `<a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="${esc(a.name)}"></a>` : `<a class="file" href="${esc(a.url)}" target="_blank">📄 ${esc(a.name)}</a>`).join('')}</div>` : ''}${chips}${m.kind === 'report' ? reportHTML(m.report) : ''}${m.kind === 'question' ? '<div class="muted qhint">↳ Rispondi qui sotto (anche a voce): la richiesta riparte da dove era.</div>' : ''}${actions}</div></div>`;
 }
 
 function renderChat() {
@@ -177,11 +177,71 @@ function appendChat(m) {
 function refreshChips(reqId) { for (const el of document.querySelectorAll(`[data-req-chips="${CSS.escape(reqId)}"]`)) el.innerHTML = taskChips(reqId); }
 function refreshActions(reqId) { for (const el of document.querySelectorAll(`[data-req-actions="${CSS.escape(reqId)}"]`)) el.innerHTML = requestActions(S.requests[reqId]); }
 
+// ─── allegati ────────────────────────────────────────────────────────────────────────────────────
+S.pending = [];   // allegati caricati, in attesa di invio
+function renderPending() {
+  const box = $('#att-preview');
+  box.classList.toggle('hidden', !S.pending.length);
+  box.innerHTML = S.pending.map((a, i) => `<span class="att ${a.uploading ? 'uploading' : ''}">${/^image\//.test(a.type) && a.url ? `<img src="${esc(a.url)}" alt="">` : '📄'}<span>${esc(a.name)}</span><button type="button" data-rm="${i}" title="Togli">✕</button></span>`).join('');
+  for (const b of box.querySelectorAll('[data-rm]')) b.onclick = () => { S.pending.splice(Number(b.dataset.rm), 1); renderPending(); };
+}
+async function addFiles(files) {
+  for (const f of files) {
+    if (f.size > 40 * 1024 * 1024) { toast(`${f.name}: troppo grande (massimo 40 MB)`, true); continue; }
+    const item = { name: f.name || 'incollato.png', type: f.type, uploading: true };
+    S.pending.push(item); renderPending();
+    try {
+      const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      Object.assign(item, await api('POST', '/api/uploads', { name: item.name, type: f.type, dataUrl }), { uploading: false });
+    } catch (e) { S.pending.splice(S.pending.indexOf(item), 1); toast(`${item.name}: ${e.message}`, true); }
+    renderPending();
+  }
+}
+$('#btn-attach').onclick = () => $('#file-input').click();
+$('#file-input').onchange = (ev) => { addFiles([...ev.target.files]); ev.target.value = ''; };
+for (const zone of [$('.right'), $('#msg')]) {
+  zone.addEventListener('dragover', (ev) => { ev.preventDefault(); $('.right').classList.add('dropping'); });
+  zone.addEventListener('dragleave', () => $('.right').classList.remove('dropping'));
+  zone.addEventListener('drop', (ev) => { ev.preventDefault(); $('.right').classList.remove('dropping'); if (ev.dataTransfer?.files?.length) addFiles([...ev.dataTransfer.files]); });
+}
+$('#msg').addEventListener('paste', (ev) => { const files = [...(ev.clipboardData?.files || [])]; if (files.length) { ev.preventDefault(); addFiles(files); } });
+
+// ─── dettato vocale (riconoscimento del browser: Chrome, Safari, Edge) ─────────────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const mic = { on: false, rec: null, base: '' };
+try { const l = localStorage.getItem('studio:mic-lang'); if (l) $('#mic-lang').value = l; } catch { /* niente */ }
+$('#mic-lang').onchange = () => { try { localStorage.setItem('studio:mic-lang', $('#mic-lang').value); } catch { /* niente */ } if (mic.on) { stopMic(); startMic(); } };
+function startMic() {
+  if (!SR) { toast('Il dettato vocale richiede Chrome, Safari o Edge.', true); return; }
+  const rec = new SR();
+  rec.lang = $('#mic-lang').value; rec.continuous = true; rec.interimResults = true;
+  mic.base = $('#msg').value ? $('#msg').value.replace(/\s*$/, ' ') : '';
+  rec.onresult = (ev) => {
+    let fin = '', tmp = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) { const r = ev.results[i]; if (r.isFinal) fin += r[0].transcript; else tmp += r[0].transcript; }
+    if (fin) mic.base += fin.trim() + ' ';
+    $('#msg').value = mic.base + tmp;
+    $('#msg').scrollTop = $('#msg').scrollHeight;
+  };
+  rec.onerror = (ev) => { if (ev.error === 'not-allowed') { toast('Microfono non autorizzato: consenti l\'accesso nelle impostazioni del browser.', true); stopMic(); } };
+  rec.onend = () => { if (mic.on) { try { rec.start(); } catch { /* si riprova al prossimo giro */ } } };
+  mic.rec = rec; mic.on = true;
+  try { rec.start(); } catch { /* già avviato */ }
+  $('#btn-mic').classList.add('rec'); $('#btn-mic').title = 'Sto ascoltando… clic per finire';
+}
+function stopMic() { mic.on = false; try { mic.rec?.stop(); } catch { /* */ } $('#btn-mic').classList.remove('rec'); $('#btn-mic').title = 'Detta a voce'; }
+$('#btn-mic').onclick = () => (mic.on ? stopMic() : startMic());
+if (!SR) $('#btn-mic').title = 'Dettato non disponibile in questo browser (usa Chrome o Safari)';
+
 $('#composer').onsubmit = act(async (ev) => {
   ev.preventDefault();
-  const text = $('#msg').value.trim(); if (!text) return;
-  $('#msg').value = '';
-  await api('POST', '/api/chat', { text });
+  if (mic.on) stopMic();
+  const text = $('#msg').value.trim();
+  if (S.pending.some((a) => a.uploading)) { toast('Aspetta che finiscano i caricamenti…'); return; }
+  if (!text && !S.pending.length) return;
+  const attachments = S.pending.map(({ id, name, type }) => ({ id, name, type }));
+  $('#msg').value = ''; S.pending = []; renderPending();
+  await api('POST', '/api/chat', { text, attachments });
 });
 $('#msg').onkeydown = (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#composer').requestSubmit(); } };
 

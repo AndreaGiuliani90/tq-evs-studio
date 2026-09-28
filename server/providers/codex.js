@@ -29,8 +29,10 @@ export class CodexProvider {
     return (this._avail = { ok: true, path: p, version: (v.stdout || v.stderr).trim().split('\n')[0] });
   }
 
-  buildArgs({ mode, model, cwd, lastFile }) {
+  buildArgs({ mode, model, cwd, lastFile, addDirs = [], images = [] }) {
     const args = ['exec', '--json', '--skip-git-repo-check', '--color', 'never', '-C', cwd, '-o', lastFile];
+    for (const d of addDirs) args.push('--add-dir', d);
+    for (const i of images.slice(0, 8)) args.push('-i', i);
     args.push('--sandbox', mode === 'work' ? 'workspace-write' : 'read-only');
     if (model) args.push('--model', model);
     args.push('-');   // prompt da stdin

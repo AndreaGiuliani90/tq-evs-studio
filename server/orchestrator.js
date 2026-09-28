@@ -4,12 +4,13 @@
 //   → ogni task che scrive = commit a nome dell'agente → test QA → FAIL: task di correzione + nuovo test
 //   (al massimo maxFixLoops giri, poi si passa la palla all'utente) → PASS: rapporto finale della Regia.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic } from './util.js';
 import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, TASK_KINDS } from './prompts.js';
 
 const TERMINAL = ['DONE', 'FAILED', 'CANCELLED'];
-const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle', 'lore'];
+const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle', 'lore', 'integrate'];
 // tipi che cambiano il gioco: dopo di loro serve un test del QA (lore tocca solo i documenti)
 const GAME_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle'];
 // tipi che non toccano il repository del gioco: l'arredo dell'ufficio (dati) e il codice dello Studio (repository suo)
@@ -27,6 +28,11 @@ export class Orchestrator {
   }
 
   get S() { return this.store.data; }
+  get uploadsDir() { return path.join(this.dataDir, 'uploads'); }
+  attachOpts(req) {
+    const att = req.attachments || [];
+    return { addDirs: att.length ? [this.uploadsDir] : [], images: att.filter((a) => /^image\//.test(a.type)).map((a) => a.path) };
+  }
   tasksOf(reqId) { return Object.values(this.S.tasks).filter((t) => t.requestId === reqId).sort((a, b) => a.id.localeCompare(b.id)); }
   agentName(id) { return this.agents.get(id)?.name || id; }
 
@@ -59,11 +65,15 @@ export class Orchestrator {
     return m;
   }
 
-  async handleUserMessage(text) {
+  async handleUserMessage(text, { attachments = [] } = {}) {
     text = String(text || '').trim();
-    if (!text) throw new Error('messaggio vuoto');
-    this.chat('user', text);
-    const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [] };
+    if (!text && !attachments.length) throw new Error('messaggio vuoto');
+    if (!text) text = '(vedi allegati)';
+    this.chat('user', text, attachments.length ? { attachments } : {});
+    // se la Regia aveva fatto una domanda, questo messaggio è la risposta: la richiesta originale continua qui
+    const asked = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
+    const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [...(asked?.attachments || []), ...attachments] };
+    if (asked) { req.continues = asked.id; req.originalText = asked.originalText || asked.text; asked.answeredBy = req.id; this.setRequest(asked, { status: 'ANSWERED' }); }
     this.S.requests[req.id] = req;
     this.store.save();
     this.events.emit('request.created', { request: req });
@@ -94,7 +104,7 @@ export class Orchestrator {
       req.plan = plan;
       if (!plan.tasks.length) {
         this.chat('director', plan.reply || 'Fatto.', { agentId: 'director', requestId: req.id, kind: plan.needsUser ? 'question' : 'text' });
-        this.setRequest(req, { status: plan.needsUser ? 'NEEDS_USER' : 'ANSWERED' });
+        this.setRequest(req, { status: plan.needsUser ? 'NEEDS_USER' : 'ANSWERED', question: plan.needsUser ? plan.reply : null });
         this.agents.setStatus('director', 'IDLE', { task: null, text: 'risposta data' });
         return;
       }
@@ -130,7 +140,7 @@ export class Orchestrator {
     const provider = await this.providers.resolve(director.provider);
     let plan = null, raw = null;
     if (provider.id !== 'mock') {
-      const r = await provider.run({ agent: director, system: director.systemInstructions, prompt: directorPlanPrompt({ req, agents, chat, projectBrief }), cwd: this.projectRoot, mode: 'plan', model: director.model, timeoutMs: 8 * 60 * 1000, onEvent: (e) => this.onProviderEvent('director', null, e) });
+      const r = await provider.run({ agent: director, system: director.systemInstructions, prompt: directorPlanPrompt({ req, agents, chat, projectBrief, running: Object.values(this.S.requests).filter((x) => x.id !== req.id && ['RUNNING', 'PLANNING'].includes(x.status)) }), images: (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path), addDirs: req.attachments?.length ? [this.uploadsDir] : [], cwd: this.projectRoot, mode: 'plan', model: director.model, timeoutMs: 8 * 60 * 1000, onEvent: (e) => this.onProviderEvent('director', null, e) });
       raw = r;
       if (r.ok) plan = extractJSON(r.text) || extractJSON(r.allText);
       if (!plan && r.ok && r.text) plan = { reply: r.text, tasks: [] };
@@ -232,7 +242,11 @@ export class Orchestrator {
 
   // Lancia tutti i task pronti. Idempotente: si può chiamare quando si vuole.
   schedule() {
-    const busy = new Set([...this.running.keys()].map((id) => this.S.tasks[id]?.agentId));
+    // un agente può lavorare a più richieste insieme (copie di lavoro separate), fino a parallelPerAgent
+    const load = {};
+    for (const id of this.running.keys()) { const a = this.S.tasks[id]?.agentId; load[a] = (load[a] || 0) + 1; }
+    const perAgent = Math.max(1, this.config.parallelPerAgent ?? 2);
+    let officeBusy = [...this.running.keys()].some((id) => this.S.tasks[id]?.kind === 'office');
     for (const req of Object.values(this.S.requests).filter((r) => r.status === 'RUNNING')) {
       const tasks = this.tasksOf(req.id);
       // nello stesso worktree: chi scrive lavora da solo; chi legge (analisi, QA) può stare in parallelo con altri lettori
@@ -245,9 +259,12 @@ export class Orchestrator {
           continue;
         }
         if (!deps.every((d) => d.status === 'DONE')) continue;
-        if (busy.has(t.agentId)) continue;
+        if ((load[t.agentId] || 0) >= perAgent) continue;
+        if (tasks.some((x) => x.status === 'RUNNING' && x.agentId === t.agentId)) continue;   // nella stessa richiesta, uno alla volta
         if (writeBusy || (t.writes && readBusy)) continue;
-        busy.add(t.agentId);
+        if (t.kind === 'office' && officeBusy) continue;   // l'ufficio è uno solo: un riarredo alla volta
+        if (t.kind === 'office') officeBusy = true;
+        load[t.agentId] = (load[t.agentId] || 0) + 1;
         if (t.writes) writeBusy = true; else readBusy = true;
         this.startTask(t, req);
       }
@@ -317,18 +334,38 @@ export class Orchestrator {
     if (t.kind === 'test') return this.runQA(t, req, agent, signal);
     if (t.kind === 'office') return this.runOffice(t, req, agent, signal);
     if (t.kind === 'studio_ui') return this.runStudioUI(t, req, agent, signal);
+    if (t.kind === 'integrate') {
+      const mr = await this.git.git(['merge', '--no-ff', '--no-commit', req.baseBranch], req.worktree, { allowFail: true });
+      const conflicted = (await this.git.git(['diff', '--name-only', '--diff-filter=U'], req.worktree, { allowFail: true })).stdout.trim();
+      if (!conflicted) {
+        const c = await this.git.commitAll(req.worktree, { agent, task: t, request: req, summary: `Allineato con ${req.baseBranch} (senza conflitti)` });
+        return { ok: true, result: { summary: `Allineato con ${req.baseBranch}: nessun conflitto da risolvere.`, commit: c, filesChanged: c?.files || [] } };
+      }
+      t.instructions += `\n\nFile in conflitto:\n${conflicted}\n(esito dell'unione: ${truncate(mr.stdout + mr.stderr, 600)})`;
+    }
     const provider = await this.providers.resolve(agent.provider);
     const mode = t.writes ? 'work' : 'readonly';
     const cwd = req.worktree;
     const qaCmd = `node ${this.harness} --root .`;
     let extra = t.kind === 'fix' && t.bugReport ? `## Bug report del QA\n${t.bugReport}` : '';
     if (t.lastError) extra += `\n\n## Il tentativo precedente di questo task è fallito\n${truncate(t.lastError, 2000)}\nTienine conto.`;
+    if (t.kind === 'art' && provider.id === 'codex') extra += `\n\n## Immagini\nPuoi generare le immagini direttamente con il tuo strumento di generazione immagini (gpt-image). Salva ogni immagine finita come PNG in assets/generated/<nome>.png nella cartella di lavoro (sprite su fondo magenta pieno #FF00FF, come da convenzione del progetto). Elenca i file creati nel campo "imageRequests" del JSON finale (con il prompt usato).`;
+    const startedAt = Date.now();
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: this.knowledge.contextFor(agent, cwd, { inline: provider.id === 'anthropic' }), qaCmd, extra });
-    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode, model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode, model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
     const j = extractJSON(r.text) || extractJSON(r.allText) || {};
     const result = { summary: j.summary || truncate(r.text, 600), handoff: j.handoff || '', notes: j.notes || '', output: truncate(r.text, 6000), provider: provider.id, costUsd: r.costUsd ?? null, durationMs: r.durationMs };
-    if (t.kind === 'art') result.images = await this.generateImages(j.imageRequests, req, agent, t);
+    if (t.kind === 'art') {
+      const made = provider.id === 'codex' ? this.collectCodexImages(cwd, startedAt) : [];
+      const pending = (j.imageRequests || []).filter((ir) => !made.includes(String(ir.file || '').replace(/^\/+/, '')));
+      result.images = [...made.map((f) => ({ file: f, status: 'generated', provider: 'codex' })), ...(await this.generateImages(pending, req, agent, t))];
+      if (made.length) this.recordImages(req, agent, t, made, j.imageRequests || []);
+    }
+    if (t.kind === 'integrate') {
+      const left = (await this.git.git(['grep', '-l', '-E', '^(<<<<<<<|>>>>>>>) '], cwd, { allowFail: true })).stdout.trim();
+      if (left) return { ok: false, error: `restano segni di conflitto in: ${left}` };
+    }
     if (t.writes) {
       const commit = await this.git.commitAll(cwd, { agent, task: t, request: req, summary: result.summary });
       result.commit = commit;
@@ -339,6 +376,39 @@ export class Orchestrator {
       if (stray.length) result.notes = `${result.notes} [lo Studio ha annullato modifiche non previste per un task di sola lettura: ${stray.join(', ')}]`.trim();
     }
     return { ok: true, result };
+  }
+
+  // immagini fatte da Codex: quelle nuove in assets/generated/ e, se le ha lasciate nella sua cartella, ~/.codex/generated_images
+  collectCodexImages(cwd, since) {
+    const out = [];
+    const gen = path.join(cwd, 'assets', 'generated');
+    ensureDir(gen);
+    const scan = (dir, copy) => {
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { scan(p, copy); continue; }
+        if (!/\.(png|jpe?g|webp)$/i.test(e.name) || fs.statSync(p).mtimeMs < since - 1000) continue;
+        let dest = p;
+        if (copy) { dest = path.join(gen, e.name); if (!fs.existsSync(dest)) fs.copyFileSync(p, dest); }
+        out.push(path.relative(cwd, dest));
+      }
+    };
+    scan(gen, false);
+    scan(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images'), true);
+    return [...new Set(out)];
+  }
+
+  recordImages(req, agent, t, files, requests) {
+    const metaFile = path.join(req.worktree, 'assets', 'generated', 'metadata.json');
+    const meta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, 'utf8')) : { assets: [] };
+    for (const f of files) {
+      if (meta.assets.some((a) => a.file === f && a.status === 'generated')) continue;
+      const ir = requests.find((r) => String(r.file || '').replace(/^\/+/, '') === f) || {};
+      meta.assets.push({ file: f, prompt: ir.prompt || '', purpose: ir.purpose || '', agent: agent.id, task: t.id, request: req.id, provider: 'codex', status: 'generated', createdAt: now() });
+      this.events.emit('asset.created', { agentId: agent.id, file: f, requestId: req.id });
+    }
+    writeFileAtomic(metaFile, JSON.stringify(meta, null, 2));
   }
 
   async generateImages(requests, req, agent, t) {
@@ -370,7 +440,7 @@ export class Orchestrator {
     const provider = await this.providers.resolve(agent.provider);
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- GUIDA_UFFICIO.md (in questa cartella): come sono fatti office.json e agents-look.json', qaCmd: null,
       extra: `## Cartella di lavoro\nSei in una cartella con office.json (la stanza), agents-look.json (l'aspetto dei personaggi) e GUIDA_UFFICIO.md. Leggi la guida, poi modifica SOLO questi due file JSON (devono restare JSON validi). Non ci sono altri file da toccare.${t.lastError ? `\n\nIl tentativo precedente è stato rifiutato: ${truncate(t.lastError, 1500)}` : ''}` });
-    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: dir, mode: 'work', model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: dir, mode: 'work', model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
     let applied;
     try { applied = this.office.apply(dir, this.agents); } catch (e) { return { ok: false, error: `modifica all'ufficio rifiutata: ${e.message}` }; }
@@ -389,7 +459,7 @@ export class Orchestrator {
     const provider = await this.providers.resolve(agent.provider);
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- README.md (com\'è fatto lo Studio)\n- web/ (interfaccia: app.js, office.js ufficio, sprites.js personaggi, styles.css)\n- server/ (backend)', qaCmd: null,
       extra: `## Stai modificando il programma GAME STUDIO (non il gioco)\nCartella: una copia di lavoro del repository dello Studio. Modifiche mirate; niente dipendenze nuove; interfaccia in italiano. Alla fine lo Studio lancia i suoi test automatici (npm test): devono passare.${t.lastError ? `\n\nIl tentativo precedente è fallito:\n${truncate(t.lastError, 2000)}` : ''}` });
-    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode: 'work', model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: ['Bash(npm test:*)'], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode: 'work', model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: ['Bash(npm test:*)'], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
     // verifica: sintassi di tutti i moduli + test dello Studio
     this.agents.setStatus(agent.id, 'TESTING', { task: t, text: 'verifico lo Studio (sintassi + npm test)', semantic: 'agent.testing' });
@@ -436,7 +506,7 @@ export class Orchestrator {
     if (provider.id !== 'mock') {
       const diff = await this.git.diffText(cwd, req.baseCommit);
       const prompt = qaPrompt({ task: t, req, agent, deps, diff, harnessSummary, harnessCmd: `node ${this.harness} --root .`, outDir, contextList: this.knowledge.contextFor(agent, cwd) });
-      const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode: 'readonly', model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`, `Read(${outDir}/**)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+      const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode: 'readonly', model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`, `Read(${outDir}/**)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
       if (!r.ok) return { ok: false, error: r.error };
       const j = extractJSON(r.text) || extractJSON(r.allText);
       output = truncate(r.text, 5000);
@@ -630,7 +700,13 @@ export class Orchestrator {
     if (req.merged) throw new Error('già unita');
     const lines = [];
     if (req.branch && req.report?.commits?.length) {
-      const m = await this.git.merge(req);
+      let m;
+      try { m = await this.git.merge(req); }
+      catch (e) {
+        if (!/conflitto|conflict|Unione non riuscita/i.test(e.message)) throw e;
+        this.integrate(req);
+        return req;
+      }
       this.setRequest(req, { mergeCommit: m.mergeCommit });
       lines.push(`Gioco: unito ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}). Per annullare: "Annulla unione" o \`git revert -m 1 ${m.mergeCommit.slice(0, 7)}\`.`);
     }
@@ -643,6 +719,19 @@ export class Orchestrator {
     this.setRequest(req, { merged: true, mergedAt: now() });
     this.chat('system', lines.join('\n'), { requestId: req.id });
     return req;
+  }
+
+  // Due richieste hanno toccato gli stessi file (tipico: versione e CHANGELOG). Lo sviluppo porta nel branch le novità
+  // del branch principale, risolve i conflitti, il QA riprova; poi si può unire.
+  integrate(req) {
+    const dev = this.agents.forKind('fix');
+    const qa = this.agents.forKind('test');
+    const t1 = this.createTask({ requestId: req.id, agentId: dev.id, kind: 'integrate', title: `Allinea con ${req.baseBranch} e risolvi i conflitti`, instructions: `Mentre lavoravamo a questa richiesta, nel branch ${req.baseBranch} sono entrate altre modifiche che toccano gli stessi file. Lo Studio ha avviato l'unione di ${req.baseBranch} in questo branch: risolvi i conflitti (cerca i segni <<<<<<< ======= >>>>>>>), tenendo TUTTE e due le modifiche. Regole: in src/version.js tieni la versione più alta e aumentala di una PATCH; in CHANGELOG.md tieni tutte le voci, la tua in cima con il nuovo numero. Poi controlla che non restino segni di conflitto.`, dependsOn: [] });
+    const deps = [t1.id];
+    if (qa) deps.push(this.createTask({ requestId: req.id, agentId: qa.id, kind: 'test', title: 'Riprova dopo l\'allineamento', instructions: 'Verifica che le modifiche di questa richiesta e quelle già presenti nel gioco funzionino insieme, senza regressioni.', dependsOn: [t1.id] }).id);
+    this.setRequest(req, { status: 'RUNNING', finalizing: false, report: null, integrating: true });
+    this.chat('director', `${req.id} tocca gli stessi file di modifiche già unite nel gioco. ${dev.name} allinea il branch e risolve i conflitti, ${qa ? qa.name + ' riprova' : ''}; poi potrai unire.`, { agentId: 'director', requestId: req.id, kind: 'plan', taskIds: deps });
+    this.schedule();
   }
 
   async revertMerge(reqId) {

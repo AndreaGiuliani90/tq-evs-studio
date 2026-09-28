@@ -6,7 +6,7 @@ export class OpenAIImageProvider {
     this.kind = 'image';
     this.label = 'OpenAI Images';
     this.apiKey = apiKey ?? process.env.OPENAI_API_KEY;
-    this.model = model || process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+    this.model = model || process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2';
     this.fetch = fetchImpl || globalThis.fetch;
   }
 
@@ -24,6 +24,7 @@ export class OpenAIImageProvider {
         body: JSON.stringify({ model: this.model, prompt, size, n: 1, ...(background ? { background } : {}) }),
       });
       const j = await r.json();
+      if (!r.ok && this.model === 'gpt-image-2' && /model/i.test(j?.error?.message || '')) { this.model = 'gpt-image-1'; return this.generate({ prompt, size, background }); }   // account senza gpt-image-2
       if (!r.ok) return { ok: false, error: `API ${r.status}: ${j?.error?.message || ''}` };
       const d = j.data?.[0];
       if (d?.b64_json) return { ok: true, png: Buffer.from(d.b64_json, 'base64'), revisedPrompt: d.revised_prompt };

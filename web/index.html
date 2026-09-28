@@ -41,8 +41,19 @@
       <div class="chat-head"><span id="director-avatar"></span><div><b id="director-name">Regia</b><div class="muted" id="director-status">—</div></div></div>
       <div class="chat" id="chat"></div>
       <form class="composer" id="composer">
-        <textarea id="msg" rows="2" placeholder="Scrivi alla Regia… (es. «Il boss è noioso e il dialogo prima è troppo lungo»)"></textarea>
-        <button class="btn primary" type="submit">Invia</button>
+        <div class="att-preview hidden" id="att-preview"></div>
+        <div class="composer-row">
+          <textarea id="msg" rows="2" placeholder="Scrivi o parla alla Regia… (es. «Il boss è noioso e il dialogo prima è troppo lungo»). Puoi trascinare qui immagini e file."></textarea>
+          <div class="composer-tools">
+            <button class="btn icon" type="button" id="btn-attach" title="Allega file (anche trascinandoli o incollandoli)">📎</button>
+            <button class="btn icon" type="button" id="btn-mic" title="Detta a voce (clic per iniziare / finire)">🎤</button>
+            <select id="mic-lang" title="Lingua del dettato">
+              <option value="it-IT">IT</option><option value="en-US">EN</option><option value="es-ES">ES</option><option value="fr-FR">FR</option><option value="de-DE">DE</option><option value="pt-PT">PT</option>
+            </select>
+            <button class="btn primary" type="submit">Invia</button>
+          </div>
+        </div>
+        <input type="file" id="file-input" multiple hidden />
       </form>
     </section>
   </main>

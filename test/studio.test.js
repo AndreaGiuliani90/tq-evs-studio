@@ -387,3 +387,78 @@ let input = ''; process.stdin.on('data', (d) => input += d).on('end', () => {
   assert.deepEqual(ev, ['Bash', 'Edit', 'text']);
   assert.match(r.allText, /con ruolo/);
 });
+
+test('la Regia fa domande quando serve; la risposta dell\'utente continua la stessa richiesta', async () => {
+  const root = makeFixtureRepo();
+  const seen = [];
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') {
+      seen.push(o.prompt);
+      if (!o.prompt.includes('È la RISPOSTA')) return { text: '```json\n{"reply":"1. Quale boss? 2. Più difficile o più corto?","needsUser":true,"tasks":[]}\n```' };
+      return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: 'Boss più corto', dependsOn: [] }]);
+    }
+    if (o.agent.id === 'dev') { fs.writeFileSync(path.join(o.cwd, 'src/boss.js'), 'ok'); return { text: '{"summary":"ok"}' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const r1 = await s.orch.handleUserMessage('Sistema il boss');
+  await waitFor(() => r1.status === 'NEEDS_USER', 5000);
+  assert.equal(s.store.data.chat.at(-1).kind, 'question');
+  const r2 = await s.orch.handleUserMessage('Il primo, e più corto');
+  await waitFor(() => r2.status === 'DONE', 10000);
+  assert.equal(r1.status, 'ANSWERED');
+  assert.equal(r2.continues, r1.id);
+  assert.match(seen.at(-1), /Richiesta originale: "Sistema il boss"/);
+});
+
+test('richieste in parallelo: la seconda che tocca gli stessi file viene allineata (conflitto risolto) prima di unirla', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: o.prompt.includes('ROSSO') ? 'rosso' : 'blu', dependsOn: [] }]);
+    if (o.agent.id === 'dev') {
+      const f = path.join(o.cwd, 'CHANGELOG.md');
+      if (/conflitti/.test(o.prompt)) { fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/<<<<<<< .*\n|=======\n|>>>>>>> .*\n/g, '')); return { text: '{"summary":"conflitti risolti"}' }; }
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('# changelog\n', `# changelog\n\n## 0.1.1 — ${o.prompt.includes('ROSSO') ? 'rosso' : 'blu'}\n`));
+      return { text: '{"summary":"voce"}' };
+    }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { parallelPerAgent: 2 });
+  const a = await s.orch.handleUserMessage('Fai ROSSO');
+  const b = await s.orch.handleUserMessage('Fai BLU');
+  await waitFor(() => a.status === 'DONE' && b.status === 'DONE', 15000, 'due richieste DONE');
+  await s.orch.merge(a.id);
+  await s.orch.merge(b.id);   // conflitto → allineamento automatico
+  await waitFor(() => b.status === 'DONE' && s.orch.tasksOf(b.id).some((t) => t.kind === 'integrate' && t.status === 'DONE'), 15000, 'allineata');
+  await s.orch.merge(b.id);
+  const cl = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  assert.match(cl, /rosso/); assert.match(cl, /blu/); assert.doesNotMatch(cl, /<<<<<<<|>>>>>>>/);
+});
+
+test('allegati: caricati via HTTP, finiscono nella richiesta e sono leggibili dagli agenti', async () => {
+  const root = makeFixtureRepo();
+  let devOpts = null;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') { assert.match(o.prompt, /bug\.png/); return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: 'Correggi il bug dello screenshot', dependsOn: [] }]); }
+    if (o.agent.id === 'dev') { devOpts = o; fs.writeFileSync(path.join(o.cwd, 'src/fix.js'), 'ok'); return { text: '{"summary":"ok"}' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const server = createServer(s);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const png = 'data:image/png;base64,' + Buffer.from('finto png').toString('base64');
+    const up = await (await fetch(`${base}/api/uploads`, { method: 'POST', body: JSON.stringify({ name: 'bug.png', type: 'image/png', dataUrl: png }) })).json();
+    assert.ok(up.id && up.url);
+    assert.equal((await fetch(base + up.url)).status, 200);
+    const bad = await fetch(`${base}/api/chat`, { method: 'POST', body: JSON.stringify({ text: 'x', attachments: [{ id: '../../etc', name: 'passwd' }] }) });
+    assert.equal(bad.status, 400);
+    const r = await (await fetch(`${base}/api/chat`, { method: 'POST', body: JSON.stringify({ text: 'Guarda lo screenshot', attachments: [up] }) })).json();
+    await waitFor(() => s.store.data.requests[r.request.id].status === 'DONE', 10000);
+    assert.ok(devOpts.addDirs[0].endsWith('uploads'));
+    assert.ok(devOpts.images[0].endsWith('bug.png'));
+    assert.match(devOpts.prompt, /Allegati dell'utente/);
+    assert.equal(s.store.data.chat.find((m) => m.role === 'user' && m.attachments).attachments[0].name, 'bug.png');
+  } finally { server.close(); }
+});

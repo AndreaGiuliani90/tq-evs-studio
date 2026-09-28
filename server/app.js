@@ -100,7 +100,27 @@ export function createServer(studio) {
   const routes = [
     ['GET', /^\/api\/health$/, async () => ({ ok: true, seq: events.seq })],
     ['GET', /^\/api\/state$/, snapshot],
-    ['POST', /^\/api\/chat$/, async (m, b) => ({ request: await orch.handleUserMessage(b.text) })],
+    ['POST', /^\/api\/chat$/, async (m, b) => {
+      // gli allegati devono essere file caricati in data/uploads (niente percorsi arbitrari)
+      const up = path.join(dataDir, 'uploads');
+      const attachments = (Array.isArray(b.attachments) ? b.attachments : []).map((a) => {
+        const f = path.resolve(up, String(a.id || ''), path.basename(String(a.name || '')));
+        if (!f.startsWith(up + path.sep) || !fs.existsSync(f)) throw new Error(`allegato non trovato: ${a.name}`);
+        return { id: a.id, name: path.basename(f), type: a.type || '', size: fs.statSync(f).size, path: f, url: `/uploads/${a.id}/${encodeURIComponent(path.basename(f))}` };
+      });
+      return { request: await orch.handleUserMessage(b.text, { attachments }) };
+    }],
+    ['POST', /^\/api\/uploads$/, async (m, b) => {
+      const mm = String(b.dataUrl || '').match(/^data:([^;,]*)(;base64)?,(.*)$/s);
+      if (!mm) throw new Error('file non valido');
+      const buf = mm[2] ? Buffer.from(mm[3], 'base64') : Buffer.from(decodeURIComponent(mm[3]));
+      if (buf.length > 40 * 1024 * 1024) throw new Error('file troppo grande (massimo 40 MB)');
+      const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+      const name = (path.basename(String(b.name || 'file')).replace(/[^\w.\- ()àèéìòù]/gi, '_') || 'file').slice(0, 120);
+      const dir = ensureDir(path.join(dataDir, 'uploads', id));
+      fs.writeFileSync(path.join(dir, name), buf);
+      return { id, name, type: b.type || mm[1] || '', size: buf.length, url: `/uploads/${id}/${encodeURIComponent(name)}` };
+    }],
     ['GET', /^\/api\/agents$/, async () => agents.list().map((a) => agents.public(a))],
     ['POST', /^\/api\/agents$/, async (m, b) => agents.public(agents.create(b))],
     ['PUT', /^\/api\/agents\/([\w-]+)$/, async (m, b) => agents.public(agents.update(m[1], b))],
@@ -168,7 +188,7 @@ export function createServer(studio) {
         for (const [method, re, fn] of routes) {
           const m = p.match(re);
           if (m && req.method === method) {
-            const b = ['POST', 'PUT'].includes(method) ? await body(req) : {};
+            const b = ['POST', 'PUT'].includes(method) ? await body(req, p === '/api/uploads' ? 60 * 1024 * 1024 : undefined) : {};
             return json(res, 200, await fn(m, b));
           }
         }
@@ -184,6 +204,7 @@ export function createServer(studio) {
       }
       if (p.startsWith('/artifacts/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'artifacts'));
       if (p.startsWith('/avatars/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'avatars'));
+      if (p.startsWith('/uploads/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'uploads'));
       return sendFile(res, path.join(web, p === '/' ? 'index.html' : p), web);
     } catch (e) {
       json(res, 400, { error: String(e.message || e) });
