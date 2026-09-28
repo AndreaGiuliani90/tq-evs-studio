@@ -1,0 +1,12 @@
+{
+  "_nota": "Impostazioni predefinite. Le modifiche fatte dall'interfaccia (Impostazioni) finiscono in data/config.json e vincono su questo file.",
+  "port": 4173,
+  "maxTaskRetries": 1,
+  "maxFixLoops": 3,
+  "taskTimeoutMin": 25,
+  "qaBrowser": true,
+  "qaSettleMs": 2500,
+  "autoMerge": false,
+  "directorProseReport": true,
+  "chatContextMessages": 8
+}

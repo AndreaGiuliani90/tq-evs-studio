@@ -1,0 +1,5 @@
+# dati locali dello Studio (stato, log, worktree, screenshot, avatar) e segreti
+data/
+.env
+node_modules/
+.DS_Store

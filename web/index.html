@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GAME STUDIO — TQ:EVS</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0614'/><rect x='3' y='5' width='10' height='7' fill='%23ff4fa3'/><rect x='5' y='7' width='2' height='2' fill='%230b0614'/><rect x='9' y='7' width='2' height='2' fill='%230b0614'/></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo">▣</span> GAME STUDIO <small>TQ:EVS</small></div>
+    <div class="conn" id="conn" title="collegamento con lo Studio">●</div>
+    <nav>
+      <a class="btn" id="btn-play" href="/play/main/" target="_blank" rel="noopener">▶ Gioca</a>
+      <button class="btn" data-open="agents">Agenti</button>
+      <button class="btn" data-open="memory">Memoria</button>
+      <button class="btn" data-open="git">Git</button>
+      <button class="btn" data-open="settings">Impostazioni</button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="left">
+      <div class="office-wrap" id="office-wrap">
+        <canvas id="office" aria-label="L'ufficio della Pro Loco: gli agenti alle loro postazioni"></canvas>
+        <div class="office-overlay" id="office-overlay"></div>
+        <div class="office-name" id="office-name"></div>
+      </div>
+      <div class="floor compact" id="floor" aria-label="Stato degli agenti"></div>
+      <div class="tabs">
+        <button class="tab on" data-tab="tasks">Task</button>
+        <button class="tab" data-tab="log">Attività</button>
+      </div>
+      <div class="tabpane" id="pane-tasks"></div>
+      <div class="tabpane hidden" id="pane-log"></div>
+    </section>
+
+    <section class="right">
+      <div class="chat-head"><span id="director-avatar"></span><div><b id="director-name">Regia</b><div class="muted" id="director-status">—</div></div></div>
+      <div class="chat" id="chat"></div>
+      <form class="composer" id="composer">
+        <textarea id="msg" rows="2" placeholder="Scrivi alla Regia… (es. «Il boss è noioso e il dialogo prima è troppo lungo»)"></textarea>
+        <button class="btn primary" type="submit">Invia</button>
+      </form>
+    </section>
+  </main>
+
+  <aside class="drawer hidden" id="drawer"></aside>
+  <div class="modal hidden" id="modal"><div class="modal-box" id="modal-box"></div></div>
+  <div class="toast hidden" id="toast"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,293 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { makeFixtureRepo, ScriptedProvider, registryWith, studioFor, waitFor, planJSON, sh } from './helpers.js';
+import { createServer } from '../server/app.js';
+import { extractJSON } from '../server/util.js';
+import { AnthropicProvider } from '../server/providers/anthropic.js';
+import { staticChecks } from '../qa/game-test.mjs';
+
+const PLAN = [
+  { key: 't1', agent: 'dev', kind: 'implement', title: 'Aggiungi feature', instructions: 'crea src/feature.js', dependsOn: [] },
+  { key: 't2', agent: 'qa', kind: 'test', title: 'Verifica feature', instructions: 'controlla src/feature.js', dependsOn: ['t1'] },
+];
+
+// dev: al primo giro scrive un BUG, alla correzione lo toglie. qa: verdetto dal harness (passato nel prompt)
+function studioProvider({ devAlwaysBug = false } = {}) {
+  let devRuns = 0;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return o.prompt.includes('rapporto finale') ? { text: 'Rapporto.' } : planJSON(PLAN, 'Delego.');
+    if (o.agent.id === 'dev') {
+      devRuns++;
+      o.onEvent({ type: 'tool', tool: 'Edit', input: { file_path: path.join(o.cwd, 'src/feature.js') } });
+      fs.writeFileSync(path.join(o.cwd, 'src/feature.js'), (devAlwaysBug && !prov.fixed) || devRuns === 1 ? 'export const x = "BUG";\n' : 'export const x = 1;\n');
+      return { text: 'fatto\n```json\n{"summary":"feature scritta","handoff":"guarda src/feature.js"}\n```' };
+    }
+    if (o.agent.id === 'qa') {
+      const fail = /già eseguito[^\n]*\nVERDETTO HARNESS: FAIL/.test(o.prompt);
+      return { text: '```json\n' + JSON.stringify({ verdict: fail ? 'FAIL' : 'PASS', summary: fail ? 'c\'è un BUG' : 'tutto ok', bugs: fail ? [{ title: 'BUG in feature.js', steps: 'leggi', expected: 'niente BUG', actual: 'BUG' }] : [] }) + '\n```' };
+    }
+    return { text: '{}' };
+  });
+  return prov;
+}
+
+test('agenti: caricati dai predefiniti, rinomina persistente dopo il riavvio', async () => {
+  const root = makeFixtureRepo();
+  const s1 = await studioFor(root, registryWith(studioProvider()));
+  const ids = s1.agents.list().map((a) => a.id).sort();
+  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'puzzle', 'qa']);
+  assert.equal(s1.agents.get('dev').name, 'Tizo');
+  s1.agents.update('dev', { name: 'Pippo', role: 'Capo Codice', avatar: { emoji: '🦊' } });
+  s1.store.flush();
+  const s2 = await studioFor(root, registryWith(studioProvider()));
+  assert.equal(s2.agents.get('dev').name, 'Pippo');
+  assert.equal(s2.agents.get('dev').avatar.emoji, '🦊');
+  assert.equal(s2.agents.get('dev').kinds.includes('implement'), true, 'le capacità restano: il routing non dipende dal nome');
+  s2.agents.resetToDefault('dev');
+  assert.equal(s2.agents.get('dev').name, 'Tizo');
+});
+
+test('flusso completo: Regia delega → Tizo implementa → Tizia FAIL → correzione → ritest PASS → rapporto', async () => {
+  const root = makeFixtureRepo();
+  fs.writeFileSync(path.join(root, 'mio-lavoro.txt'), 'lavoro non committato dell\'utente');   // non va toccato
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const seen = [];
+  s.events.on((e) => seen.push(e.type));
+  const req = await s.orch.handleUserMessage('Aggiungi una feature di prova');
+  await waitFor(() => req.status === 'DONE', 15000, 'richiesta DONE');
+  const tasks = s.orch.tasksOf(req.id);
+  const kinds = tasks.map((t) => `${t.kind}:${t.status}`);
+  assert.deepEqual(kinds, ['implement:DONE', 'test:FAILED', 'fix:DONE', 'test:DONE']);
+  assert.equal(tasks[1].superseded, tasks[3].id);
+  assert.equal(tasks[3].result.verdict, 'PASS');
+  // commit attribuiti all'agente, nel branch della richiesta
+  const log = sh(req.worktree, 'log', '--format=%an|%s', `${req.baseCommit}..HEAD`).split('\n');
+  assert.equal(log.length, 2);
+  assert.ok(log.every((l) => l.startsWith('Tizo (Studio)|[dev]')));
+  assert.match(sh(req.worktree, 'log', '-1', '--format=%B'), /Studio-Agent: dev/);
+  // la cartella dell'utente è intatta
+  assert.equal(sh(root, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+  assert.equal(fs.existsSync(path.join(root, 'src/feature.js')), false);
+  assert.equal(fs.readFileSync(path.join(root, 'mio-lavoro.txt'), 'utf8'), 'lavoro non committato dell\'utente');
+  // eventi per il frontend
+  for (const t of ['request.created', 'task.created', 'agent.started_task', 'agent.editing', 'agent.testing', 'agent.completed', 'chat.message', 'git.commit']) assert.ok(seen.includes(t), `evento ${t}`);
+  // rapporto
+  const rep = s.store.data.chat.find((m) => m.kind === 'report');
+  assert.ok(rep, 'rapporto finale in chat');
+  assert.equal(rep.report.result, 'PASS');
+  assert.equal(rep.report.commits.length, 2);
+  assert.ok(rep.report.filesChanged.some((f) => f.file === 'src/feature.js'));
+  assert.ok(rep.report.agents.some((a) => a.name === 'Tizia'));
+  // unione sicura: con la cartella pulita (file non tracciati ammessi) si unisce, poi si annulla
+  await s.orch.merge(req.id);
+  assert.equal(fs.readFileSync(path.join(root, 'src/feature.js'), 'utf8'), 'export const x = 1;\n');
+  await s.orch.revertMerge(req.id);
+  assert.equal(fs.existsSync(path.join(root, 'src/feature.js')), false);
+});
+
+test('limite ai giri di correzione: dopo maxFixLoops si passa all\'utente (niente loop infiniti)', async () => {
+  const root = makeFixtureRepo();
+  const prov = studioProvider({ devAlwaysBug: true });
+  const s = await studioFor(root, registryWith(prov), { maxFixLoops: 2 });
+  const req = await s.orch.handleUserMessage('Aggiungi una feature che non passa mai');
+  await waitFor(() => req.status === 'NEEDS_USER', 15000, 'escalation');
+  const tasks = s.orch.tasksOf(req.id);
+  assert.equal(tasks.filter((t) => t.kind === 'fix').length, 1);
+  assert.equal(tasks.filter((t) => t.kind === 'test').length, 2);
+  assert.ok(s.store.data.chat.some((m) => m.kind === 'escalation'));
+  assert.equal(s.agents.get('director').runtime.status, 'BLOCKED');
+  await waitFor(() => /APERTO/.test(fs.readFileSync(path.join(req.worktree, 'docs/memoria/KNOWN_ISSUES.md'), 'utf8')), 5000, 'known issue');
+  // l'utente preme "Riprova": nuova tornata di correzioni (non si ripete lo stesso test sullo stesso codice)
+  prov.fixed = true;
+  s.orch.retry(req.id);
+  await waitFor(() => req.status === 'DONE', 15000, 'DONE dopo Riprova ' + JSON.stringify(s.orch.tasksOf(req.id).map((t) => [t.kind, t.status])));
+  const after = s.orch.tasksOf(req.id);
+  assert.equal(after.filter((t) => t.kind === 'fix').length, 2);
+  assert.equal(after.at(-1).result.verdict, 'PASS');
+  assert.match(fs.readFileSync(path.join(req.worktree, 'docs/memoria/KNOWN_ISSUES.md'), 'utf8'), /RISOLTO/);
+  // copia di lavoro cancellata: al riavvio lo Studio la ricrea dal branch
+  fs.rmSync(req.worktree, { recursive: true, force: true });
+  s.store.flush();
+  const s2 = await studioFor(root, registryWith(studioProvider()));
+  const r2 = s2.store.data.requests[req.id];
+  assert.ok(fs.existsSync(path.join(r2.worktree, 'src/feature.js')));
+  assert.equal(r2.baseCommit, req.baseCommit);
+});
+
+test('git: niente unione se la cartella dell\'utente ha modifiche non salvate', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const req = await s.orch.handleUserMessage('feature');
+  await waitFor(() => req.status === 'DONE', 15000);
+  fs.writeFileSync(path.join(root, 'src/version.js'), "export const VERSION = '9.9.9';\n");   // modifica dell'utente
+  await assert.rejects(() => s.orch.merge(req.id), /modifiche non salvate/);
+  assert.equal(fs.readFileSync(path.join(root, 'src/version.js'), 'utf8'), "export const VERSION = '9.9.9';\n");
+  await s.orch.discard(req.id);
+  assert.equal(fs.existsSync(req.worktree || '/nope'), false);
+  assert.equal(sh(root, 'branch', '--list', 'studio/*'), '');
+});
+
+test('task di sola lettura (QA) che modifica file: lo Studio annulla le modifiche', async () => {
+  const root = makeFixtureRepo();
+  const prov = studioProvider();
+  const orig = prov.handler;
+  prov.handler = async (o, n) => { if (o.agent.id === 'qa') fs.writeFileSync(path.join(o.cwd, 'src/main.js'), 'HACK'); return orig(o, n); };
+  const s = await studioFor(root, registryWith(prov));
+  const req = await s.orch.handleUserMessage('feature');
+  await waitFor(() => req.status === 'DONE', 15000);
+  assert.notEqual(fs.readFileSync(path.join(req.worktree, 'src/main.js'), 'utf8'), 'HACK');
+  const t = s.orch.tasksOf(req.id).find((x) => x.kind === 'test' && x.status === 'DONE');
+  assert.ok(t.result.strayEditsReverted.includes('src/main.js'));
+});
+
+test('Regia: risposta diretta senza task, e piano di riserva senza AI', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '```json\n{"reply":"Il gioco usa Phaser 3.80.","tasks":[]}\n```' }))));
+  const req = await s.orch.handleUserMessage('Che versione di Phaser usiamo?');
+  await waitFor(() => req.status === 'ANSWERED', 5000);
+  assert.equal(s.store.data.chat.at(-1).text, 'Il gioco usa Phaser 3.80.');
+  const h = s.orch.normalizePlan(s.orch.heuristicPlan('Riscrivi il dialogo del boss e rendi il boss più difficile'));
+  assert.deepEqual(h.tasks.map((t) => `${t.agent}:${t.kind}`), ['narrative:narrative', 'dev:implement', 'qa:test']);
+  assert.deepEqual(h.tasks[1].dependsOn, ['n']);
+});
+
+test('piano: agente sconosciuto → instradato per capacità; test QA aggiunto se manca; niente cicli', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const p = s.orch.normalizePlan({ reply: 'x', tasks: [
+    { key: 'a', agent: 'boh', kind: 'narrative', title: 'dialogo', dependsOn: ['b'] },
+    { key: 'b', agent: 'dev', kind: 'implement', title: 'codice', dependsOn: ['a'] },
+  ] });
+  assert.equal(p.tasks[0].agent, 'narrative');
+  assert.ok(p.tasks.some((t) => t.kind === 'test' && t.agent === 'qa'));
+  const a = p.tasks[0], b = p.tasks[1];
+  assert.ok(!(a.dependsOn.includes('b') && b.dependsOn.includes('a')), 'dipendenza circolare rimossa');
+});
+
+test('provider non configurato: il task va in BLOCKED e la Regia chiede all\'utente', async () => {
+  const root = makeFixtureRepo();
+  const reg = registryWith(new ScriptedProvider('scripted', async () => planJSON([{ key: 'x', agent: 'dev', kind: 'implement', title: 'x', dependsOn: [] }])));
+  const s = await studioFor(root, reg);
+  s.agents.update('dev', { provider: 'mock' });
+  reg.resolve = async (id) => (id === 'mock' ? reg.get('mock') : reg.get('scripted'));
+  const req = await s.orch.handleUserMessage('fai x');
+  await waitFor(() => req.status === 'NEEDS_USER', 8000);
+  assert.equal(s.agents.get('dev').runtime.status, 'BLOCKED');
+  assert.match(s.store.data.chat.at(-1).text, /provider AI/);
+});
+
+test('riavvio: stato persistente e task interrotti rimessi in coda', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const req = await s.orch.handleUserMessage('feature');
+  await waitFor(() => req.status === 'DONE', 15000);
+  const t = s.orch.tasksOf(req.id)[0];
+  t.status = 'RUNNING';
+  s.store.flush();
+  const s2 = await studioFor(root, registryWith(studioProvider()));
+  assert.equal(s2.store.data.requests[req.id].status, 'DONE');
+  assert.equal(s2.store.data.tasks[t.id].status, 'PENDING');
+  assert.ok(s2.store.data.chat.length >= 3);
+});
+
+test('server HTTP: stato, chat, modifica agente e stream di eventi SSE', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const server = createServer(s);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const st = await (await fetch(`${base}/api/state`)).json();
+    assert.equal(st.agents.filter((a) => a.visible).length, 8);
+    const page = await (await fetch(`${base}/`)).text();
+    assert.match(page, /GAME STUDIO/);
+    // SSE
+    const ctrl = new AbortController();
+    const events = [];
+    const sse = fetch(`${base}/api/events?since=${st.lastSeq}`, { signal: ctrl.signal }).then(async (res) => {
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      for (;;) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value); for (const m of buf.matchAll(/data: (.+)\n/g)) events.push(JSON.parse(m[1]).type); buf = buf.slice(buf.lastIndexOf('\n\n') + 2); }
+    }).catch(() => {});
+    const r = await (await fetch(`${base}/api/chat`, { method: 'POST', body: JSON.stringify({ text: 'aggiungi feature' }) })).json();
+    assert.match(r.request.id, /^R-/);
+    const upd = await (await fetch(`${base}/api/agents/qa`, { method: 'PUT', body: JSON.stringify({ name: 'Tester' }) })).json();
+    assert.equal(upd.name, 'Tester');
+    await waitFor(() => s.store.data.requests[r.request.id].status === 'DONE', 15000);
+    await waitFor(() => events.includes('agent.completed') && events.includes('request.updated'), 3000, 'eventi SSE');
+    ctrl.abort(); await sse;
+    const diff = await (await fetch(`${base}/api/requests/${r.request.id}/diff`)).json();
+    assert.ok(diff.summary.commits.length >= 1);
+    const mem = await (await fetch(`${base}/api/memory/PROJECT_STATE`)).json();
+    assert.match(mem.content, /Stato vivo del repository/);
+    const office = await (await fetch(`${base}/api/office`)).json();
+    assert.ok(office.stations.some((x) => x.agent === 'dev') && office.room.w > 0, 'ufficio caricato');
+    const pixel = (await (await fetch(`${base}/api/agents`)).json()).find((a) => a.id === 'art');
+    assert.equal(pixel.avatar.type, 'pixel'); assert.ok(pixel.avatar.character.hairStyle);
+    const play = await fetch(`${base}/play/${r.request.id}/index.html`);
+    assert.equal(play.status, 200);
+  } finally { server.close(); }
+});
+
+test('extractJSON trova il blocco finale anche in mezzo al testo', () => {
+  assert.deepEqual(extractJSON('bla bla\n```json\n{"a":1}\n```\nfine'), { a: 1 });
+  assert.deepEqual(extractJSON('risultato: {"verdict":"PASS","x":{"y":2}} ok'), { verdict: 'PASS', x: { y: 2 } });
+  assert.equal(extractJSON('niente'), null);
+});
+
+test('provider Anthropic: ciclo di strumenti sui file (con fetch finto)', async () => {
+  const root = makeFixtureRepo();
+  let n = 0;
+  const fetchImpl = async (url, init) => {
+    n++;
+    const b = JSON.parse(init.body);
+    assert.ok(b.tools.some((t) => t.name === 'replace_in_file'));
+    const content = n === 1
+      ? [{ type: 'tool_use', id: 'u1', name: 'replace_in_file', input: { path: 'src/version.js', old: '0.1.0', new: '0.1.1' } }]
+      : [{ type: 'text', text: 'fatto {"summary":"versione"}' }];
+    return { ok: true, json: async () => ({ content, stop_reason: n === 1 ? 'tool_use' : 'end_turn' }) };
+  };
+  const p = new AnthropicProvider({ apiKey: 'x', fetchImpl });
+  const r = await p.run({ system: 's', prompt: 'p', cwd: root, mode: 'work' });
+  assert.equal(r.ok, true);
+  assert.match(fs.readFileSync(path.join(root, 'src/version.js'), 'utf8'), /0\.1\.1/);
+  await assert.rejects(async () => { throw new Error((await import('../server/providers/anthropic.js')).FILE_TOOLS.read_file.run(root, { path: '../../etc/passwd' })); });
+});
+
+test('QA harness: controlli statici sul gioco vero', () => {
+  const game = path.resolve(process.env.STUDIO_PROJECT_ROOT || path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'tq-evs'));
+  if (!fs.existsSync(path.join(game, 'index.html'))) return;   // gioco non accanto allo Studio: niente da controllare
+  const r = staticChecks(game);
+  assert.equal(r.ok, true, JSON.stringify(r.checks.filter((c) => !c.ok)));
+});
+
+test('dipendenze: Coso scrive il dialogo → Tizo lo implementa (riceve il passaggio di consegne) → Tizia testa; niente scritture in parallelo', async () => {
+  const root = makeFixtureRepo();
+  let active = 0, maxActiveWriters = 0;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([
+      { key: 'n', agent: 'narrative', kind: 'narrative', title: 'Dialogo del mercante', instructions: 'scrivi', dependsOn: [] },
+      { key: 'a', agent: 'art', kind: 'art', title: 'Brief sprite mercante', instructions: 'brief', dependsOn: [] },
+      { key: 'd', agent: 'dev', kind: 'implement', title: 'Mercante nel villaggio', instructions: 'implementa', dependsOn: ['n', 'a'] },
+      { key: 'q', agent: 'qa', kind: 'test', title: 'Prova il mercante', dependsOn: ['d'] },
+    ]);
+    if (o.mode === 'work') { active++; maxActiveWriters = Math.max(maxActiveWriters, active); await new Promise((r) => setTimeout(r, 60)); active--; }
+    if (o.agent.id === 'narrative') { fs.writeFileSync(path.join(o.cwd, 'dialogo.txt'), 'Ciao, sono il mercante'); return { text: '```json\n{"summary":"dialogo scritto","handoff":"id dlg_mercante_hello"}\n```' }; }
+    if (o.agent.id === 'art') return { text: '```json\n{"summary":"brief","imageRequests":[{"file":"assets/generated/mercante.png","prompt":"pixel art merchant, magenta bg"}]}\n```' };
+    if (o.agent.id === 'dev') { assert.match(o.prompt, /dlg_mercante_hello/); fs.writeFileSync(path.join(o.cwd, 'src/mercante.js'), 'export default 1;'); return { text: '{"summary":"mercante fatto"}' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const req = await s.orch.handleUserMessage('Aggiungi un mercante al villaggio');
+  await waitFor(() => req.status === 'DONE', 15000);
+  assert.equal(maxActiveWriters, 1);
+  const ts = s.orch.tasksOf(req.id);
+  assert.deepEqual(ts.map((t) => `${t.agentId}:${t.status}`), ['narrative:DONE', 'art:DONE', 'dev:DONE', 'qa:DONE']);
+  const art = ts.find((t) => t.agentId === 'art');
+  assert.equal(art.result.images[0].status, 'pending', 'senza chiave OpenAI resta un brief in attesa');
+  const meta = JSON.parse(fs.readFileSync(path.join(req.worktree, 'assets/generated/metadata.json'), 'utf8'));
+  assert.equal(meta.assets[0].agent, 'art');
+  const authors = sh(req.worktree, 'log', '--format=%an', `${req.baseCommit}..HEAD`).split('\n');
+  assert.deepEqual(authors.sort(), ['Cosetta (Studio)', 'Coso (Studio)', 'Tizo (Studio)']);
+});

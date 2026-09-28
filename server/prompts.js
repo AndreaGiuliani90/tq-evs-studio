@@ -1,0 +1,142 @@
+// Testi dei prompt. Tenuti qui (e non sparsi nel codice) per poterli ritoccare facilmente.
+import { truncate } from './util.js';
+
+export const TASK_KINDS = {
+  analyze: 'analisi senza modifiche (legge il codice, propone)',
+  implement: 'implementazione nel codice del gioco',
+  fix: 'correzione di un difetto segnalato dal QA',
+  narrative: 'testi, dialoghi, lore (strings/it.json, bibbia narrativa)',
+  art: 'asset visivi: brief, coerenza, generazione immagini',
+  test: 'verifica QA: test automatici + gioco nel browser',
+  level: 'level design: mappe, rioni, posizione di NPC/bersagli/luci, script dei livelli',
+  audio: 'suono e musica: effetti, integrazione delle tracce, volumi',
+  lore: 'controllo del canone e della Bibbia del mondo (solo documenti, non cambia il gioco)',
+  puzzle: 'enigmi e indagini: indizi, prerequisiti, soluzioni',
+};
+
+export function rosterText(agents) {
+  return agents.filter((a) => a.enabled !== false && a.id !== 'director')
+    .map((a) => `- id "${a.id}" — ${a.name}, ${a.role}. Tipi di task: ${(a.kinds || []).join(', ')}. Capacità: ${(a.capabilities || []).join(', ')}. ${a.description}`)
+    .join('\n');
+}
+
+export function directorPlanPrompt({ req, agents, chat, projectBrief }) {
+  const history = chat.map((m) => `${m.role === 'user' ? 'UTENTE' : (m.agentName || 'STUDIO')}: ${truncate(m.text, 600)}`).join('\n');
+  return `Sei la Regia dello studio. Ricevi una richiesta dall'utente e decidi come gestirla.
+
+## Squadra disponibile (usa SOLO questi id)
+${rosterText(agents)}
+
+## Tipi di task
+${Object.entries(TASK_KINDS).map(([k, v]) => `- ${k}: ${v}`).join('\n')}
+
+## Progetto (estratto)
+${truncate(projectBrief, 3500)}
+
+## Conversazione recente
+${history || '(nessuna)'}
+
+## Nuova richiesta dell'utente (${req.id})
+${req.text}
+
+## Come rispondere
+Puoi leggere i file del repository (sei nella cartella del gioco) se ti serve per capire, ma NON modificare niente.
+- Se è una domanda o una chiacchiera che non richiede modifiche, rispondi direttamente in "reply" e lascia "tasks" vuoto.
+- Altrimenti scomponi in POCHI task (di solito 1-4), ognuno assegnato all'agente giusto per id, con dipendenze via "dependsOn" (chiavi di altri task).
+- Dopo ogni task che modifica il gioco (implement, narrative, art, level, audio, puzzle) ci deve essere un task "test" per il QA che dipende da esso.
+- Quando cambiano personaggi, luoghi o fatti del mondo, aggiungi alla fine un task "lore" per il Custode della Bibbia (se c'è).
+- Le istruzioni di ogni task devono essere autosufficienti e concrete (file, comportamento atteso, criteri di accettazione).
+- Se la richiesta chiede di scegliere tu un miglioramento, sceglilo tu e scrivilo nelle istruzioni: non rimandare la scelta all'utente. Preferisci il più piccolo e sicuro possibile (un testo, un'indicazione a schermo, un valore di bilanciamento, un feedback visivo), con pochi casi limite e verificabile nel browser automatico (window.game).
+- Chiedi all'utente SOLO se serve un giudizio umano (gusto, direzione creativa ambigua): in quel caso "needsUser": true e la domanda in "reply".
+- "reply" è il messaggio breve (italiano, asciutto) che l'utente legge subito.
+
+Rispondi con UN SOLO blocco JSON:
+\`\`\`json
+{"reply": "…", "needsUser": false, "tasks": [
+  {"key": "t1", "agent": "<id>", "kind": "implement", "title": "titolo breve", "instructions": "…", "dependsOn": []},
+  {"key": "t2", "agent": "<id>", "kind": "test", "title": "…", "instructions": "cosa verificare", "dependsOn": ["t1"]}
+]}
+\`\`\``;
+}
+
+export function taskPrompt({ task, req, agent, deps, contextList, qaCmd, extra }) {
+  const depText = deps.length ? deps.map((d) => `### ${d.id} — ${d.agentName} (${d.kind}): ${d.title}\n${truncate(d.result?.summary || '', 1500)}\n${d.result?.handoff ? 'Passaggio di consegne: ' + truncate(d.result.handoff, 2500) : ''}\n${d.result?.output ? truncate(d.result.output, 3000) : ''}`).join('\n\n') : '(nessuno)';
+  const out = [`# Task ${task.id} — ${task.title}`,
+    `Sei ${agent.name} (${agent.role}) nello studio virtuale che sviluppa TQ:EVS.`,
+    `Richiesta originale dell'utente (${req.id}): "${req.text}"`,
+    '',
+    '## Istruzioni del task',
+    task.instructions || task.title,
+    '',
+    '## Risultati dei task da cui dipendi',
+    depText,
+    '',
+    '## Contesto',
+    `Leggi SOLO quello che serve. Documenti di progetto pertinenti al tuo ruolo:\n${contextList || '(nessuno)'}`,
+    'Stai lavorando in un worktree git dedicato a questa richiesta (la cartella corrente). NON fare commit, push, checkout, reset: il commit lo fa lo Studio a tuo nome quando finisci.',
+    qaCmd ? `Verifica rapida disponibile: \`${qaCmd} --no-browser\` (controlli statici), oppure senza --no-browser per provare il gioco nel browser.` : '',
+  ];
+  if (extra) out.push('', extra);
+  out.push('', '## Consegna',
+    'Quando hai finito, scrivi un breve riepilogo e chiudi con UN blocco JSON:',
+    '```json',
+    '{"summary": "cosa hai fatto in 1-3 frasi", "filesChanged": ["percorsi"], "handoff": "cosa deve sapere chi viene dopo (per il QA: come verificare)", "notes": "limiti o dubbi"' + (task.kind === 'art' ? ', "imageRequests": [{"file": "assets/generated/nome.png", "prompt": "prompt dettagliato", "size": "1024x1024", "purpose": "dove si usa"}]' : '') + '}',
+    '```');
+  return out.filter((x) => x !== '').join('\n');
+}
+
+export const QA_STEPS_HELP = `Scenario personalizzato del QA harness: --steps '<JSON>' con un array di passi:
+  {"action":"startLevel","id":"level2"}           avvia un livello (id da levels/index.json)
+  {"action":"key","key":"KeyD","ms":800}          tiene premuto un tasto (codici KeyboardEvent.code)
+  {"action":"press","key":"Enter"}                pressione singola
+  {"action":"wait","ms":1000}
+  {"action":"click","x":640,"y":360}
+  {"action":"eval","js":"return window.game.scene.getScene('Game').player.x","expect":123}  (oppure "truthy":true)
+  {"action":"screenshot","name":"dopo_la_modifica"}
+Nel browser: window.game è il Phaser.Game; scene: Boot, Menu, Game, Hud, Calibra.
+Esempio: node <HARNESS> --root . --levels level2 --out <DIR> --steps '[{"action":"startLevel","id":"level2"},{"action":"eval","js":"return !!window.game.scene.getScene(\\'Game\\').player"}]'`;
+
+export function qaPrompt({ task, req, agent, deps, diff, harnessSummary, harnessCmd, outDir, contextList }) {
+  return `# Task QA ${task.id} — ${task.title}
+Sei ${agent.name} (${agent.role}). Non modificare file del gioco: verifica e riporta.
+Richiesta originale (${req.id}): "${req.text}"
+
+## Cosa verificare
+${task.instructions || task.title}
+
+## Cosa hanno fatto gli altri agenti
+${deps.map((d) => `- ${d.id} ${d.agentName} (${d.kind}): ${truncate(d.result?.summary || '', 800)}${d.result?.handoff ? '\n  Come verificare: ' + truncate(d.result.handoff, 1200) : ''}`).join('\n') || '(nessuno)'}
+
+## Modifiche nel branch (diff rispetto alla base)
+\`\`\`diff
+${truncate(diff, 10000)}
+\`\`\`
+
+## Risultato del test automatico già eseguito dallo Studio (statico + tutti i livelli nel browser)
+${harnessSummary}
+Gli screenshot sono in ${outDir} (puoi aprirli con Read).
+
+## Strumenti
+Puoi rilanciare il harness con uno scenario mirato alla modifica (consigliato se la modifica è visibile in gioco):
+${QA_STEPS_HELP.replace(/<HARNESS>/g, harnessCmd.replace(/^node /, '')).replace(/<DIR>/g, outDir)}
+Documenti utili:
+${contextList}
+
+## Verdetto
+Controlla che la modifica richiesta ci sia davvero e funzioni, e che non ci siano regressioni.
+Chiudi con UN blocco JSON:
+\`\`\`json
+{"verdict": "PASS", "summary": "1-3 frasi", "checks": ["cosa hai verificato e come"], "bugs": [{"title": "…", "steps": "passi per riprodurre", "expected": "…", "actual": "…", "severity": "alta|media|bassa"}]}
+\`\`\`
+verdict = "FAIL" se la modifica manca, non funziona o rompe qualcosa (con almeno un bug). Difetti puramente cosmetici e non richiesti: PASS con nota.
+Se una verifica non riesci a eseguirla (limite dell'ambiente), NON è un bug: scrivilo in "checks". Nei "bugs" solo difetti reali del gioco.
+Il harness si lancia con il percorso assoluto indicato sopra (non con un percorso relativo).`;
+}
+
+export function reportPrompt({ req, facts }) {
+  return `Scrivi il rapporto finale per l'utente sulla richiesta ${req.id}: "${req.text}".
+Italiano, asciutto, massimo 8 righe: cosa è cambiato nel gioco (in termini di gameplay/esperienza), chi ha lavorato, come è stato verificato, esito. Non inventare nulla oltre ai fatti.
+Fatti:
+${truncate(JSON.stringify(facts, null, 1), 9000)}
+Rispondi solo con il testo del rapporto (niente JSON).`;
+}
