@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { makeFixtureRepo, ScriptedProvider, registryWith, studioFor, waitFor, planJSON, sh } from './helpers.js';
 import { createServer } from '../server/app.js';
 import { extractJSON } from '../server/util.js';
@@ -37,7 +38,7 @@ test('agenti: caricati dai predefiniti, rinomina persistente dopo il riavvio', a
   const root = makeFixtureRepo();
   const s1 = await studioFor(root, registryWith(studioProvider()));
   const ids = s1.agents.list().map((a) => a.id).sort();
-  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'puzzle', 'qa']);
+  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'office', 'puzzle', 'qa']);
   assert.equal(s1.agents.get('dev').name, 'Tizo');
   s1.agents.update('dev', { name: 'Pippo', role: 'Capo Codice', avatar: { emoji: '🦊' } });
   s1.store.flush();
@@ -200,7 +201,7 @@ test('server HTTP: stato, chat, modifica agente e stream di eventi SSE', async (
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const st = await (await fetch(`${base}/api/state`)).json();
-    assert.equal(st.agents.filter((a) => a.visible).length, 8);
+    assert.equal(st.agents.filter((a) => a.visible).length, 9);
     const page = await (await fetch(`${base}/`)).text();
     assert.match(page, /GAME STUDIO/);
     // SSE
@@ -290,4 +291,99 @@ test('dipendenze: Coso scrive il dialogo → Tizo lo implementa (riceve il passa
   assert.equal(meta.assets[0].agent, 'art');
   const authors = sh(req.worktree, 'log', '--format=%an', `${req.baseCommit}..HEAD`).split('\n');
   assert.deepEqual(authors.sort(), ['Cosetta (Studio)', 'Coso (Studio)', 'Tizo (Studio)']);
+});
+
+test('Responsabile dell\'ufficio: riarreda e cambia un personaggio (dati), senza toccare il gioco; poi si annulla', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'o', agent: 'office', kind: 'office', title: 'Metti una pianta e cambia la maglia di Tizia', dependsOn: [] }]);
+    if (o.agent.id === 'office') {
+      assert.ok(fs.existsSync(path.join(o.cwd, 'GUIDA_UFFICIO.md')));
+      const off = JSON.parse(fs.readFileSync(path.join(o.cwd, 'office.json'), 'utf8'));
+      off.decor.push({ type: 'plant', x: 7, y: 7, size: 1 });
+      fs.writeFileSync(path.join(o.cwd, 'office.json'), JSON.stringify(off));
+      const looks = JSON.parse(fs.readFileSync(path.join(o.cwd, 'agents-look.json'), 'utf8'));
+      looks.find((l) => l.id === 'qa').avatar.character.shirt = '#123456';
+      looks.find((l) => l.id === 'qa').name = 'NON DEVE CAMBIARE';
+      fs.writeFileSync(path.join(o.cwd, 'agents-look.json'), JSON.stringify(looks));
+      return { text: '{"summary":"pianta e maglia"}' };
+    }
+    return { text: '{}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const before = s.office.get().decor.length;
+  const req = await s.orch.handleUserMessage('Metti una pianta in mezzo all\'ufficio e dai a Tizia una maglia blu scuro');
+  await waitFor(() => req.status === 'DONE', 10000, 'DONE');
+  assert.equal(req.worktree, undefined, 'nessuna copia del gioco per un lavoro sull\'ufficio');
+  assert.equal(s.orch.tasksOf(req.id).some((t) => t.kind === 'test'), false, 'niente test del gioco');
+  assert.equal(s.office.get().decor.length, before + 1);
+  assert.equal(s.agents.get('qa').avatar.character.shirt, '#123456');
+  assert.equal(s.agents.get('qa').name, 'Tizia');
+  s.office.undo(s.agents);
+  assert.equal(s.office.get().decor.length, before);
+  assert.notEqual(s.agents.get('qa').avatar.character.shirt, '#123456');
+});
+
+test('Responsabile dell\'ufficio: un office.json rotto viene rifiutato e l\'ufficio resta com\'era', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'o', agent: 'office', kind: 'office', title: 'rompi', dependsOn: [] }]);
+    fs.writeFileSync(path.join(o.cwd, 'office.json'), '{"room":{"w":3,"d":3},"stations":[],"decor":[{"type":"astronave"}]}');
+    return { text: '{}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const before = JSON.stringify(s.office.get());
+  const req = await s.orch.handleUserMessage('arreda');
+  await waitFor(() => req.status === 'NEEDS_USER', 10000);
+  assert.equal(JSON.stringify(s.office.get()), before);
+  assert.match(s.orch.tasksOf(req.id)[0].lastError, /astronave|room\.w/);
+});
+
+test('Responsabile dell\'ufficio: modifica al codice dello Studio in un branch del repository dello Studio, poi unione', async () => {
+  const root = makeFixtureRepo();
+  const studioRepo = makeFixtureRepo();   // un repository qualsiasi fa da "Studio"
+  fs.mkdirSync(path.join(studioRepo, 'web'), { recursive: true });
+  fs.writeFileSync(path.join(studioRepo, 'web', 'ui.js'), 'export const colore = "rosa";\n');
+  sh(studioRepo, 'add', '-A'); sh(studioRepo, 'commit', '-q', '-m', 'ui');
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 's', agent: 'office', kind: 'studio_ui', title: 'Tema verde', dependsOn: [] }]);
+    fs.writeFileSync(path.join(o.cwd, 'web', 'ui.js'), 'export const colore = "verde";\n');
+    return { text: '{"summary":"tema verde"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { studioTests: false }, { studioRepo });
+  const req = await s.orch.handleUserMessage('Fai il tema dello Studio verde');
+  await waitFor(() => req.status === 'DONE', 10000);
+  assert.equal(fs.readFileSync(path.join(studioRepo, 'web', 'ui.js'), 'utf8'), 'export const colore = "rosa";\n', 'lo Studio in uso non cambia prima dell\'unione');
+  assert.equal(req.report.studioCommits.length, 1);
+  await s.orch.merge(req.id);
+  assert.equal(fs.readFileSync(path.join(studioRepo, 'web', 'ui.js'), 'utf8'), 'export const colore = "verde";\n');
+});
+
+test('provider Codex: legge gli eventi JSONL di `codex exec` (CLI finta)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-'));
+  const bin = path.join(dir, 'codex');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === '--version') { console.log('codex-cli 9.9'); process.exit(0); }
+if (a[0] === 'login') { console.log('Logged in using ChatGPT'); process.exit(0); }
+let input = ''; process.stdin.on('data', (d) => input += d).on('end', () => {
+  const out = a[a.indexOf('-o') + 1];
+  console.log(JSON.stringify({ type: 'thread.started' }));
+  console.log(JSON.stringify({ type: 'error', message: 'Reconnecting... 1/5' }));
+  console.log(JSON.stringify({ type: 'item.started', item: { type: 'command_execution', command: 'ls' } }));
+  console.log(JSON.stringify({ type: 'item.completed', item: { type: 'file_change', changes: [{ path: 'src/x.js', kind: 'update' }] } }));
+  console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'fatto ' + (input.includes('RUOLO-X') ? 'con ruolo' : '') } }));
+  require('fs').writeFileSync(out, '{"summary":"ok da codex"}');
+  console.log(JSON.stringify({ type: 'turn.completed' }));
+});
+`);
+  fs.chmodSync(bin, 0o755);
+  const { CodexProvider } = await import('../server/providers/codex.js');
+  const p = new CodexProvider({ bin });
+  const ev = [];
+  const r = await p.run({ prompt: 'fai', system: 'RUOLO-X', cwd: dir, mode: 'work', onEvent: (e) => ev.push(e.tool || e.type) });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.text, '{"summary":"ok da codex"}');
+  assert.deepEqual(ev, ['Bash', 'Edit', 'text']);
+  assert.match(r.allText, /con ruolo/);
 });

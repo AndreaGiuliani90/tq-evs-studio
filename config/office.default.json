@@ -64,12 +64,12 @@
       "y": 4.9
     },
     {
-      "agent": null,
+      "agent": "office",
       "wall": "R",
-      "at": 5.6,
-      "b0": 8.6,
-      "kind": "pc",
-      "spare": true
+      "at": 8.3,
+      "b0": 9.3,
+      "kind": "manager",
+      "spare": false
     },
     {
       "agent": null,
@@ -102,7 +102,7 @@
     {
       "type": "noticeboard",
       "wall": "R",
-      "at": 9.9,
+      "at": 9.6,
       "w": 2.0,
       "title": "SAGRA"
     },
@@ -125,7 +125,7 @@
     {
       "type": "map",
       "wall": "L",
-      "at": 10.4,
+      "at": 9.5,
       "w": 1.5
     },
     {
@@ -147,26 +147,75 @@
     },
     {
       "type": "plant",
-      "x": 13.3,
-      "y": 1.3,
-      "size": 1.1
-    },
-    {
-      "type": "plant",
       "x": 2.8,
       "y": 12.3,
       "size": 0.9
     },
     {
-      "type": "plant",
-      "x": 0.6,
-      "y": 0.6,
-      "size": 0.7
+      "type": "bookcase",
+      "wall": "R",
+      "at": 12.0,
+      "w": 1.8,
+      "h": 72
     },
     {
-      "type": "bench",
-      "x": 8.6,
-      "y": 12.1
+      "type": "bookcase",
+      "wall": "L",
+      "at": 11.3,
+      "w": 1.6,
+      "h": 60
+    },
+    {
+      "type": "shelf",
+      "wall": "R",
+      "at": 5.9,
+      "w": 2.2,
+      "z": 84
+    },
+    {
+      "type": "shelf",
+      "wall": "L",
+      "at": 1.2,
+      "w": 2.4,
+      "z": 82
+    },
+    {
+      "type": "frame",
+      "wall": "R",
+      "at": 8.7,
+      "w": 1.1,
+      "z": 58,
+      "h": 24,
+      "picture": "borgo"
+    },
+    {
+      "type": "frame",
+      "wall": "L",
+      "at": 7.3,
+      "w": 0.9,
+      "z": 60,
+      "h": 18,
+      "picture": "foto"
+    },
+    {
+      "type": "frame",
+      "wall": "L",
+      "at": 8.4,
+      "w": 0.8,
+      "z": 58,
+      "h": 16,
+      "picture": "tq"
+    },
+    {
+      "type": "tallplant",
+      "x": 0.9,
+      "y": 0.9,
+      "size": 1.15
+    },
+    {
+      "type": "floorlamp",
+      "x": 11.2,
+      "y": 12.5
     }
   ]
 }

@@ -8,5 +8,6 @@
   "qaSettleMs": 2500,
   "autoMerge": false,
   "directorProseReport": true,
-  "chatContextMessages": 8
+  "chatContextMessages": 8,
+  "studioTests": true
 }

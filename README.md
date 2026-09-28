@@ -13,6 +13,7 @@ la Regia smista il lavoro alla squadra, segue le dipendenze, fa testare e ti scr
 | **Rumore** — Suono & Musica | `audio` | effetti, integrazione delle tracce, volumi |
 | **Custode** — Custode della Bibbia | `lore` | canone, coerenza, cosa riportare nella Bibbia del mondo |
 | **Enigma** — Enigmista | `puzzle` | indagini ed enigmi: indizi, prerequisiti, soluzioni |
+| **Arredo** — Responsabile dell'ufficio | `office` | arreda l'ufficio e cambia l'aspetto dei personaggi su tuo ordine; su richiesta modifica l'interfaccia dello Studio |
 | Regia — Director (solo in chat) | `director` | capisce, pianifica, delega, riferisce |
 
 Lo Studio è un **repository separato** dal gioco. Sul Mac le due cartelle stanno una accanto all'altra:
@@ -122,11 +123,25 @@ Per personalizzarlo copialo in `data/office.json` e modificalo: lo Studio usa qu
 `pc`, `tv`, `typewriter`, `easel`, `table`; arredi: `window`, `banner`, `noticeboard`, `map`, `clock`, `lantern`,
 `rug`, `plant`, `crates`, `sideboard`, `bench`. Il disegno è tutto in `web/office.js`.
 
+### Il Responsabile dell'ufficio
+
+Chiedi in chat, per esempio *«metti una pianta grande vicino alla finestra e dai a Tizia i capelli corti»*:
+la Regia passa il lavoro al Responsabile dell'ufficio, che modifica l'arredo e l'aspetto dei personaggi. Il cambiamento
+si vede subito; se non ti piace, **↶ Annulla ultimo arredo** (in alto a destra nell'ufficio) riporta tutto com'era
+(le versioni precedenti stanno in `data/office-history/`).
+
+Se chiedi modifiche al **programma** dello Studio (interfaccia, colori, animazioni), il Responsabile lavora su un branch
+del repository dello Studio, lo Studio controlla la sintassi e lancia i suoi test; poi premi **Unisci** e riavvii lo
+Studio. Il gioco non viene mai toccato.
+
+Laboratorio dei personaggi (tutte le pose): http://localhost:4173/sprite-lab.html?all=1
+
 ## Cambiare l'avatar
 
 Nello stesso pannello, riquadro **Avatar**:
 
-- **pixel** (predefinito): personaggio disegnato in codice — scegli pelle, capelli, pettinatura, maglia, accessorio.
+- **pixel** (predefinito): personaggio in pixel art disegnato in codice — scegli pelle, capelli, occhi, pettinatura,
+  vestito (maglietta, camicia, felpa, maglione, grembiule, camice, gilet), barba, accessorio.
   È lo stesso personaggio che siede nell'ufficio.
 - **emoji**: scegli emoji e colore.
 - **image**: carica un'immagine (png/jpg/gif/webp/svg).
@@ -145,7 +160,13 @@ Il provider di ogni agente è `auto` = il primo disponibile fra:
 1. **Claude Code** (consigliato): il comando `claude` già installato e autenticato. Niente da fare.
    Se lo Studio non lo trova: `which claude` e scrivi il percorso nel file `.env` dello Studio come `CLAUDE_CODE_BIN=…`.
 2. **API Anthropic**: chiave nel file `.env` → `ANTHROPIC_API_KEY=sk-ant-…`
-3. **Immagini per Cosetta** (facoltativo): `OPENAI_API_KEY=sk-…`. Senza chiave le richieste di immagini restano come
+3. **ChatGPT (Codex)**: col tuo account ChatGPT, senza chiavi.
+   ```bash
+   npm i -g @openai/codex && codex login
+   ```
+   Poi nel pannello di un agente scegli **Provider = codex** (per esempio un secondo QA, o Cosetta). Se `codex` non
+   è nel PATH: `CODEX_BIN=/percorso/codex` nel file `.env`.
+4. **Immagini per Cosetta** (facoltativo): `OPENAI_API_KEY=sk-…`. Senza chiave le richieste di immagini restano come
    brief "in attesa" in `assets/generated/metadata.json`; tutto il resto funziona.
 
 ```bash

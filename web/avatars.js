@@ -12,7 +12,10 @@
 //   { type: 'pixel', character: { skin, hair, hairStyle, shirt, accessory, accColor } }   ← predefinito: ritratto disegnato in codice
 // Nell'ufficio isometrico (office.js) lo stesso avatar.character diventa il personaggio alla scrivania.
 
-import { drawPortrait, lookOf } from './pixel.js';
+import { buildPortrait } from './sprites.js';
+
+function drawPortrait(canvas, look) { const p = buildPortrait(look); canvas.width = p.width; canvas.height = p.height; canvas.getContext('2d').drawImage(p, 0, 0); }
+const lookOf = (agent) => agent?.avatar?.character || {};
 
 const PROPS = { typing: '⌨️', 'writing-notes': '📝', playing: '🎮', waiting: '⏳', question: '❓', celebrate: '✨', error: '⚠️', idle: '' };
 

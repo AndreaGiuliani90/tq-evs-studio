@@ -12,6 +12,8 @@ export const TASK_KINDS = {
   audio: 'suono e musica: effetti, integrazione delle tracce, volumi',
   lore: 'controllo del canone e della Bibbia del mondo (solo documenti, non cambia il gioco)',
   puzzle: 'enigmi e indagini: indizi, prerequisiti, soluzioni',
+  office: "arredo e aspetto dell'ufficio dello Studio (mobili, luci, colori, aspetto dei personaggi): non tocca il gioco",
+  studio_ui: 'modifiche al programma GAME STUDIO stesso (interfaccia, grafica, animazioni): non tocca il gioco',
 };
 
 export function rosterText(agents) {
@@ -44,6 +46,7 @@ Puoi leggere i file del repository (sei nella cartella del gioco) se ti serve pe
 - Se è una domanda o una chiacchiera che non richiede modifiche, rispondi direttamente in "reply" e lascia "tasks" vuoto.
 - Altrimenti scomponi in POCHI task (di solito 1-4), ognuno assegnato all'agente giusto per id, con dipendenze via "dependsOn" (chiavi di altri task).
 - Dopo ogni task che modifica il gioco (implement, narrative, art, level, audio, puzzle) ci deve essere un task "test" per il QA che dipende da esso.
+- Le richieste sull'ufficio o sull'aspetto dello Studio (arredi, colori, personaggi, interfaccia) vanno al Responsabile dell'ufficio (tipo "office" per arredo e aspetto, "studio_ui" per il codice dell'interfaccia): NON serve un test del QA del gioco.
 - Quando cambiano personaggi, luoghi o fatti del mondo, aggiungi alla fine un task "lore" per il Custode della Bibbia (se c'è).
 - Le istruzioni di ogni task devono essere autosufficienti e concrete (file, comportamento atteso, criteri di accettazione).
 - Se la richiesta chiede di scegliere tu un miglioramento, sceglilo tu e scrivilo nelle istruzioni: non rimandare la scelta all'utente. Preferisci il più piccolo e sicuro possibile (un testo, un'indicazione a schermo, un valore di bilanciamento, un feedback visivo), con pochi casi limite e verificabile nel browser automatico (window.game).

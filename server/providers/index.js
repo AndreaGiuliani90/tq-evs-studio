@@ -3,6 +3,7 @@
 import { ClaudeCodeProvider } from './claude-code.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIImageProvider } from './openai-image.js';
+import { CodexProvider } from './codex.js';
 
 export class MockProvider {
   constructor() { this.id = 'mock'; this.kind = 'text'; this.label = 'Nessun AI (modalità dimostrativa)'; }
@@ -18,6 +19,7 @@ export class ProviderRegistry {
     this.providers = new Map();
     this.register(new ClaudeCodeProvider());
     this.register(new AnthropicProvider());
+    this.register(new CodexProvider());
     this.register(new OpenAIImageProvider());
     this.register(new MockProvider());
     this.autoOrder = ['claude-code', 'anthropic', 'mock'];

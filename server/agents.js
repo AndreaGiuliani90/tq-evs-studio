@@ -36,6 +36,10 @@ export class AgentRegistry {
         const untouched = !a.avatar || (a.avatar.type === 'emoji' && a.avatar.emoji === def.avatar.emoji);
         a.avatar = { ...(a.avatar || {}), character: structuredClone(def.avatar.character), ...(untouched ? { type: 'pixel' } : {}) };
       }
+      // personaggio predefinito ridisegnato (lookVersion più alta): si aggiorna, a meno che l'utente non l'abbia personalizzato
+      if (def?.avatar?.character && !a.avatar?.userEdited && (a.avatar?.lookVersion || 0) < (def.avatar.lookVersion || 0)) {
+        a.avatar = { ...(a.avatar || {}), type: a.avatar?.type === 'emoji' || !a.avatar?.type ? 'pixel' : a.avatar.type, character: structuredClone(def.avatar.character), lookVersion: def.avatar.lookVersion };
+      }
       // dopo un riavvio nessuno sta lavorando davvero: il scheduler rimette in coda i task interrotti
       if (!['IDLE', 'ERROR', 'BLOCKED'].includes(a.runtime.status)) { a.runtime.status = 'IDLE'; a.runtime.currentTaskId = null; a.runtime.currentTaskTitle = null; }
     }
@@ -55,7 +59,7 @@ export class AgentRegistry {
     const a = this.get(id);
     if (!a) throw new Error(`agente sconosciuto: ${id}`);
     for (const k of EDITABLE) if (k in patch) a[k] = patch[k];
-    if (patch.avatar) a.avatar = { ...(a.avatar || {}), ...patch.avatar };
+    if (patch.avatar) a.avatar = { ...(a.avatar || {}), ...patch.avatar, userEdited: patch.avatar.userEdited ?? true };
     a.updatedAt = now();
     this.store.save();
     this.events.emit('agent.updated', { agentId: id, agent: this.public(a) });

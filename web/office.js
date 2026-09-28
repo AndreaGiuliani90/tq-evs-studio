@@ -9,7 +9,8 @@
 //   - mette ogni agente alla sua postazione e lo anima secondo lo stato
 //   - reagisce agli eventi (agent.editing → scintille dalla tastiera, agent.completed → coriandoli, …)
 // Avatar di tipo "spritesheet": al posto del personaggio disegnato si usa il foglio di sprite dell'utente.
-import { drawText, textWidth, shade, lookOf } from './pixel.js';
+import { drawText, textWidth, shade } from './pixel.js';
+import { cachedSprite, SPRITE_W, SPRITE_H } from './sprites.js';
 
 const LW = 448, LH = 356;          // risoluzione logica (poi ingrandita a pixel pieni)
 const TW = 16, TH = 8;             // mezza casella isometrica
@@ -112,9 +113,9 @@ export class Office {
   }
 
   seatOf(st) {
-    if (st.kind === 'table') return [st.x + 1.1, st.y + 0.8];
+    if (st.kind === 'table') return [st.x + 1.2, st.y + 0.35];
     const L = this.local(st);
-    return L.xy(1.3, 1.75);
+    return L.xy(1.4, 0.75);
   }
 
   // ── etichette DOM sopra i personaggi (nome + stato; clic = dettaglio) ──────────────────────
@@ -124,7 +125,7 @@ export class Office {
     for (const st of this.stations()) {
       const a = this.agents[st.agentId]; if (!a) continue;
       const [x, y] = this.seatOf(st);
-      const [sx, sy] = this.iso(x, y, st.kind === 'table' ? 34 : 58);
+      const [sx, sy] = this.iso(x, y, 74);
       const el = document.createElement('button');
       el.className = `otag${st.kind === 'table' ? ' otag-table' : ''}`;
       el.dataset.agent = a.id;
@@ -136,7 +137,7 @@ export class Office {
       // area cliccabile sul personaggio
       const hit = document.createElement('button');
       hit.className = 'ohit'; hit.title = `${a.name} — ${a.role}`;
-      const [hx, hy] = this.iso(x, y, 30);
+      const [hx, hy] = this.iso(x, y, 44);
       hit.style.left = `${(hx / LW) * 100}%`; hit.style.top = `${(hy / LH) * 100}%`;
       hit.onclick = () => this.onSelect?.(a.id);
       this.overlay.appendChild(hit);
@@ -193,12 +194,18 @@ export class Office {
     for (const d of this.layout.decor) if (!d.wall && d.type !== 'rug') items.push({ k: d.x + d.y + (d.type === 'crates' ? 1 : 0.5), draw: () => this.drawDecor(d, t) });
     for (const st of this.stations()) {
       const a = this.agents[st.agentId];
-      if (st.kind === 'table') { items.push({ k: st.x + st.y + 1.6, draw: () => this.drawTable(st, a, t) }); continue; }
-      const L = this.local(st);
-      const [dx, dy] = L.xy(1.3, 0.6);
-      items.push({ k: dx + dy, draw: () => this.drawStation(st, a, t) });
       const [cx, cy] = this.seatOf(st);
-      items.push({ k: cx + cy + 0.2, draw: () => this.drawCharacter(st, a, t) });
+      if (st.kind === 'table') {
+        items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
+        items.push({ k: st.x + st.y + 1.9, draw: () => this.drawTable(st, a, t) });
+        continue;
+      }
+      const L = this.local(st);
+      const [bx, by] = L.xy(1.4, 0.3);
+      items.push({ k: bx + by, draw: () => this.drawChair(st, a) });
+      items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
+      const [dx, dy] = L.xy(1.4, 1.9);
+      items.push({ k: dx + dy, draw: () => this.drawStation(st, a, t) });
     }
     items.sort((p, q) => p.k - q.k);
     for (const it of items) it.draw();
@@ -298,6 +305,49 @@ export class Office {
 
   drawWallDecor(ctx, d, sky, date) {
     const H = this.layout.room.wallH;
+    // mobili appoggiati al muro: si disegnano con box() sulla tela statica
+    if (['bookcase', 'shelf', 'frame'].includes(d.type)) {
+      const keep = this.ctx; this.ctx = ctx;
+      const R = d.wall === 'R';
+      const bx = (a, b, al, bl, z, h, c1, c2, c3) => { const [x, y, w, dd] = R ? [d.at + a, b, al, bl] : [b, d.at + a, bl, al]; this.box(x, y, z, w, dd, h, c1, c2, c3); };
+      const w = d.w || 1.6;
+      if (d.type === 'bookcase') {
+        const h = d.h || 70;
+        bx(0, 0, w, 0.55, 0, h, PAL.woodT, PAL.woodF, PAL.woodS);
+        const shelves = Math.max(3, Math.round(h / 17));
+        const cols = ['#8e5ad6', '#d65a5a', '#3d7a3a', '#e0a53d', '#5a8fd6', '#c9ccd4', '#b35a39'];
+        for (let i = 0; i < shelves; i++) {
+          const z = 3 + i * ((h - 6) / shelves);
+          let a = 0.08, k = i * 3;
+          while (a < w - 0.15) { const bw = 0.08 + rnd(k) * 0.08, bh = 8 + rnd(k + 7) * 5; if (rnd(k + 3) > 0.2) bx(a, 0.3, bw, 0.28, z, bh, shade(cols[k % cols.length], 0.1), cols[k % cols.length], shade(cols[k % cols.length], -0.25)); a += bw + 0.01; k++; }
+          bx(0.02, 0.02, w - 0.04, 0.56, z - 1.5, 1.5, PAL.woodT, PAL.woodF, PAL.woodS);
+        }
+        if (d.top !== false) { bx(w * 0.25, 0.1, 0.35, 0.35, h, 8, '#7a3a24', PAL.pot, PAL.potD); const [px, py] = R ? this.iso(d.at + w * 0.25 + 0.17, 0.27, h + 8) : this.iso(0.27, d.at + w * 0.25 + 0.17, h + 8); for (const [ox, oy, r] of [[0, -4, 5], [-4, -1, 4], [4, -1, 4], [-2, -8, 3], [3, -7, 3]]) { ctx.fillStyle = PAL.leafD; ctx.beginPath(); ctx.arc(px + ox, py + oy + 1, r, 0, 7); ctx.fill(); ctx.fillStyle = PAL.leaf; ctx.beginPath(); ctx.arc(px + ox, py + oy, r - 1, 0, 7); ctx.fill(); } }
+      }
+      if (d.type === 'shelf') {
+        const z = d.z || 78;
+        bx(0, 0, w, 0.4, z, 2, PAL.woodT, PAL.woodF, PAL.woodS);
+        for (let i = 0; i < Math.floor(w / 0.45); i++) {
+          const a = 0.1 + i * 0.45;
+          if (i % 3 === 1) { bx(a, 0.1, 0.25, 0.25, z + 2, 6, '#7a3a24', PAL.pot, PAL.potD); const [px, py] = R ? this.iso(d.at + a + 0.12, 0.22, z + 8) : this.iso(0.22, d.at + a + 0.12, z + 8); ctx.fillStyle = PAL.leaf; for (let v = 0; v < 5; v++) ctx.fillRect(Math.round(px) - 3 + v * 1.5, Math.round(py) - 2 + (v % 2) * 2, 1, 8 - (v % 2) * 3); }
+          else bx(a, 0.1, 0.22, 0.25, z + 2, 5 + (i % 2) * 3, i % 2 ? '#e8e1d4' : '#c9a24a', i % 2 ? '#cfc6b6' : '#a8862e', i % 2 ? '#b9b0a0' : '#8a6c20');
+        }
+      }
+      if (d.type === 'frame') {
+        const z0 = d.z || 52, hh = d.h || 22;
+        const r = this.wallRect(d.wall, d.at, d.at + w, z0, z0 + hh);
+        poly(ctx, r.pts, PAL.woodD);
+        const [img, x] = tela(24, 18);
+        const theme = d.picture || 'borgo';
+        if (theme === 'borgo') { x.fillStyle = '#9fc4e0'; x.fillRect(0, 0, 24, 18); x.fillStyle = '#6b8f5a'; x.fillRect(0, 11, 24, 7); x.fillStyle = '#caa98a'; for (const [a, b, c2, e] of [[3, 7, 5, 5], [8, 5, 4, 7], [12, 8, 6, 4], [18, 6, 4, 6]]) x.fillRect(a, b, c2, e); x.fillStyle = '#b3533a'; for (const [a, b, c2] of [[2, 6, 7], [7, 4, 6], [11, 7, 8], [17, 5, 6]]) x.fillRect(a, b, c2, 1); x.fillStyle = '#fff4c4'; x.fillRect(19, 1, 3, 3); }
+        else if (theme === 'foto') { x.fillStyle = '#e9dfc8'; x.fillRect(0, 0, 24, 18); for (let i = 0; i < 5; i++) { x.fillStyle = ['#6b4a33', '#3b2a20', '#8a5a31', '#2a1d16', '#7a4a26'][i]; x.fillRect(2 + i * 4, 6, 3, 3); x.fillStyle = '#a0746a'; x.fillRect(2 + i * 4, 9, 3, 6); } x.fillStyle = '#b9a676'; x.fillRect(0, 15, 24, 3); }
+        else { x.fillStyle = '#1b1430'; x.fillRect(0, 0, 24, 18); x.fillStyle = '#ff4fa3'; for (let i = 0; i < 24; i++) x.fillRect(i, 9 + Math.round(Math.sin(i / 2) * 3), 1, 1); drawText(x, 'TQ', 8, 2, '#3fe0d0'); }
+        const inner = this.wallRect(d.wall, d.at + 0.08, d.at + w - 0.08, z0 + 2, z0 + hh - 2);
+        mapFace(ctx, img, inner.p0, inner.pu, inner.pv);
+      }
+      this.ctx = keep;
+      return;
+    }
     if (d.type === 'window') {
       const w = d.w || 1.6, z0 = 44, z1 = H - 22;
       const r = this.wallRect(d.wall, d.at, d.at + w, z0 - 3, z1 + 3);
@@ -446,126 +496,169 @@ export class Office {
     return img;
   }
 
+  // Postazione: la scrivania è staccata dal muro; il personaggio siede fra muro e scrivania, girato verso di noi.
+  // Coordinate locali: a = lungo il muro (0…2.8), b = distanza dal muro. Scrivania da b=1.15 a b=2.35.
   drawStation(st, agent, t) {
     const L = this.local(st), status = agent?.runtime?.status || 'IDLE';
     const W = (a, b, al, bl, z, h) => { const [x, y, w, d] = L.box(a, b, al, bl); this.wood(x, y, z, w, d, h); };
     const B = (a, b, al, bl, z, h, c1, c2, c3) => { const [x, y, w, d] = L.box(a, b, al, bl); this.box(x, y, z, w, d, h, c1, c2, c3); };
-    // scrivania: gambe, piano, cassettiera
-    W(0.15, 0.15, 0.18, 0.18, 0, 24); W(0.15, 1.05, 0.18, 0.18, 0, 24);
-    W(2.45, 0.15, 0.18, 0.18, 0, 24); W(2.45, 1.05, 0.18, 0.18, 0, 24);
-    W(1.7, 0.2, 0.9, 1.0, 0, 24);
-    B(0.05, 0.05, 2.7, 1.3, 24, 3, PAL.woodT, PAL.woodF, PAL.woodS);
-    const faceColor = agent?.avatar?.color;
-    if (['pc', 'easel', 'drafting', 'audio'].includes(st.kind)) {
-      // monitor (uno o due) con lo schermo verso la sedia
-      const mons = st.kind === 'pc' ? [[0.55, 0.9], [1.5, 0.9]] : st.kind === 'drafting' ? [[1.55, 0.9]] : [[1.1, 0.9]];
-      for (const [ma, ml] of mons) {
-        B(ma + 0.35, 0.35, 0.2, 0.2, 27, 6, PAL.metalL, PAL.metal, PAL.metal);
-        B(ma, 0.3, ml, 0.18, 33, 16, PAL.metalL, PAL.metal, '#2b2c36');
-        const f = this.frontFace(st, ma + 0.05, 0.3, ml - 0.1, 0.18, 34.5, 47.5);
-        mapFace(this.ctx, this.screenImage(st.kind, status, t + ma, faceColor), f.p0, f.pu, f.pv);
-      }
-      B(0.8, 0.85, 1.1, 0.35, 27, 1, '#2a2b33', '#1c1d24', '#1c1d24');   // tastiera
-      B(2.05, 0.95, 0.2, 0.25, 27, 1, '#2a2b33', '#1c1d24', '#1c1d24');  // mouse
+    const D0 = 1.15, DL = 1.2, TOP = 27;
+    // scrivania con pannello frontale (nasconde le gambe) e cassettiera
+    W(0.1, D0, 2.8, DL, 0, 24);
+    B(0.05, D0 - 0.05, 2.9, DL + 0.1, 24, 3, PAL.woodT, PAL.woodF, PAL.woodS);
+    const [dx0, dy0] = this.iso(...L.xy(0.35, D0 + DL), 6), [dx1, dy1] = this.iso(...L.xy(2.55, D0 + DL), 6);
+    this.ctx.fillStyle = PAL.woodD;
+    for (const [a1] of [[0.9], [1.9]]) { const [hx, hy] = this.iso(...L.xy(a1, D0 + DL), 16); this.ctx.fillRect(Math.round(hx) - 2, Math.round(hy), 4, 1); }
+    void dx0; void dy0; void dx1; void dy1;
+    const glow = (a, col) => { const [gx, gy] = this.iso(...L.xy(a, D0 + 0.3), 44); this.ctx.fillStyle = col; this.ctx.fillRect(Math.round(gx) - 1, Math.round(gy), 2, 1); };
+    const scr = status === 'ERROR' ? '#ff5d6c' : status === 'DONE' ? '#7bd88f' : status === 'BLOCKED' ? '#ffd166' : ['WORKING', 'TESTING'].includes(status) ? (Math.floor(t * 6) % 2 ? '#7ff9e4' : '#9fb7ff') : '#4a6fa0';
+    const monitor = (a, al) => {
+      B(a + al / 2 - 0.12, D0 + 0.35, 0.24, 0.2, TOP, 5, PAL.metalL, PAL.metal, PAL.metal);
+      B(a, D0 + 0.2, al, 0.16, TOP + 5, 17, '#4a4c5a', '#34353f', '#2b2c36');   // retro dello schermo verso di noi
+      glow(a + al / 2, scr);
+    };
+    if (['pc', 'drafting', 'audio', 'easel', 'puzzle', 'library'].includes(st.kind) && st.kind !== 'library') {
+      if (st.kind === 'pc') { monitor(0.45, 0.95); monitor(1.5, 0.95); }
+      else if (st.kind !== 'easel' && st.kind !== 'puzzle') monitor(1.0, 1.0);
     }
     if (st.kind === 'pc') {
-      B(2.3, 0.5, 0.25, 0.25, 27, 6, '#e8e1d4', '#cfc6b6', '#b9b0a0');   // tazza
-      B(0.15, 0.25, 0.35, 0.5, 27, 10, '#5a8fd6', '#3d6bb0', '#2f5690');  // libri
-      B(0.15, 0.25, 0.35, 0.5, 37, 5, '#d65a5a', '#b04040', '#903434');
+      B(2.45, D0 + 0.6, 0.25, 0.25, TOP, 6, '#e8e1d4', '#cfc6b6', '#b9b0a0');   // tazza
+      const [mx, my] = this.iso(...L.xy(2.57, D0 + 0.72), TOP + 7); if (Math.floor(t * 2) % 3 === 0) { this.ctx.fillStyle = '#ffffff55'; this.ctx.fillRect(Math.round(mx), Math.round(my) - (Math.floor(t * 4) % 3), 1, 2); }
+      B(0.1, D0 + 0.55, 0.3, 0.45, TOP, 9, '#5a8fd6', '#3d6bb0', '#2f5690');
+      B(0.1, D0 + 0.55, 0.3, 0.45, TOP + 9, 4, '#d65a5a', '#b04040', '#903434');
+      B(0.2, D0 + 0.1, 0.5, 0.35, TOP, 0.8, PAL.paper, '#e3d9c1', '#d2c7ad');   // post-it e fogli
     }
     if (st.kind === 'tv') {
-      // mobiletto con la TV a tubo e la console
-      B(0.4, 0.2, 1.8, 0.95, 27, 22, '#3a3a46', '#2c2c36', '#22222b');
-      const f = this.frontFace(st, 0.52, 0.2, 1.56, 0.95, 30, 46);
-      mapFace(this.ctx, this.screenImage('tv', status, t, faceColor), f.p0, f.pu, f.pv);
-      B(0.7, 0.25, 1.2, 0.6, 49, 3, '#2c2c36', '#22222b', '#1a1a22');
-      B(2.3, 0.4, 0.4, 0.5, 27, 4, '#f2f2f2', '#d7d7d7', '#bdbdbd');     // console
-      if (status !== 'TESTING') B(1.9, 1.0, 0.35, 0.2, 27, 2, '#222', '#111', '#111');   // pad posato sul tavolo
+      // TV a tubo sul tavolo (la vediamo da dietro), console accesa, cartucce
+      B(0.6, D0 + 0.15, 1.6, 0.9, TOP, 20, '#4a4a58', '#393946', '#2c2c36');
+      B(0.85, D0 + 0.3, 1.1, 0.6, TOP + 20, 3, '#393946', '#2c2c36', '#22222b');
+      glow(1.4, scr);
+      B(2.35, D0 + 0.45, 0.45, 0.55, TOP, 4, '#f2f2f2', '#d7d7d7', '#bdbdbd');
+      const [lx, ly] = this.iso(...L.xy(2.55, D0 + 1.0), TOP + 2); this.ctx.fillStyle = status === 'TESTING' ? '#ff4040' : '#5a2020'; this.ctx.fillRect(Math.round(lx), Math.round(ly), 1, 1);
+      for (let i = 0; i < 3; i++) B(0.1 + i * 0.16, D0 + 0.7, 0.12, 0.35, TOP, 5, ['#d65a5a', '#5a8fd6', '#7bd88f'][i], '#555', '#444');
     }
     if (st.kind === 'typewriter') {
-      B(0.9, 0.55, 1.0, 0.6, 27, 6, '#2f4a3a', '#243a2d', '#1b2c22');     // macchina da scrivere
-      const grow = status === 'WORKING' ? 4 + (Math.floor(t * 3) % 6) : 4;
-      B(1.05, 0.6, 0.7, 0.08, 33, grow + 4, PAL.paper, '#e3d9c1', '#d2c7ad');  // foglio che sale
-      B(2.0, 0.4, 0.6, 0.7, 27, 5, PAL.paper, '#e3d9c1', '#d2c7ad');       // pila di fogli
-      B(0.2, 0.3, 0.45, 0.6, 27, 14, '#8e5ad6', '#6d40b0', '#5a3490');     // libri
-      B(0.2, 0.3, 0.45, 0.6, 41, 6, '#e0a53d', '#c28a2a', '#a67320');
-      B(2.2, 1.0, 0.18, 0.18, 27, 7, '#f5f0e0', '#e3dccb', '#cfc7b4');     // candela
-      const [cx, cy] = this.iso(...L.xy(2.29, 1.09), 36); this.ctx.fillStyle = Math.floor(t * 8) % 2 ? '#ffd166' : '#ff9f43'; this.ctx.fillRect(Math.round(cx), Math.round(cy) - 2, 1, 2);
-    }
-    if (st.kind === 'easel') {
-      // tavolozza + cavalletto con la tela
-      B(2.0, 0.8, 0.5, 0.35, 27, 1, '#d9b98a', '#c19e6f', '#a8865a');
-      const [px, py] = this.iso(...L.xy(2.2, 0.95), 29);
-      for (const [o, c] of [[-2, '#e84a5f'], [0, '#ffd166'], [2, '#3fb0e0'], [4, '#7bd88f']]) { this.ctx.fillStyle = c; this.ctx.fillRect(Math.round(px) + o, Math.round(py), 1, 1); }
-      const ea = 2.95;
-      W(ea, 1.2, 0.08, 0.08, 0, 64); W(ea + 0.55, 1.2, 0.08, 0.08, 0, 64); W(ea + 0.28, 0.9, 0.08, 0.08, 0, 60);
-      B(ea - 0.1, 1.15, 0.85, 0.06, 28, 34, PAL.paper, '#efe6cf', '#d8cdb3');
-      const [img, x] = tela(16, 18);
-      x.fillStyle = '#f6efdc'; x.fillRect(0, 0, 16, 18);
-      const prog = status === 'WORKING' ? Math.floor(t * 2) % 14 : 13;
-      x.fillStyle = '#2b3a6b'; x.fillRect(0, 0, 16, 8); x.fillStyle = '#f5f1d6'; x.fillRect(11, 2, 2, 2);
-      x.fillStyle = '#c4553b'; x.fillRect(2, 8, 5, 4); x.fillRect(9, 7, 5, 5);
-      x.fillStyle = '#7a6b5c'; x.fillRect(0, 12, 16, 6);
-      if (prog < 13) { x.fillStyle = '#f6efdc'; x.fillRect(0, 18 - (13 - prog), 16, 13 - prog); }
-      const f = this.frontFace(st, ea - 0.1, 1.15, 0.85, 0.06, 30, 60);
-      mapFace(this.ctx, img, f.p0, f.pu, f.pv);
+      B(0.85, D0 + 0.3, 1.1, 0.65, TOP, 6, '#2f4a3a', '#243a2d', '#1b2c22');
+      const grow = status === 'WORKING' || status === 'THINKING' ? 3 + (Math.floor(t * 3) % 6) : 4;
+      B(1.0, D0 + 0.35, 0.8, 0.08, TOP + 6, grow + 5, PAL.paper, '#e3d9c1', '#d2c7ad');
+      B(2.05, D0 + 0.35, 0.65, 0.7, TOP, 5, PAL.paper, '#e3d9c1', '#d2c7ad');
+      B(0.1, D0 + 0.3, 0.45, 0.6, TOP, 13, '#8e5ad6', '#6d40b0', '#5a3490');
+      B(0.1, D0 + 0.3, 0.45, 0.6, TOP + 13, 6, '#e0a53d', '#c28a2a', '#a67320');
+      B(2.4, D0 + 0.95, 0.16, 0.16, TOP, 7, '#f5f0e0', '#e3dccb', '#cfc7b4');
+      const [cx, cy] = this.iso(...L.xy(2.48, D0 + 1.03), TOP + 9); this.ctx.fillStyle = Math.floor(t * 8) % 2 ? '#ffd166' : '#ff9f43'; this.ctx.fillRect(Math.round(cx), Math.round(cy) - 2, 1, 2);
     }
     if (st.kind === 'drafting') {
-      // grande mappa del paese srotolata sul tavolo, con le puntine
-      B(0.2, 0.55, 1.25, 0.7, 27, 1, '#e9dcb8', '#cdbb8c', '#b9a676');
-      for (const [pa, pb, c] of [[0.45, 0.75, '#d63a3a'], [0.9, 0.95, '#2e86de'], [1.2, 0.7, '#d63a3a']]) { const [px, py] = this.iso(...L.xy(pa, pb), 29); this.ctx.fillStyle = c; this.ctx.fillRect(Math.round(px), Math.round(py) - 2, 1, 2); }
-      const [mx, my] = this.iso(...L.xy(0.8, 0.9), 28); this.ctx.fillStyle = '#a58f63'; this.ctx.fillRect(Math.round(mx) - 5, Math.round(my), 10, 1); this.ctx.fillRect(Math.round(mx), Math.round(my) - 3, 1, 6);
-      B(2.2, 0.9, 0.5, 0.12, 27, 1, '#f2c14e', '#d9a441', '#b88227');     // righello
+      B(1.95, D0 + 0.3, 0.9, 0.75, TOP, 1, '#e9dcb8', '#cdbb8c', '#b9a676');
+      for (const [pa, pb, c] of [[2.1, 0.5, '#d63a3a'], [2.5, 0.8, '#2e86de'], [2.7, 0.45, '#d63a3a']]) { const [px, py] = this.iso(...L.xy(pa, D0 + pb), TOP + 2); this.ctx.fillStyle = c; this.ctx.fillRect(Math.round(px), Math.round(py) - 2, 1, 2); }
+      B(0.15, D0 + 0.8, 0.6, 0.12, TOP, 1, '#f2c14e', '#d9a441', '#b88227');
     }
     if (st.kind === 'audio') {
-      // tastiera musicale e casse
-      B(0.2, 0.75, 1.3, 0.45, 27, 3, '#f4f4f4', '#2a2a33', '#1c1d24');
-      for (let i = 0; i < 9; i++) if (i % 3 !== 2) { const [kx, ky] = this.iso(...L.xy(0.3 + i * 0.13, 0.8), 30); this.ctx.fillStyle = '#1b1b22'; this.ctx.fillRect(Math.round(kx), Math.round(ky), 1, 2); }
-      for (const ca of [0.05, 2.35]) { B(ca, 0.2, 0.35, 0.35, 27, 16, '#3a3b47', '#2b2c36', '#22222b'); const [sx2, sy2] = this.iso(...L.xy(ca + 0.17, 0.55), 36); this.ctx.fillStyle = '#5a5c6c'; this.ctx.fillRect(Math.round(sx2) - 1, Math.round(sy2) - 2, 3, 3); }
-      if (status === 'WORKING' || status === 'TESTING') { const [nx, ny] = this.iso(...L.xy(1.3, 0.4), 60 + (Math.floor(t * 4) % 6)); this.ctx.fillStyle = '#ff7ac4'; drawText(this.ctx, '/', Math.round(nx), Math.round(ny), '#ff7ac4'); }
+      B(0.1, D0 + 0.7, 0.9, 0.4, TOP, 3, '#f4f4f4', '#2a2a33', '#1c1d24');
+      for (const ca of [0.05, 2.45]) B(ca, D0 + 0.15, 0.38, 0.38, TOP, 16, '#3a3b47', '#2b2c36', '#22222b');
+      if (['WORKING', 'TESTING'].includes(status)) { const [nx, ny] = this.iso(...L.xy(1.5, D0), 70 + (Math.floor(t * 4) % 8)); drawText(this.ctx, '/', Math.round(nx) + (Math.floor(t * 2) % 2) * 6, Math.round(ny), '#ff7ac4'); }
     }
     if (st.kind === 'library') {
-      // pile di libri, il grande libro della Bibbia aperto, candela
-      for (const [la, h, c] of [[0.1, 22, '#8e5ad6'], [0.45, 16, '#d65a5a'], [2.3, 26, '#3d7a3a'], [2.0, 12, '#e0a53d']]) B(la, 0.2, 0.3, 0.55, 27, h, c, shade(c, -0.18), shade(c, -0.3));
-      B(0.95, 0.45, 1.0, 0.65, 27, 3, '#f4ecd8', '#6b3b1a', '#5a3216');
-      const [bx2, by2] = this.iso(...L.xy(1.45, 0.75), 31); this.ctx.fillStyle = '#6b3b1a'; this.ctx.fillRect(Math.round(bx2), Math.round(by2) - 1, 1, 3);
+      for (const [la, h, c] of [[0.1, 22, '#8e5ad6'], [0.45, 16, '#d65a5a'], [2.45, 26, '#3d7a3a'], [2.1, 12, '#e0a53d']]) B(la, D0 + 0.2, 0.3, 0.55, TOP, h, c, shade(c, -0.18), shade(c, -0.3));
+      B(0.95, D0 + 0.3, 1.0, 0.65, TOP, 3, '#f4ecd8', '#6b3b1a', '#5a3216');
+      const [bx2, by2] = this.iso(...L.xy(1.45, D0 + 0.6), TOP + 4); this.ctx.fillStyle = '#6b3b1a'; this.ctx.fillRect(Math.round(bx2), Math.round(by2) - 1, 1, 3);
       this.ctx.fillStyle = '#9a927e'; for (let l = 0; l < 3; l++) { this.ctx.fillRect(Math.round(bx2) - 6, Math.round(by2) - 1 + l * 2, 4, 1); this.ctx.fillRect(Math.round(bx2) + 3, Math.round(by2) - 1 + l * 2, 4, 1); }
-      if (status === 'WORKING') { const [qx, qy] = this.iso(...L.xy(1.8, 0.95), 34); this.ctx.fillStyle = '#f5f5f5'; this.ctx.fillRect(Math.round(qx) + (Math.floor(t * 4) % 2), Math.round(qy) - 6, 1, 6); }
     }
     if (st.kind === 'puzzle') {
-      // pezzi di puzzle, lente d'ingrandimento, cofanetto chiuso col lucchetto
       const cols = ['#ff5d8f', '#ffd166', '#6fd3ff', '#7bd88f'];
-      for (let i = 0; i < 10; i++) { const [px, py] = this.iso(...L.xy(0.3 + (i % 5) * 0.2, 0.55 + Math.floor(i / 5) * 0.25), 28); this.ctx.fillStyle = cols[i % 4]; this.ctx.fillRect(Math.round(px), Math.round(py) - 1, 3, 2); }
-      B(1.7, 0.35, 0.7, 0.5, 27, 9, '#8a5a31', '#6e4526', '#5a371c');
-      const [lx2, ly2] = this.iso(...L.xy(2.05, 0.85), 32); this.ctx.fillStyle = '#e8c46a'; this.ctx.fillRect(Math.round(lx2) - 1, Math.round(ly2) - 2, 3, 3);
-      const [gx, gy] = this.iso(...L.xy(1.3, 1.05), 29); this.ctx.strokeStyle = '#c9ccd4'; this.ctx.beginPath(); this.ctx.arc(Math.round(gx), Math.round(gy) - 2, 2.5, 0, 7); this.ctx.stroke(); this.ctx.fillStyle = '#6b3b1a'; this.ctx.fillRect(Math.round(gx) + 2, Math.round(gy), 3, 1);
-      B(0.2, 1.0, 0.5, 0.3, 27, 1, PAL.paper, '#e3d9c1', '#d2c7ad');
-      const [qx, qy] = this.iso(...L.xy(0.4, 1.1), 28); drawText(this.ctx, '?', Math.round(qx) - 1, Math.round(qy) - 3, '#a0302a');
+      for (let i = 0; i < 10; i++) { const [px, py] = this.iso(...L.xy(0.3 + (i % 5) * 0.2, D0 + 0.4 + Math.floor(i / 5) * 0.3), TOP + 1); this.ctx.fillStyle = cols[i % 4]; this.ctx.fillRect(Math.round(px), Math.round(py) - 1, 3, 2); }
+      B(1.8, D0 + 0.3, 0.7, 0.5, TOP, 9, '#8a5a31', '#6e4526', '#5a371c');
+      const [lx2, ly2] = this.iso(...L.xy(2.15, D0 + 0.8), TOP + 5); this.ctx.fillStyle = '#e8c46a'; this.ctx.fillRect(Math.round(lx2) - 1, Math.round(ly2) - 2, 3, 3);
+    }
+    if (st.kind === 'manager') {
+      // catalogo dei mobili, mazzetta dei colori, barattoli di vernice, una piantina da sistemare
+      B(0.3, D0 + 0.35, 0.9, 0.6, TOP, 2, '#f2e6c9', '#c9b48a', '#b39c70');
+      const [cx2, cy2] = this.iso(...L.xy(0.75, D0 + 0.65), TOP + 2); drawText(this.ctx, 'IKEO', Math.round(cx2) - 7, Math.round(cy2) - 3, '#2e5aa0');
+      const sw = ['#e84a5f', '#ffd166', '#7bd88f', '#3fb0e0', '#9b8cff'];
+      for (let i = 0; i < 5; i++) B(1.35 + i * 0.12, D0 + 0.5, 0.1, 0.35, TOP, 1 + i * 0.3, sw[i], shade(sw[i], -0.2), shade(sw[i], -0.3));
+      for (const [ca, c] of [[2.1, '#e67e22'], [2.4, '#3fb0e0']]) { B(ca, D0 + 0.8, 0.25, 0.25, TOP, 6, '#c9ccd4', '#a4a8b3', '#8a8e99'); const [px, py] = this.iso(...L.xy(ca + 0.12, D0 + 0.92), TOP + 6); this.ctx.fillStyle = c; this.ctx.fillRect(Math.round(px) - 2, Math.round(py) - 1, 4, 2); }
+      monitor(1.3, 0.8);
+    }
+    if (st.kind === 'easel') {
+      // cavalletto accanto alla scrivania, con la tela verso di noi
+      const ea = 3.0;
+      W(ea, 1.5, 0.08, 0.08, 0, 64); W(ea + 0.6, 1.5, 0.08, 0.08, 0, 64); W(ea + 0.3, 1.1, 0.08, 0.08, 0, 60);
+      B(ea - 0.1, 1.45, 0.9, 0.06, 26, 36, PAL.paper, '#efe6cf', '#d8cdb3');
+      const [img, x] = tela(16, 20);
+      x.fillStyle = '#f6efdc'; x.fillRect(0, 0, 16, 20);
+      const prog = status === 'WORKING' ? Math.floor(t * 2) % 16 : 15;
+      x.fillStyle = '#2b3a6b'; x.fillRect(0, 0, 16, 9); x.fillStyle = '#f5f1d6'; x.fillRect(11, 2, 2, 2);
+      x.fillStyle = '#c4553b'; x.fillRect(2, 9, 5, 4); x.fillRect(9, 8, 5, 5); x.fillStyle = '#ffcf6b'; x.fillRect(3, 10, 1, 1); x.fillRect(11, 10, 1, 1);
+      x.fillStyle = '#7a6b5c'; x.fillRect(0, 13, 16, 7);
+      if (prog < 15) { x.fillStyle = '#f6efdc'; x.fillRect(0, 20 - (15 - prog), 16, 15 - prog); }
+      const f = this.frontFace(st, ea - 0.1, 1.45, 0.9, 0.06, 28, 60);
+      mapFace(this.ctx, img, f.p0, f.pu, f.pv);
+      B(0.3, D0 + 0.5, 0.7, 0.45, TOP, 1, '#d9b98a', '#c19e6f', '#a8865a');   // tavolozza
+      const [px, py] = this.iso(...L.xy(0.65, D0 + 0.7), TOP + 1);
+      for (const [o, c] of [[-3, '#e84a5f'], [-1, '#ffd166'], [1, '#3fb0e0'], [3, '#7bd88f']]) { this.ctx.fillStyle = c; this.ctx.fillRect(Math.round(px) + o, Math.round(py), 2, 1); }
+      B(1.5, D0 + 0.4, 0.2, 0.2, TOP, 8, '#8a5a31', '#6e4526', '#5a371c');   // vasetto dei pennelli
     }
     // lampada da scrivania
-    B(0.25, 0.95, 0.22, 0.22, 27, 2, PAL.metalL, PAL.metal, PAL.metal);
-    B(0.32, 1.02, 0.08, 0.08, 29, 12, PAL.metalL, PAL.metal, PAL.metal);
-    B(0.2, 0.9, 0.34, 0.34, 41, 4, '#e0b13c', '#c2931f', '#a57a15');
+    B(2.55, D0 + 0.2, 0.22, 0.22, TOP, 2, PAL.metalL, PAL.metal, PAL.metal);
+    B(2.62, D0 + 0.27, 0.08, 0.08, TOP + 2, 12, PAL.metalL, PAL.metal, PAL.metal);
+    B(2.5, D0 + 0.15, 0.34, 0.34, TOP + 14, 4, '#e0b13c', '#c2931f', '#a57a15');
+  }
+
+  drawChair(st, agent) {
+    const L = this.local(st);
+    const col = shade(agent?.avatar?.color || '#555555', -0.4);
+    const [x, y, w, d] = L.box(0.9, 0.3, 1.0, 0.18);
+    this.box(x, y, 14, w, d, 30, shade(col, 0.15), col, shade(col, -0.2));
   }
 
   drawTable(st, agent, t) {
     const { x, y } = st;
-    this.wood(x + 0.2, y + 0.2, 0, 0.2, 0.2, 22); this.wood(x + 2.0, y + 0.2, 0, 0.2, 0.2, 22);
-    this.wood(x + 0.2, y + 1.4, 0, 0.2, 0.2, 22); this.wood(x + 2.0, y + 1.4, 0, 0.2, 0.2, 22);
-    this.box(x, y, 22, 2.4, 1.8, 3, PAL.woodT, PAL.woodF, PAL.woodS);
+    this.wood(x, y + 0.9, 0, 2.4, 0.9, 22);   // fronte chiuso: il tavolo della presidenza
+    this.box(x - 0.05, y - 0.05, 22, 2.5, 1.9, 3, PAL.woodT, PAL.woodF, PAL.woodS);
+    // drappo tricolore sul davanti
+    const [p0x, p0y] = this.iso(x + 0.6, y + 1.8, 20), [p1x] = this.iso(x + 1.8, y + 1.8, 20);
+    void p0x; void p1x; void p0y;
+    this.box(x + 0.6, y + 1.8, 8, 0.4, 0.02, 14, '#2e8b4a', '#2e8b4a', '#2e8b4a');
+    this.box(x + 1.0, y + 1.8, 8, 0.4, 0.02, 14, '#f2efe6', '#f2efe6', '#f2efe6');
+    this.box(x + 1.4, y + 1.8, 8, 0.4, 0.02, 14, '#c93b3b', '#c93b3b', '#c93b3b');
     // il verbale, il campanello del presidente, bicchieri
-    this.box(x + 0.5, y + 0.5, 25, 0.8, 0.6, 1, PAL.paper, '#e3d9c1', '#d2c7ad');
-    this.box(x + 0.55, y + 0.55, 26, 0.7, 0.5, 1, '#fffaf0', '#e3d9c1', '#d2c7ad');
-    const [bx, by] = this.iso(x + 1.8, y + 0.5, 25);
+    this.box(x + 0.5, y + 0.9, 25, 0.8, 0.6, 1, PAL.paper, '#e3d9c1', '#d2c7ad');
+    this.box(x + 0.55, y + 0.95, 26, 0.7, 0.5, 1, '#fffaf0', '#e3d9c1', '#d2c7ad');
+    const [bx, by] = this.iso(x + 1.9, y + 0.9, 25);
     const ring = agent && ['THINKING', 'BLOCKED'].includes(agent.runtime?.status) && Math.floor(t * 4) % 2;
     this.ctx.fillStyle = '#c9a227'; this.ctx.fillRect(Math.round(bx) - 3 + (ring ? 1 : 0), Math.round(by) - 4, 6, 4); this.ctx.fillRect(Math.round(bx) - 1, Math.round(by) - 6, 2, 2);
     this.ctx.fillStyle = '#fff1a8'; this.ctx.fillRect(Math.round(bx) - 2, Math.round(by) - 4, 1, 2);
-    for (const [gx, gy] of [[x + 1.5, y + 1.3], [x + 0.4, y + 1.35]]) { const [sx, sy] = this.iso(gx, gy, 25); this.ctx.fillStyle = '#d7ecf2aa'; this.ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 4, 3, 4); this.ctx.fillStyle = '#e7b53d'; this.ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 2, 3, 2); }
-    // sedie impagliate
-    for (const [cx, cy] of [[x + 0.6, y + 2.05], [x + 1.7, y + 2.05]]) { this.wood(cx, cy, 0, 0.5, 0.5, 13); this.box(cx, cy, 13, 0.5, 0.5, 2, '#d9b36b', '#b99048', '#9c7838'); this.wood(cx, cy + 0.42, 15, 0.5, 0.08, 14); }
+    for (const [gx, gy] of [[x + 1.5, y + 1.4], [x + 0.3, y + 1.45]]) { const [sx, sy] = this.iso(gx, gy, 25); this.ctx.fillStyle = '#d7ecf2aa'; this.ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 4, 3, 4); this.ctx.fillStyle = '#e7b53d'; this.ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 2, 3, 2); }
   }
 
   drawDecor(d, t) {
+    if (d.type === 'tallplant') {
+      // grande pianta d'angolo (come nella reference): vaso alto e chioma a nuvole
+      const s2 = d.size || 1, { x, y } = d;
+      this.box(x - 0.35 * s2, y - 0.35 * s2, 0, 0.7 * s2, 0.7 * s2, 16 * s2, '#8a4a30', PAL.pot, PAL.potD);
+      const [sx, sy] = this.iso(x, y, 16 * s2);
+      this.ctx.fillStyle = PAL.woodD; this.ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 18 * s2, 2, 18 * s2);
+      const sway = Math.sin(t * 0.9 + x) * 0.8;
+      for (let i = 0; i < 26; i++) {
+        const ang = rnd(i + x * 7) * Math.PI * 2, rad = rnd(i * 3 + y) * 14 * s2;
+        const bx = sx + Math.cos(ang) * rad * 1.1 + sway, by = sy - 34 * s2 + Math.sin(ang) * rad * 1.2;
+        const r = (4 + rnd(i * 5) * 2.5) * s2;
+        this.ctx.fillStyle = PAL.leafD; this.ctx.beginPath(); this.ctx.arc(bx, by + 1, r, 0, 7); this.ctx.fill();
+      }
+      for (let i = 0; i < 26; i++) {
+        const ang = rnd(i + x * 7) * Math.PI * 2, rad = rnd(i * 3 + y) * 14 * s2;
+        const bx = sx + Math.cos(ang) * rad * 1.1 + sway, by = sy - 34 * s2 + Math.sin(ang) * rad * 1.2;
+        const r = (4 + rnd(i * 5) * 2.5) * s2 - 1;
+        this.ctx.fillStyle = i % 3 ? PAL.leaf : PAL.leafL; this.ctx.beginPath(); this.ctx.arc(bx - 0.5, by - 0.5, r, 0, 7); this.ctx.fill();
+      }
+      return;
+    }
+    if (d.type === 'floorlamp') {
+      const { x, y } = d;
+      this.box(x - 0.2, y - 0.2, 0, 0.4, 0.4, 2, PAL.metalL, PAL.metal, PAL.metal);
+      this.box(x - 0.04, y - 0.04, 2, 0.08, 0.08, 56, PAL.metalL, PAL.metal, PAL.metal);
+      this.box(x - 0.3, y - 0.3, 56, 0.6, 0.6, 10, '#f2d9a0', '#e0bd72', '#c9a24a');
+      return;
+    }
     if (d.type === 'plant') {
       const s = d.size || 1, { x, y } = d;
       this.box(x - 0.25 * s, y - 0.25 * s, 0, 0.5 * s, 0.5 * s, 12 * s, '#7a3a24', PAL.pot, PAL.potD);
@@ -616,20 +709,14 @@ export class Office {
     if (!agent) return;
     const ctx = this.ctx;
     const [cx, cy] = this.seatOf(st);
-    const [sx, sy0] = this.iso(cx, cy, 0);
-    const flip = st.wall === 'L';
+    const [sx, sy] = this.iso(cx, cy, 0);
     const status = agent.runtime?.status || 'IDLE';
     const anim = (agent.animations || {})[status] || 'idle';
     const fx = this.fx[agent.id] && this.fx[agent.id].until > performance.now() ? this.fx[agent.id].kind : null;
-    const celebrate = anim === 'celebrate' && (fx === 'done' || Math.floor(t) % 5 === 0);
-    const jump = celebrate ? Math.round(Math.abs(Math.sin(t * 9)) * 4) : 0;
+    const celebrate = anim === 'celebrate' && (fx === 'done' || Math.floor(t) % 6 === 0);
+    const jump = celebrate ? Math.round(Math.abs(Math.sin(t * 9)) * 5) : 0;
     const shakeX = anim === 'error' && fx === 'fail' ? (Math.floor(t * 20) % 2 ? 1 : -1) : 0;
-    const X = Math.round(sx) + shakeX, Y = Math.round(sy0) - 16 - jump;
-    const R = (dx, dy, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(flip ? X - dx - w : X + dx, Y + dy, w, h); };
-    const L = lookOf(agent);
-
-    // ombra
-    ctx.globalAlpha = 0.25; ctx.fillStyle = '#1a0f0a'; ctx.beginPath(); ctx.ellipse(X, Y + 16 + jump, 9, 4, 0, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    const X = Math.round(sx) + shakeX, baseY = Math.round(sy) - 14 - jump;
 
     // spritesheet personale al posto del personaggio disegnato
     if (agent.avatar?.type === 'spritesheet' && agent.avatar.sprite?.url) {
@@ -640,72 +727,16 @@ export class Office {
         const def = (s.animations || {})[anim] || (s.animations || {}).idle || { row: 0, frames: 1, fps: 1 };
         const f = Math.floor(t * (def.fps || 6)) % (def.frames || 1);
         const sc = s.officeScale || 1;
-        ctx.drawImage(img, f * s.frameWidth, (def.row || 0) * s.frameHeight, s.frameWidth, s.frameHeight, X - s.frameWidth * sc / 2, Y + 16 - s.frameHeight * sc, s.frameWidth * sc, s.frameHeight * sc);
+        ctx.drawImage(img, f * s.frameWidth, (def.row || 0) * s.frameHeight, s.frameWidth, s.frameHeight, X - s.frameWidth * sc / 2, baseY - s.frameHeight * sc, s.frameWidth * sc, s.frameHeight * sc);
       }
       return;
     }
-
-    const breathe = anim === 'idle' || anim === 'waiting' ? (Math.floor(t * 0.8) % 2) : 0;
-    const shirtD = shade(L.shirt, -0.22), skinD = shade(L.skin, -0.18);
-    const standing = celebrate;
-    // gambe (visibili solo in piedi) e sedia dietro
-    if (standing) { R(-4, 6, 3, 10, '#34384a'); R(1, 6, 3, 10, '#34384a'); R(-4, 15, 3, 1, '#1b1b22'); R(1, 15, 3, 1, '#1b1b22'); }
-    // busto
-    const ty = breathe;
-    R(-7, -18 + ty, 14, 17, '#1b1426');
-    R(-6, -17 + ty, 12, 15, L.shirt); R(-6, -17 + ty, 3, 15, shirtD); R(-5, -18 + ty, 10, 1, L.shirt); R(-2, -16 + ty, 1, 8, shirtD);
-    // testa (vista di spalle, un po' di tre quarti)
-    const hy = -28 + ty + (anim === 'waiting' ? Math.floor(t * 1.2) % 2 : 0);
-    R(-1, -19 + ty, 3, 2, skinD);
-    R(-5, hy - 1, 10, 11, '#1b1426');
-    R(-4, hy, 8, 9, L.skin);
-    const H = L.hair, HD = shade(L.hair, -0.2);
-    if (L.hairStyle === 'long') { R(-5, hy - 1, 10, 7, H); R(-5, hy + 6, 10, 7, H); R(-5, hy + 6, 2, 7, HD); }
-    else if (L.hairStyle === 'ponytail') { R(-4, hy - 1, 8, 7, H); R(-1, hy + 6, 3, 6 + (Math.floor(t * 3) % 2), H); R(-1, hy + 5, 3, 1, '#e84a5f'); }
-    else if (L.hairStyle === 'bun') { R(-4, hy - 1, 8, 6, H); R(-2, hy - 4, 4, 3, H); R(-4, hy + 5, 1, 2, H); }
-    else if (L.hairStyle === 'bald') { R(-4, hy + 3, 8, 3, H); R(-3, hy, 4, 1, shade(L.skin, 0.25)); }
-    else if (L.hairStyle === 'curly') { R(-5, hy - 2, 10, 8, H); for (let i = 0; i < 5; i++) R(-5 + i * 2, hy - 3 + (i % 2), 2, 1, H); R(-5, hy + 6, 10, 1, HD); }
-    else { R(-4, hy - 1, 8, 7, H); R(-4, hy + 5, 1, 2, H); }
-    R(3, hy + 4, 1, 2, skinD);   // orecchio / guancia verso lo schermo
-    const A = L.accColor;
-    if (L.accessory === 'headphones') { R(-5, hy - 2, 10, 1, A); R(3, hy + 3, 2, 4, A); R(-5, hy + 3, 2, 4, A); }
-    if (L.accessory === 'beret') { R(-5, hy - 3, 10, 3, A); R(-1, hy - 4, 2, 1, A); }
-    if (L.accessory === 'cap') { R(-4, hy - 2, 8, 3, A); R(3, hy, 3, 1, shade(A, -0.2)); }
-    if (L.accessory === 'glasses') { R(3, hy + 3, 2, 1, '#15151b'); }
-    if (L.accessory === 'beard') { R(3, hy + 6, 1, 3, L.hair); }
-    // braccia secondo l'animazione
-    const f2 = Math.floor(t * 10) % 2, f4 = Math.floor(t * 4) % 2;
-    if (anim === 'typing') {
-      R(5, -16 + ty, 2, 6, shirtD); R(6, -11 + ty - f2, 3, 2, L.skin);
-      R(-7, -16 + ty, 2, 6, shirtD); R(-8, -11 + ty - (1 - f2), 2, 2, L.skin);
-    } else if (anim === 'playing') {
-      const sh = Math.floor(t * 12) % 2;
-      R(5, -15 + ty, 2, 5, shirtD); R(-7, -15 + ty, 2, 5, shirtD);
-      R(-9, -11 + ty + sh, 18, 3, '#2a2a33'); R(-9, -11 + ty + sh, 2, 3, '#ff4fa3'); R(7, -11 + ty + sh, 2, 3, '#3fe0d0');
-    } else if (anim === 'writing-notes') {
-      R(5, -16 + ty, 2, 5, shirtD); R(6 + f4, -12 + ty, 2, 2, L.skin); R(8 + f4, -14 + ty, 1, 3, '#1f3a8a');
-      R(-7, -16 + ty, 2, 8, shirtD); R(-7, -9 + ty, 2, 2, L.skin);
-    } else if (anim === 'question') {
-      R(4, -24 + ty, 2, 8, shirtD); R(2, hy - 1 + (f4), 3, 2, L.skin);
-      R(-7, -16 + ty, 2, 8, shirtD); R(-7, -9 + ty, 2, 2, L.skin);
-    } else if (anim === 'error') {
-      R(4, -26 + ty, 2, 9, shirtD); R(2, hy - 2, 3, 2, L.skin); R(-6, -26 + ty, 2, 9, shirtD); R(-5, hy - 2, 3, 2, L.skin);
-    } else if (celebrate) {
-      R(5, -29, 2, 12, shirtD); R(5, -31, 2, 2, L.skin); R(-7, -29, 2, 12, shirtD); R(-7, -31, 2, 2, L.skin);
-    } else {
-      // idle / waiting: braccia giù, ogni tanto un sorso di caffè
-      const sip = anim === 'idle' && Math.floor(t / 4) % 3 === 0;
-      if (sip) { R(4, -22 + ty, 2, 8, shirtD); R(3, hy + 6, 3, 3, '#e8e1d4'); } else { R(5, -16 + ty, 2, 9, shirtD); R(5, -8 + ty, 2, 2, L.skin); }
-      R(-7, -16 + ty, 2, 9, shirtD); R(-7, -8 + ty, 2, 2, L.skin);
-    }
-    // sedia davanti alla schiena (seduto)
-    if (!standing) {
-      const chair = shade(agent.avatar?.color || '#555555', -0.45), chairL = shade(chair, 0.25);
-      R(-5, -8, 10, 8, chair); R(-4, -7, 8, 1, chairL); R(-7, 0, 14, 3, chairL); R(-1, 3, 2, 8, PAL.metal);
-      R(-6, 11, 12, 1, PAL.metal); R(-7, 11, 2, 2, '#1b1b22'); R(5, 11, 2, 2, '#1b1b22'); R(-1, 12, 2, 2, '#1b1b22');
-    }
-    // lampo quando inizia un task
-    if (fx === 'start') { ctx.globalAlpha = 0.5; R(-8, hy - 4, 16, 2, '#ffffff'); ctx.globalAlpha = 1; }
+    const fps = { typing: 6, playing: 8, 'writing-notes': 1.5, waiting: 1, question: 2, celebrate: 4, error: 5, idle: 0.35 }[anim] || 1;
+    const frame = Math.floor(t * fps + (agent.id.length * 0.37)) % 2;
+    const blink = (t + agent.id.length * 1.3) % 4.2 < 0.15;
+    const pose = celebrate ? 'celebrate' : anim === 'celebrate' ? 'idle' : anim;
+    const spr = cachedSprite(agent.avatar?.character || {}, pose, frame, blink);
+    ctx.drawImage(spr, X - Math.floor(SPRITE_W / 2), baseY - SPRITE_H);
   }
 
   drawBubble(st, agent, t) {
@@ -716,9 +747,9 @@ export class Office {
     if (!icon) return;
     const ctx = this.ctx;
     const [cx, cy] = this.seatOf(st);
-    const [sx, sy] = this.iso(cx, cy, st.kind === 'table' ? 44 : 52);
+    const [sx, sy] = this.iso(cx, cy, 64);
     const bob = Math.round(Math.sin(t * 3) * 1.2);
-    const x = Math.round(sx) + (st.wall === 'L' ? -12 : 4), y = Math.round(sy) - 8 + bob;
+    const x = Math.round(sx) + 12, y = Math.round(sy) - 8 + bob;
     const bg = icon === '?' ? '#ffd166' : icon === '!' ? '#ff5d6c' : icon === 'check' ? '#7bd88f' : '#ffffff';
     ctx.fillStyle = '#1b1426'; ctx.fillRect(x - 1, y - 1, 13, 11); ctx.fillRect(x + 2, y + 10, 3, 2);
     ctx.fillStyle = bg; ctx.fillRect(x, y, 11, 9); ctx.fillRect(x + 3, y + 9, 1, 2);
@@ -741,14 +772,15 @@ export class Office {
     for (const st of this.stations()) {
       if (st.kind === 'table') { const [x, y] = iso(st.x + 1.2, st.y + 0.9, 30); hole(x, y, 46, 0.8); glows.push([x, y, 40, '255,196,110', 0.1]); continue; }
       const L = this.local(st);
-      const [lx, ly] = iso(...L.xy(0.37, 1.07), 40); hole(lx, ly + 8, 44, 0.95); glows.push([lx, ly + 8, 40, '255,200,120', 0.14]);
+      const [lx, ly] = iso(...L.xy(2.67, 1.45), 42); hole(lx, ly + 8, 46, 0.95); glows.push([lx, ly + 8, 42, '255,200,120', 0.15]);
       const status = this.agents[st.agentId]?.runtime?.status;
-      const [mx, my] = iso(...L.xy(1.3, 0.6), 42);
+      const [mx, my] = iso(...L.xy(1.4, 0.9), 34);
       const col = status === 'ERROR' ? '255,80,90' : status === 'DONE' ? '120,240,160' : status === 'BLOCKED' ? '255,210,100' : '110,210,255';
       const flick = status === 'WORKING' || status === 'TESTING' ? 0.12 + (Math.floor(t * 8) % 2) * 0.04 : 0.07;
       hole(mx, my, 30, 0.6); glows.push([mx, my, 28, col, flick]);
     }
     for (const dec of this.layout.decor) {
+      if (dec.type === 'floorlamp') { const [x, y] = iso(dec.x, dec.y, 58); hole(x, y + 10, 60, 1); glows.push([x, y + 10, 56, '255,196,120', 0.18]); }
       if (dec.type === 'lantern') { const [x, y] = dec.wall === 'R' ? iso(dec.at, 0.3, 80) : iso(0.3, dec.at, 80); hole(x, y, 50, 0.9); glows.push([x, y, 46, '255,190,100', 0.16 + Math.sin(t * 5 + dec.at) * 0.015]); }
       if (dec.type === 'window') {
         const w = dec.w || 1.6; const [x, y] = dec.wall === 'R' ? iso(dec.at + w / 2, 0.5, 70) : iso(0.5, dec.at + w / 2, 70);

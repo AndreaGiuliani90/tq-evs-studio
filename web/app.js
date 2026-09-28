@@ -130,7 +130,7 @@ function requestActions(req) {
   if (!req) return '';
   const b = [];
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
-  if (req.status === 'DONE' && req.worktree && !req.merged && !req.discarded && req.report?.commits?.length) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
+  if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
   if (['NEEDS_USER', 'FAILED'].includes(req.status) && req.worktree) b.push(`<button class="btn sm primary" data-act="retry" data-req="${req.id}">Riprova</button>`);
   if (['RUNNING', 'PLANNING', 'NEEDS_USER'].includes(req.status)) b.push(`<button class="btn sm" data-act="cancel" data-req="${req.id}">Ferma</button>`);
@@ -144,8 +144,8 @@ function reportHTML(rep) {
     <h4>Agenti</h4><ul>${(rep.agents || []).map((a) => `<li><b>${esc(a.name)}</b> <span class="muted">${esc(a.role || '')}</span><br>${a.tasks.map(esc).join('<br>')}</li>`).join('')}</ul>
     <h4>Test</h4><ul>${(rep.tests || []).map((t) => `<li>${esc(t.taskId)} ${esc(t.agent)}: <b class="v-${esc(t.verdict)}">${esc(t.verdict)}</b> — ${esc(t.summary || '')}${(t.checks || []).length ? '<br><span class="muted">' + t.checks.map(esc).join(' · ') + '</span>' : ''}${(t.screenshots || []).length ? '<br>' + t.screenshots.map((s) => `<a href="/artifacts/${esc(t.taskId)}/${esc(s)}" target="_blank">${esc(s)}</a>`).join(' ') : ''}</li>`).join('') || '<li>nessuno</li>'}</ul>
     <h4>File cambiati</h4><ul>${(rep.filesChanged || []).map((f) => `<li><code>${esc(f.code)} ${esc(f.file)}</code></li>`).join('') || '<li>nessuno</li>'}</ul>
-    <h4>Commit</h4><ul>${(rep.commits || []).map((c) => `<li><code>${esc(c)}</code></li>`).join('') || '<li>nessuno</li>'}</ul>
-    <p class="muted">Branch <code>${esc(rep.branch)}</code> (base ${esc(rep.baseBranch)} @ ${esc(rep.baseCommit)})</p>
+    <h4>Commit</h4><ul>${(rep.commits || []).map((c) => `<li><code>${esc(c)}</code></li>`).join('') || '<li>nessuno</li>'}</ul>${rep.studioCommits?.length ? `<h4>Programma dello Studio</h4><ul>${rep.studioCommits.map((c) => `<li><code>${esc(c)}</code></li>`).join('')}</ul>` : ''}${rep.officeChanges?.length ? `<h4>Ufficio</h4><ul>${rep.officeChanges.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+    ${rep.branch ? `<p class="muted">Branch <code>${esc(rep.branch)}</code> (base ${esc(rep.baseBranch)} @ ${esc(rep.baseCommit)})</p>` : ''}
   </details>`;
 }
 
@@ -192,6 +192,7 @@ document.addEventListener('click', act(async (ev) => {
   if (el.dataset.example !== undefined) { $('#msg').value = 'Analizza il gioco attuale e dimmi un piccolo miglioramento che valga la pena implementare come test. Implementalo e testalo.'; $('#msg').focus(); return; }
   if (el.dataset.tab) { for (const t of document.querySelectorAll('.tab')) t.classList.toggle('on', t === el); $('#pane-tasks').classList.toggle('hidden', el.dataset.tab !== 'tasks'); $('#pane-log').classList.toggle('hidden', el.dataset.tab !== 'log'); return; }
   if (el.dataset.open) return openModal(el.dataset.open);
+  if (el.dataset.act === 'office-undo') { if (confirm('Annullare l\'ultima modifica all\'ufficio (arredo e aspetto dei personaggi)?')) { const r = await api('POST', '/api/office/undo'); toast(`Ufficio riportato a com'era (${new Date(r.restoredFrom).toLocaleString('it-IT')}).`); } return; }
   if (el.dataset.task && !el.dataset.act) return showTask(el.dataset.task);
   const req = el.dataset.req;
   switch (el.dataset.act) {
@@ -251,8 +252,11 @@ function renderDrawer() {
           <label>Capelli <input name="ch_hair" type="color" value="${esc(ch.hair || '#3b2a20')}"></label>
           <label>Maglia <input name="ch_shirt" type="color" value="${esc(ch.shirt || av.color || '#888888')}"></label>
           <label>Accessorio (colore) <input name="ch_accColor" type="color" value="${esc(ch.accColor || '#2a2a33')}"></label>
-          <label>Pettinatura <select name="ch_hairStyle">${['short', 'long', 'ponytail', 'bun', 'curly', 'bald'].map((t) => `<option ${ch.hairStyle === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-          <label>Accessorio <select name="ch_accessory">${['none', 'glasses', 'headphones', 'beret', 'cap', 'beard', 'moustache'].map((t) => `<option ${ch.accessory === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Occhi <input name="ch_eyes" type="color" value="${esc(ch.eyes || '#3a6fb0')}"></label>
+          <label>Pettinatura <select name="ch_hairStyle">${['short', 'spiky', 'long', 'bob', 'ponytail', 'bun', 'curly', 'bald'].map((t) => `<option ${ch.hairStyle === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Vestito <select name="ch_outfit">${['tee', 'shirt', 'hoodie', 'sweater', 'apron', 'labcoat', 'vest'].map((t) => `<option ${ch.outfit === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Barba <select name="ch_facial">${['none', 'beard', 'moustache', 'stubble'].map((t) => `<option ${ch.facial === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Accessorio <select name="ch_accessory">${['none', 'glasses', 'headphones', 'beret', 'cap', 'headband', 'earrings'].map((t) => `<option ${ch.accessory === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         </div>
         <label>Emoji <input name="av_emoji" value="${esc(av.emoji || '')}" maxlength="8"></label>
         <label>Colore <input name="av_color" type="color" value="${esc(av.color || '#888888')}"></label>
@@ -262,8 +266,8 @@ function renderDrawer() {
         <label>Animazioni sprite (JSON: nome → {row, frames, fps}) <textarea name="sp_anims" rows="2" placeholder='{"typing":{"row":1,"frames":4,"fps":8}}'>${esc(av.sprite?.animations ? JSON.stringify(av.sprite.animations) : '')}</textarea></label>
         <label>Stato → animazione (JSON) <textarea name="av_anims" rows="2" placeholder='{"WORKING":"typing"}'>${esc(av.animations ? JSON.stringify(av.animations) : '')}</textarea></label>
       </fieldset>
-      <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
-      <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="es. sonnet, opus, claude-sonnet-4-5"></label>
+      <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'codex', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
+      <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="Claude: sonnet, opus, haiku · Codex: lascia vuoto o es. gpt-5"></label>
       ${a.capabilities?.includes('image_generation') ? `<label>Provider immagini <select name="imageProvider">${['openai-image'].map((p) => `<option ${a.imageProvider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>` : ''}
       <label>Tipi di task gestiti (separati da virgola) <input name="kinds" value="${esc((a.kinds || []).join(', '))}"></label>
       <label>Capacità (separate da virgola) <input name="capabilities" value="${esc((a.capabilities || []).join(', '))}"></label>
@@ -280,7 +284,7 @@ function renderDrawer() {
     const list = (k) => String(f.get(k) || '').split(',').map((s) => s.trim()).filter(Boolean);
     const parse = (k) => { const v = String(f.get(k) || '').trim(); if (!v) return undefined; try { return JSON.parse(v); } catch { throw new Error(`JSON non valido in "${k}"`); } };
     const avatar = { ...(a.avatar || {}), type: f.get('av_type'), emoji: f.get('av_emoji'), color: f.get('av_color'), style: f.get('av_style'),
-      character: { skin: f.get('ch_skin'), hair: f.get('ch_hair'), shirt: f.get('ch_shirt'), accColor: f.get('ch_accColor'), hairStyle: f.get('ch_hairStyle'), accessory: f.get('ch_accessory') } };
+      character: { skin: f.get('ch_skin'), hair: f.get('ch_hair'), shirt: f.get('ch_shirt'), accColor: f.get('ch_accColor'), hairStyle: f.get('ch_hairStyle'), accessory: f.get('ch_accessory'), eyes: f.get('ch_eyes'), outfit: f.get('ch_outfit'), facial: f.get('ch_facial') } };
     const anims = parse('av_anims'); if (anims) avatar.animations = anims; else delete avatar.animations;
     if (avatar.sprite) { avatar.sprite = { ...avatar.sprite, frameWidth: Number(f.get('sp_w')), frameHeight: Number(f.get('sp_h')), animations: parse('sp_anims') || avatar.sprite.animations || {} }; }
     const patch = { name: f.get('name'), role: f.get('role'), description: f.get('description'), avatar, provider: f.get('provider'), model: f.get('model'), kinds: list('kinds'), capabilities: list('capabilities'), contextDocs: list('contextDocs'), enabled: f.get('enabled') === 'on', visible: f.get('visible') === 'on', systemInstructions: f.get('systemInstructions') };

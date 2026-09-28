@@ -10,6 +10,7 @@ import { ProviderRegistry } from './providers/index.js';
 import { GitService } from './git.js';
 import { Knowledge } from './knowledge.js';
 import { Orchestrator } from './orchestrator.js';
+import { OfficeStore } from './office.js';
 import { readJSON, writeFileAtomic, ensureDir } from './util.js';
 
 export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,7 +28,7 @@ function migrateOldData(oldDir, dataDir) {
   fs.writeFileSync(path.join(dataDir, 'MIGRATO_DA.txt'), `Dati copiati da ${oldDir} il ${new Date().toISOString()}\n`);
 }
 
-export async function createStudio({ projectRoot, dataDir, providers, qaRunner, configOverrides } = {}) {
+export async function createStudio({ projectRoot, dataDir, providers, qaRunner, configOverrides, studioRepo } = {}) {
   // cartella del gioco: STUDIO_PROJECT_ROOT (nel .env dello Studio) oppure la cartella tq-evs accanto allo Studio
   projectRoot = path.resolve(projectRoot || process.env.STUDIO_PROJECT_ROOT || path.join(STUDIO_DIR, '..', 'tq-evs'));
   if (!fs.existsSync(projectRoot)) throw new Error(`cartella del gioco non trovata: ${projectRoot}. Imposta STUDIO_PROJECT_ROOT nel file .env dello Studio.`);
@@ -44,7 +45,10 @@ export async function createStudio({ projectRoot, dataDir, providers, qaRunner, 
   providers = providers || new ProviderRegistry();
   const git = new GitService(projectRoot, { worktreesDir: path.join(dataDir, 'worktrees'), events });
   const knowledge = new Knowledge({ projectRoot, dataDir, events });
-  const orch = new Orchestrator({ store, events, agents, providers, git, knowledge, config, studioDir: STUDIO_DIR, projectRoot, dataDir, qaRunner });
+  const office = new OfficeStore({ studioDir: STUDIO_DIR, dataDir, events });
+  // il repository dello Studio stesso (per le modifiche al programma fatte dal Responsabile dell'ufficio)
+  const studioGit = studioRepo === false ? null : new GitService(studioRepo || STUDIO_DIR, { worktreesDir: path.join(dataDir, 'studio-worktrees'), events });
+  const orch = new Orchestrator({ store, events, agents, providers, git, knowledge, config, studioDir: STUDIO_DIR, projectRoot, dataDir, qaRunner, office, studioGit });
   await orch.init();
   knowledge.regenerate(store.data);
   const saveConfig = (patch) => {
@@ -55,7 +59,7 @@ export async function createStudio({ projectRoot, dataDir, providers, qaRunner, 
     writeFileAtomic(configFile, JSON.stringify(cur, null, 2));
     return config;
   };
-  return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch };
+  return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch, office };
 }
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.webmanifest': 'application/manifest+json', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2' };
@@ -80,7 +84,7 @@ async function body(req, limit = 12 * 1024 * 1024) {
 }
 
 export function createServer(studio) {
-  const { orch, agents, events, store, knowledge, git, providers, dataDir, projectRoot } = studio;
+  const { orch, agents, events, store, knowledge, git, providers, dataDir, projectRoot, office } = studio;
   const web = path.join(STUDIO_DIR, 'web');
 
   const snapshot = async () => ({
@@ -138,13 +142,9 @@ export function createServer(studio) {
     }],
     ['PUT', /^\/api\/memory\/([A-Z_]+)$/, async (m, b) => { knowledge.write(m[1], String(b.content ?? '')); return { ok: true }; }],
     ['GET', /^\/api\/git$/, async () => ({ available: await git.available(), status: await git.status(), commits: await git.recentCommits(15) })],
-    ['GET', /^\/api\/office$/, async () => {
-      // l'ufficio: predefinito + eventuale personalizzazione in data/office.json
-      const def = readJSON(path.join(STUDIO_DIR, 'config', 'office.default.json'), {});
-      const own = readJSON(path.join(dataDir, 'office.json'), null);
-      return own ? { ...def, ...own, room: { ...def.room, ...(own.room || {}) } } : def;
-    }],
-    ['PUT', /^\/api\/office$/, async (m, b) => { writeFileAtomic(path.join(dataDir, 'office.json'), JSON.stringify(b, null, 2)); events.emit('office.updated', {}); return { ok: true }; }],
+    ['GET', /^\/api\/office$/, async () => office.get()],
+    ['PUT', /^\/api\/office$/, async (m, b) => { const errs = office.validate(b); if (errs.length) throw new Error(errs.join('; ')); office.snapshot(agents); office.save(b); return { ok: true }; }],
+    ['POST', /^\/api\/office\/undo$/, async () => office.undo(agents)],
     ['GET', /^\/api\/providers$/, async () => providers.status()],
     ['GET', /^\/api\/config$/, async () => studio.config],
     ['PUT', /^\/api\/config$/, async (m, b) => studio.saveConfig(b)],

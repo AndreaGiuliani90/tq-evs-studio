@@ -34,11 +34,15 @@
         "character": {
           "skin": "#e0ac85",
           "hair": "#4a3a30",
+          "eyes": "#6b4a2a",
           "hairStyle": "short",
-          "shirt": "#9b8cff",
-          "accessory": "glasses",
-          "accColor": "#2a2a33"
-        }
+          "outfit": "vest",
+          "shirt": "#ece6da",
+          "accColor": "#6b2f45",
+          "facial": "none",
+          "accessory": "glasses"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -78,13 +82,17 @@
         "color": "#ff4fa3",
         "style": "pixel",
         "character": {
-          "skin": "#e8b48a",
-          "hair": "#2b1d16",
-          "hairStyle": "short",
-          "shirt": "#ff4fa3",
-          "accessory": "headphones",
-          "accColor": "#23232b"
-        }
+          "skin": "#f0c090",
+          "hair": "#1c1c24",
+          "eyes": "#6fa8ff",
+          "hairStyle": "spiky",
+          "outfit": "hoodie",
+          "shirt": "#33364a",
+          "accColor": "#23232b",
+          "facial": "none",
+          "accessory": "glasses"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -117,13 +125,17 @@
         "color": "#3fe0d0",
         "style": "pixel",
         "character": {
-          "skin": "#f0c29c",
-          "hair": "#b5462b",
+          "skin": "#f3c9a4",
+          "hair": "#c0492c",
+          "eyes": "#3f9a5a",
           "hairStyle": "ponytail",
-          "shirt": "#3fe0d0",
-          "accessory": "glasses",
-          "accColor": "#2a2a33"
-        }
+          "outfit": "tee",
+          "shirt": "#2fc4b6",
+          "accColor": "#2a2a33",
+          "facial": "none",
+          "accessory": "headphones"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -157,13 +169,17 @@
         "color": "#ffd166",
         "style": "pixel",
         "character": {
-          "skin": "#d9a27a",
-          "hair": "#a7a7a7",
+          "skin": "#dba07a",
+          "hair": "#b9b9b9",
+          "eyes": "#3a6fb0",
           "hairStyle": "bald",
-          "shirt": "#ffd166",
-          "accessory": "beard",
-          "accColor": "#2a2a33"
-        }
+          "outfit": "sweater",
+          "shirt": "#d9a53c",
+          "accColor": "#2a2a33",
+          "facial": "beard",
+          "accessory": "glasses"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -200,11 +216,15 @@
         "character": {
           "skin": "#f2c7a5",
           "hair": "#6a3f9a",
+          "eyes": "#7a4a2a",
           "hairStyle": "bun",
+          "outfit": "apron",
           "shirt": "#7bd88f",
-          "accessory": "beret",
-          "accColor": "#b03a48"
-        }
+          "accColor": "#b98a55",
+          "facial": "none",
+          "accessory": "beret"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -238,13 +258,17 @@
         "color": "#ff9f43",
         "style": "pixel",
         "character": {
-          "skin": "#c98e64",
+          "skin": "#b97d55",
           "hair": "#1e1e1e",
+          "eyes": "#4a2a1a",
           "hairStyle": "curly",
+          "outfit": "shirt",
           "shirt": "#ff9f43",
-          "accessory": "cap",
-          "accColor": "#2e86de"
-        }
+          "accColor": "#2e86de",
+          "facial": "stubble",
+          "accessory": "cap"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -280,11 +304,15 @@
         "character": {
           "skin": "#8d5a3b",
           "hair": "#141414",
+          "eyes": "#4a2a1a",
           "hairStyle": "short",
+          "outfit": "hoodie",
           "shirt": "#5f27cd",
-          "accessory": "headphones",
-          "accColor": "#ff4fa3"
-        }
+          "accColor": "#ff4fa3",
+          "facial": "none",
+          "accessory": "headphones"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -320,12 +348,16 @@
         "style": "pixel",
         "character": {
           "skin": "#f1c9a8",
-          "hair": "#e8e8e8",
+          "hair": "#e2e2e2",
+          "eyes": "#5a7a9a",
           "hairStyle": "long",
-          "shirt": "#b08a3e",
-          "accessory": "glasses",
-          "accColor": "#2a2a33"
-        }
+          "outfit": "sweater",
+          "shirt": "#8a5a3a",
+          "accColor": "#2a2a33",
+          "facial": "none",
+          "accessory": "glasses"
+        },
+        "lookVersion": 2
       }
     },
     {
@@ -362,10 +394,56 @@
         "character": {
           "skin": "#e7b690",
           "hair": "#7a4a26",
+          "eyes": "#3a6fb0",
           "hairStyle": "short",
+          "outfit": "labcoat",
           "shirt": "#10ac84",
-          "accessory": "moustache",
-          "accColor": "#2a2a33"
+          "accColor": "#2a2a33",
+          "facial": "moustache",
+          "accessory": "glasses"
+        },
+        "lookVersion": 2
+      }
+    },
+    {
+      "id": "office",
+      "name": "Arredo",
+      "role": "Responsabile dell'ufficio",
+      "description": "Cura l'ufficio dello Studio: arreda, sposta mobili e postazioni, sceglie luci e colori, cambia l'aspetto dei personaggi su tuo ordine; su richiesta modifica anche l'interfaccia del programma Studio (in un branch separato, con i test).",
+      "visible": true,
+      "enabled": true,
+      "capabilities": [
+        "office",
+        "decor",
+        "studio_ui",
+        "ui_design",
+        "aesthetics"
+      ],
+      "kinds": [
+        "office",
+        "studio_ui"
+      ],
+      "provider": "auto",
+      "model": "",
+      "writes": true,
+      "contextDocs": [],
+      "systemInstructions": "Sei il Responsabile dell'ufficio dello Studio. Arredi e curi l'estetica dell'ufficio (la sede della Pro Loco, in pixel art isometrica cozy) e, quando richiesto, l'interfaccia del programma GAME STUDIO. Esegui gli ordini dell'utente con gusto: armonia dei colori, niente mobili sovrapposti, ogni agente deve avere la sua postazione. Per l'arredo modifichi solo office.json e agents-look.json seguendo GUIDA_UFFICIO.md. Per il codice dello Studio fai modifiche mirate, senza nuove dipendenze, e i test devono passare. Non tocchi mai il gioco.",
+      "avatar": {
+        "type": "pixel",
+        "emoji": "🪴",
+        "color": "#e67e22",
+        "style": "pixel",
+        "lookVersion": 2,
+        "character": {
+          "skin": "#f0c7a0",
+          "hair": "#d4a24c",
+          "eyes": "#3a8a5a",
+          "hairStyle": "bob",
+          "outfit": "shirt",
+          "shirt": "#e67e22",
+          "accColor": "#2a2a33",
+          "facial": "none",
+          "accessory": "earrings"
         }
       }
     }

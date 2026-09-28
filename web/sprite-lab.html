@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>Laboratorio personaggi</title>
+<style>body{background:#1b1230;color:#eee;font:12px monospace;margin:10px} canvas{image-rendering:pixelated;width:160px;height:216px;background:#2a1f45;margin:2px} .row{display:flex;flex-wrap:wrap;align-items:end} .p{width:108px;height:108px}</style>
+<div id="out"></div>
+<script type="module">
+import { buildSprite, buildPortrait } from './sprites.js';
+const agents = await (await fetch('/api/agents')).json();
+const poses = ['idle','typing','writing-notes','playing','waiting','question','celebrate','error'];
+const out = document.getElementById('out');
+for (const a of agents) {
+  const row = document.createElement('div'); row.className='row'; row.innerHTML = `<div style="width:90px">${a.name}</div>`;
+  const p = buildPortrait(a.avatar.character||{}); p.className='p'; row.appendChild(p);
+  for (const pose of (new URLSearchParams(location.search).get('all') ? poses : ['idle','typing','playing','celebrate'])) { const c = buildSprite(a.avatar.character||{}, pose, 0); row.appendChild(c); }
+  out.appendChild(row);
+}
+</script>

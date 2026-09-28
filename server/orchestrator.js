@@ -12,10 +12,12 @@ const TERMINAL = ['DONE', 'FAILED', 'CANCELLED'];
 const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle', 'lore'];
 // tipi che cambiano il gioco: dopo di loro serve un test del QA (lore tocca solo i documenti)
 const GAME_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle'];
+// tipi che non toccano il repository del gioco: l'arredo dell'ufficio (dati) e il codice dello Studio (repository suo)
+const STUDIO_KINDS = ['office', 'studio_ui'];
 
 export class Orchestrator {
-  constructor({ store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir, qaRunner }) {
-    Object.assign(this, { store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir });
+  constructor({ store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir, qaRunner, office, studioGit }) {
+    Object.assign(this, { store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir, office, studioGit });
     this.running = new Map();   // taskId → { abort: AbortController, promise }
     this.planning = new Set();
     this.harness = path.join(studioDir, 'qa', 'game-test.mjs');
@@ -96,9 +98,12 @@ export class Orchestrator {
         this.agents.setStatus('director', 'IDLE', { task: null, text: 'risposta data' });
         return;
       }
-      if (!this.gitOk) this.gitOk = await this.git.available();
-      if (!this.gitOk) throw new Error('la cartella del gioco non è un repository git con almeno un commit: per sicurezza lo Studio non modifica file senza git');
-      await this.git.ensureWorktree(req);
+      const needsGame = plan.tasks.some((pt) => !STUDIO_KINDS.includes(pt.kind));
+      if (needsGame) {
+        if (!this.gitOk) this.gitOk = await this.git.available();
+        if (!this.gitOk) throw new Error('la cartella del gioco non è un repository git con almeno un commit: per sicurezza lo Studio non modifica file senza git');
+        await this.git.ensureWorktree(req);
+      }
       const keyToId = {};
       const created = [];
       for (const pt of plan.tasks) {
@@ -148,6 +153,8 @@ export class Orchestrator {
     const audio = has(/suono|musica|audio|effetto sonoro|sfx|volume/) && this.agents.forKind('audio');
     const puzzle = has(/enigma|indagine|indizi|rompicapo|puzzle/) && this.agents.forKind('puzzle');
     const lore = has(/bibbia|canone|coerenz|lore/) && this.agents.forKind('lore');
+    const office = has(/ufficio|arred|decor|scrivani|postazion|aspetto de|avatar|personagg.*studio/) && this.agents.forKind('office');
+    if (office && !has(/gioco|livello|bug/)) return { reply: 'Ci pensa il Responsabile dell\'ufficio.', tasks: [{ key: 'o', agent: office.id, kind: 'office', title: 'Arredo dell\'ufficio', instructions: text, dependsOn: [] }] };
     const code = has(/implementa|bug|codice|gameplay|meccanic|aggiungi|correggi|sistema|boss|npc|nemic|comand|tasto|velocit|miglior/) || (!narrative && !art && !level && !audio && !puzzle && !lore);
     if (narrative) tasks.push({ key: 'n', agent: 'narrative', kind: 'narrative', title: 'Testi e dialoghi', instructions: text, dependsOn: [] });
     if (art) tasks.push({ key: 'a', agent: 'art', kind: 'art', title: 'Requisiti visivi', instructions: text, dependsOn: [] });
@@ -308,11 +315,14 @@ export class Orchestrator {
 
   async executeTask(t, req, agent, signal) {
     if (t.kind === 'test') return this.runQA(t, req, agent, signal);
+    if (t.kind === 'office') return this.runOffice(t, req, agent, signal);
+    if (t.kind === 'studio_ui') return this.runStudioUI(t, req, agent, signal);
     const provider = await this.providers.resolve(agent.provider);
     const mode = t.writes ? 'work' : 'readonly';
     const cwd = req.worktree;
     const qaCmd = `node ${this.harness} --root .`;
-    const extra = t.kind === 'fix' && t.bugReport ? `## Bug report del QA\n${t.bugReport}` : '';
+    let extra = t.kind === 'fix' && t.bugReport ? `## Bug report del QA\n${t.bugReport}` : '';
+    if (t.lastError) extra += `\n\n## Il tentativo precedente di questo task è fallito\n${truncate(t.lastError, 2000)}\nTienine conto.`;
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: this.knowledge.contextFor(agent, cwd, { inline: provider.id === 'anthropic' }), qaCmd, extra });
     const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode, model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
@@ -351,6 +361,61 @@ export class Orchestrator {
     }
     writeFileAtomic(metaFile, JSON.stringify(meta, null, 2));
     return out;
+  }
+
+  // ─── Responsabile dell'ufficio ───────────────────────────────────────────────────────────────────
+  async runOffice(t, req, agent, signal) {
+    if (!this.office) return { ok: false, error: 'ufficio non disponibile' };
+    const dir = this.office.prepareWorkspace(t.id, this.agents);
+    const provider = await this.providers.resolve(agent.provider);
+    const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- GUIDA_UFFICIO.md (in questa cartella): come sono fatti office.json e agents-look.json', qaCmd: null,
+      extra: `## Cartella di lavoro\nSei in una cartella con office.json (la stanza), agents-look.json (l'aspetto dei personaggi) e GUIDA_UFFICIO.md. Leggi la guida, poi modifica SOLO questi due file JSON (devono restare JSON validi). Non ci sono altri file da toccare.${t.lastError ? `\n\nIl tentativo precedente è stato rifiutato: ${truncate(t.lastError, 1500)}` : ''}` });
+    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: dir, mode: 'work', model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+    if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
+    let applied;
+    try { applied = this.office.apply(dir, this.agents); } catch (e) { return { ok: false, error: `modifica all'ufficio rifiutata: ${e.message}` }; }
+    const j = extractJSON(r.text) || {};
+    const what = [applied.officeChanged ? 'ufficio riarredato' : null, applied.changedAvatars.length ? `aspetto di ${applied.changedAvatars.map((id) => this.agentName(id)).join(', ')}` : null].filter(Boolean).join(' · ') || 'nessuna modifica';
+    return { ok: true, result: { summary: j.summary || truncate(r.text, 500), output: truncate(r.text, 4000), office: applied, notes: `${what}. Annullabile col pulsante "Annulla ultimo arredo".`, provider: provider.id } };
+  }
+
+  // ─── Codice dello Studio (interfaccia, grafica): repository dello Studio, branch separato ────────
+  async runStudioUI(t, req, agent, signal) {
+    if (!this.studioGit || !(await this.studioGit.available())) return { ok: false, error: 'la cartella dello Studio non è un repository git: le modifiche al programma non sono sicure', blocked: true };
+    req.studio ??= { id: `${req.id}-studio`, text: req.text };
+    await this.studioGit.ensureWorktree(req.studio);
+    this.store.save();
+    const cwd = req.studio.worktree;
+    const provider = await this.providers.resolve(agent.provider);
+    const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- README.md (com\'è fatto lo Studio)\n- web/ (interfaccia: app.js, office.js ufficio, sprites.js personaggi, styles.css)\n- server/ (backend)', qaCmd: null,
+      extra: `## Stai modificando il programma GAME STUDIO (non il gioco)\nCartella: una copia di lavoro del repository dello Studio. Modifiche mirate; niente dipendenze nuove; interfaccia in italiano. Alla fine lo Studio lancia i suoi test automatici (npm test): devono passare.${t.lastError ? `\n\nIl tentativo precedente è fallito:\n${truncate(t.lastError, 2000)}` : ''}` });
+    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode: 'work', model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: ['Bash(npm test:*)'], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+    if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
+    // verifica: sintassi di tutti i moduli + test dello Studio
+    this.agents.setStatus(agent.id, 'TESTING', { task: t, text: 'verifico lo Studio (sintassi + npm test)', semantic: 'agent.testing' });
+    const check = await this.checkStudio(cwd);
+    if (!check.ok) { await this.studioGit.revertUncommitted(cwd); return { ok: false, error: `le verifiche dello Studio non passano:\n${check.detail}` }; }
+    const j = extractJSON(r.text) || {};
+    const commit = await this.studioGit.commitAll(cwd, { agent, task: t, request: req, summary: j.summary || '' });
+    return { ok: true, result: { summary: j.summary || truncate(r.text, 500), output: truncate(r.text, 4000), commit, filesChanged: commit?.files || [], studioChecks: check.detail, provider: provider.id } };
+  }
+
+  async checkStudio(cwd) {
+    const files = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (['node_modules', 'data', '.git'].includes(e.name)) continue; const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.(m?js)$/.test(e.name)) files.push(p); } };
+    walk(cwd);
+    const bad = [];
+    for (const f of files) {
+      const tmp = path.join(this.dataDir, 'tmp-check.mjs'); fs.copyFileSync(f, tmp);
+      const r = await run(process.execPath, ['--check', tmp], { timeoutMs: 20000 });
+      if (r.code !== 0) bad.push(`${path.relative(cwd, f)}: ${r.stderr.split('\n').slice(0, 3).join(' ')}`);
+    }
+    if (bad.length) return { ok: false, detail: `errori di sintassi:\n${bad.join('\n')}` };
+    if (this.config.studioTests === false) return { ok: true, detail: `${files.length} file JS controllati (test dello Studio disattivati)` };
+    if (!fs.existsSync(path.join(cwd, 'node_modules')) && fs.existsSync(path.join(this.studioDir, 'node_modules'))) { try { fs.symlinkSync(path.join(this.studioDir, 'node_modules'), path.join(cwd, 'node_modules'), 'dir'); } catch { /* pazienza */ } }
+    const r = await run(process.execPath, ['--test', 'test/studio.test.js'], { cwd, timeoutMs: 4 * 60 * 1000, env: { ...process.env, STUDIO_PROJECT_ROOT: this.projectRoot } });
+    const tail = (r.stdout + r.stderr).split('\n').filter((l) => /^# (pass|fail)|^not ok|error:/.test(l)).slice(0, 20).join('\n');
+    return { ok: r.code === 0, detail: `${files.length} file JS controllati\n${tail}` };
   }
 
   // ─── QA ────────────────────────────────────────────────────────────────────────────────────────
@@ -483,17 +548,23 @@ export class Orchestrator {
   async finalize(req) {
     this.agents.setStatus('director', 'THINKING', { task: { id: req.id, title: `Rapporto finale ${req.id}` }, text: 'scrivo il rapporto', semantic: 'agent.thinking' });
     const tasks = this.tasksOf(req.id);
-    const diff = await this.git.diffSummary(req.worktree, req.baseCommit);
+    const diff = req.worktree ? await this.git.diffSummary(req.worktree, req.baseCommit) : { stat: '', files: [], commits: [] };
+    const sdiff = req.studio?.worktree ? await this.studioGit.diffSummary(req.studio.worktree, req.studio.baseCommit) : null;
     const tests = tasks.filter((t) => t.kind === 'test').map((t) => ({ taskId: t.id, agent: this.agentName(t.agentId), verdict: t.result?.verdict || t.status, summary: t.result?.summary, checks: t.result?.checks || [], harness: t.result?.harness?.verdict, screenshots: (t.result?.harness?.screenshots || []).map((s) => path.basename(s)) }));
     const participants = {};
     for (const t of tasks) { const n = this.agentName(t.agentId); participants[n] = participants[n] || { id: t.agentId, name: n, role: this.agents.get(t.agentId)?.role, tasks: [] }; participants[n].tasks.push(`${t.id} ${t.kind}: ${t.title} → ${t.status}${t.result?.verdict ? ' ' + t.result.verdict : ''}`); }
     const lastTest = [...tests].reverse().find(Boolean);
-    const result = diff.commits.length === 0 && !tasks.some((t) => t.kind === 'test') ? 'NESSUNA MODIFICA' : (lastTest?.verdict === 'PASS' || !lastTest ? 'PASS' : 'FAIL');
+    const anyChange = diff.commits.length || sdiff?.commits.length || tasks.some((t) => t.kind === 'office' && t.status === 'DONE');
+    const result = !anyChange && !tasks.some((t) => t.kind === 'test') ? 'NESSUNA MODIFICA' : (lastTest?.verdict === 'PASS' || !lastTest ? 'PASS' : 'FAIL');
     const facts = {
       request: req.text, result, branch: req.branch, baseBranch: req.baseBranch, baseCommit: req.baseCommit?.slice(0, 7),
       agents: Object.values(participants), tests, filesChanged: diff.files, commits: diff.commits.map((c) => `${c.short} ${c.author}: ${c.subject}`),
       summaries: tasks.filter((t) => t.status === 'DONE').map((t) => `${this.agentName(t.agentId)}: ${t.result?.summary || ''}`),
       fixLoops: tasks.filter((t) => t.kind === 'fix').length,
+      studioCommits: sdiff ? sdiff.commits.map((c) => `${c.short} ${c.author}: ${c.subject}`) : [],
+      studioFiles: sdiff ? sdiff.files : [],
+      studioBranch: req.studio?.branch || null,
+      officeChanges: tasks.filter((t) => t.kind === 'office' && t.status === 'DONE').map((t) => t.result?.notes),
     };
     let prose = '';
     const director = this.agents.get('director');
@@ -511,7 +582,9 @@ export class Orchestrator {
       try { const m = await this.git.merge(req); this.setRequest(req, { mergeCommit: m.mergeCommit, merged: true }); mergeNote = `Unito automaticamente in ${req.baseBranch} (${m.mergeCommit.slice(0, 7)}).`; }
       catch (e) { mergeNote = `Unione automatica non fatta: ${e.message}`; }
     }
-    if (!diff.commits.length) mergeNote = 'Nessun file è stato modificato.';
+    if (!diff.commits.length) mergeNote = 'Nessun file del gioco è stato modificato.';
+    if (sdiff?.commits.length) mergeNote += `\nModifiche al programma dello Studio nel branch \`${req.studio.branch}\`: premi "Unisci", poi riavvia lo Studio (./stop-studio.sh && ./start-studio.sh).`;
+    if (facts.officeChanges.length) mergeNote += '\nL\'ufficio è già cambiato: se non ti piace, "Annulla ultimo arredo" in alto a destra nell\'ufficio.';
     this.chat('director', `${prose}\n\n${mergeNote}`, { agentId: 'director', requestId: req.id, kind: 'report', report });
     this.agents.setStatus('director', 'IDLE', { task: null, text: `rapporto ${req.id}: ${result}` });
   }
@@ -555,14 +628,27 @@ export class Orchestrator {
     const req = this.S.requests[reqId];
     if (!req) throw new Error('richiesta sconosciuta');
     if (req.merged) throw new Error('già unita');
-    const m = await this.git.merge(req);
-    this.setRequest(req, { merged: true, mergeCommit: m.mergeCommit, mergedAt: now() });
-    this.chat('system', `Unito ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}). Per annullare: pulsante "Annulla unione" o \`git revert -m 1 ${m.mergeCommit.slice(0, 7)}\`.`, { requestId: req.id });
+    const lines = [];
+    if (req.branch && req.report?.commits?.length) {
+      const m = await this.git.merge(req);
+      this.setRequest(req, { mergeCommit: m.mergeCommit });
+      lines.push(`Gioco: unito ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}). Per annullare: "Annulla unione" o \`git revert -m 1 ${m.mergeCommit.slice(0, 7)}\`.`);
+    }
+    if (req.studio?.branch && req.report?.studioCommits?.length) {
+      const m = await this.studioGit.merge(req.studio);
+      req.studio.mergeCommit = m.mergeCommit;
+      lines.push(`Studio: unito ${req.studio.branch} (commit ${m.mergeCommit.slice(0, 7)}). Riavvia lo Studio per vederlo: ./stop-studio.sh && ./start-studio.sh`);
+    }
+    if (!lines.length) throw new Error('niente da unire');
+    this.setRequest(req, { merged: true, mergedAt: now() });
+    this.chat('system', lines.join('\n'), { requestId: req.id });
     return req;
   }
 
   async revertMerge(reqId) {
     const req = this.S.requests[reqId];
+    if (req.studio?.mergeCommit) { await this.studioGit.revertMerge(req.studio); req.studio.mergeCommit = null; }
+    if (!req.mergeCommit) { this.setRequest(req, { merged: false }); this.chat('system', `Unione di ${req.id} annullata. Riavvia lo Studio.`, { requestId: req.id }); return req; }
     const r = await this.git.revertMerge(req);
     this.setRequest(req, { merged: false, revertCommit: r.revertCommit });
     this.chat('system', `Unione di ${req.id} annullata (commit ${r.revertCommit.slice(0, 7)}).`, { requestId: req.id });
@@ -573,7 +659,8 @@ export class Orchestrator {
     const req = this.S.requests[reqId];
     if (!req) throw new Error('richiesta sconosciuta');
     if ([...this.running.keys()].some((id) => this.S.tasks[id]?.requestId === reqId)) this.cancel(reqId);
-    await this.git.removeWorktree(req, { deleteBranch: !req.merged });
+    if (req.branch) await this.git.removeWorktree(req, { deleteBranch: !req.merged });
+    if (req.studio?.branch) await this.studioGit.removeWorktree(req.studio, { deleteBranch: !req.merged });
     this.setRequest(req, { discarded: true, worktree: null, status: req.status === 'RUNNING' ? 'CANCELLED' : req.status });
     this.chat('system', `Scartato il lavoro di ${req.id}${req.merged ? ' (la parte già unita resta: usa "Annulla unione")' : ` (branch ${req.branch} eliminato)`}.`, { requestId: req.id });
     return req;
