@@ -134,6 +134,14 @@ Se chiedi modifiche al **programma** dello Studio (interfaccia, colori, animazio
 del repository dello Studio, lo Studio controlla la sintassi e lancia i suoi test; poi premi **Unisci** e riavvii lo
 Studio. Il gioco non viene mai toccato.
 
+### Nuovi personaggi disegnati dall'AI
+
+Chiedi in chat, per esempio *«Cosetta, fai nuovi sprite per te e per tutti i tuoi colleghi, stile Monkey Island»*
+(puoi allegare immagini di riferimento). Cosetta scrive un prompt per ogni agente con uno stile comune, il generatore
+immagini (GPT Image o Nano Banana; oppure Codex se Cosetta lavora con Codex) disegna i ritratti su fondo magenta,
+e lo Studio li ripulisce, li riduce a pixel art e li mette nell'ufficio e nelle schede. Il primo ritratto fa da
+riferimento di stile per gli altri. Non ti piacciono? **↶ Annulla ultimo arredo** torna ai personaggi di prima.
+
 Laboratorio dei personaggi (tutte le pose): http://localhost:4173/sprite-lab.html?all=1
 
 ## Cambiare l'avatar

@@ -14,6 +14,7 @@ export const TASK_KINDS = {
   puzzle: 'enigmi e indagini: indizi, prerequisiti, soluzioni',
   office: "arredo e aspetto dell'ufficio dello Studio (mobili, luci, colori, aspetto dei personaggi): non tocca il gioco",
   studio_ui: 'modifiche al programma GAME STUDIO stesso (interfaccia, grafica, animazioni): non tocca il gioco',
+  avatars: "nuovi personaggi (sprite/avatar) per gli agenti dello Studio, generati con l'AI immagini: lo fa l'Art (Cosetta); non tocca il gioco",
 };
 
 export function rosterText(agents) {

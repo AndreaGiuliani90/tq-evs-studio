@@ -36,6 +36,8 @@ export class AgentRegistry {
         const untouched = !a.avatar || (a.avatar.type === 'emoji' && a.avatar.emoji === def.avatar.emoji);
         a.avatar = { ...(a.avatar || {}), character: structuredClone(def.avatar.character), ...(untouched ? { type: 'pixel' } : {}) };
       }
+      // nuovi tipi di task dei predefiniti (es. Cosetta: "avatars") si aggiungono senza toccare le personalizzazioni
+      for (const k of def?.kinds || []) if (!(a.kinds || []).includes(k)) a.kinds = [...(a.kinds || []), k];
       // personaggio predefinito ridisegnato (lookVersion più alta): si aggiorna, a meno che l'utente non l'abbia personalizzato
       if (def?.avatar?.character && !a.avatar?.userEdited && (a.avatar?.lookVersion || 0) < (def.avatar.lookVersion || 0)) {
         a.avatar = { ...(a.avatar || {}), type: a.avatar?.type === 'emoji' || !a.avatar?.type ? 'pixel' : a.avatar.type, character: structuredClone(def.avatar.character), lookVersion: def.avatar.lookVersion };

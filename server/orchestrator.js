@@ -14,7 +14,7 @@ const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', '
 // tipi che cambiano il gioco: dopo di loro serve un test del QA (lore tocca solo i documenti)
 const GAME_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle'];
 // tipi che non toccano il repository del gioco: l'arredo dell'ufficio (dati) e il codice dello Studio (repository suo)
-const STUDIO_KINDS = ['office', 'studio_ui'];
+const STUDIO_KINDS = ['office', 'studio_ui', 'avatars'];
 
 export class Orchestrator {
   constructor({ store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir, qaRunner, office, studioGit }) {
@@ -163,6 +163,8 @@ export class Orchestrator {
     const audio = has(/suono|musica|audio|effetto sonoro|sfx|volume/) && this.agents.forKind('audio');
     const puzzle = has(/enigma|indagine|indizi|rompicapo|puzzle/) && this.agents.forKind('puzzle');
     const lore = has(/bibbia|canone|coerenz|lore/) && this.agents.forKind('lore');
+    const avatarsJob = has(/sprite|avatar|personagg/) && has(/colleg|agenti|studio|squadra|ufficio|tutti/) && this.agents.forKind('avatars');
+    if (avatarsJob) return { reply: `Ci pensa ${avatarsJob.name}.`, tasks: [{ key: 'v', agent: avatarsJob.id, kind: 'avatars', title: 'Nuovi personaggi per la squadra', instructions: text, dependsOn: [] }] };
     const office = has(/ufficio|arred|decor|scrivani|postazion|aspetto de|avatar|personagg.*studio/) && this.agents.forKind('office');
     if (office && !has(/gioco|livello|bug/)) return { reply: 'Ci pensa il Responsabile dell\'ufficio.', tasks: [{ key: 'o', agent: office.id, kind: 'office', title: 'Arredo dell\'ufficio', instructions: text, dependsOn: [] }] };
     const code = has(/implementa|bug|codice|gameplay|meccanic|aggiungi|correggi|sistema|boss|npc|nemic|comand|tasto|velocit|miglior/) || (!narrative && !art && !level && !audio && !puzzle && !lore);
@@ -333,6 +335,7 @@ export class Orchestrator {
   async executeTask(t, req, agent, signal) {
     if (t.kind === 'test') return this.runQA(t, req, agent, signal);
     if (t.kind === 'office') return this.runOffice(t, req, agent, signal);
+    if (t.kind === 'avatars') return this.runAvatars(t, req, agent, signal);
     if (t.kind === 'studio_ui') return this.runStudioUI(t, req, agent, signal);
     if (t.kind === 'integrate') {
       const mr = await this.git.git(['merge', '--no-ff', '--no-commit', req.baseBranch], req.worktree, { allowFail: true });
@@ -451,6 +454,58 @@ export class Orchestrator {
     const j = extractJSON(r.text) || {};
     const what = [applied.officeChanged ? 'ufficio riarredato' : null, applied.changedAvatars.length ? `aspetto di ${applied.changedAvatars.map((id) => this.agentName(id)).join(', ')}` : null].filter(Boolean).join(' · ') || 'nessuna modifica';
     return { ok: true, result: { summary: j.summary || truncate(r.text, 500), output: truncate(r.text, 4000), office: applied, notes: `${what}. Annullabile col pulsante "Annulla ultimo arredo".`, provider: provider.id } };
+  }
+
+  // ─── Nuovi personaggi per gli agenti (Cosetta) ─────────────────────────────────────────────────────
+  // Cosetta fa l'art direction (un prompt per agente, stile comune); le immagini le genera il provider immagini
+  // (GPT Image / Nano Banana) oppure Cosetta stessa se lavora con Codex. Il primo ritratto fa da riferimento di stile
+  // per gli altri. Si applicano subito come avatar; "Annulla ultimo arredo" torna ai personaggi di prima.
+  async runAvatars(t, req, agent, signal) {
+    const dir = ensureDir(path.join(this.dataDir, 'avatar-workspace', t.id));
+    const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director'));
+    const roster = team.map((a) => ({ id: a.id, name: a.name, role: a.role, description: a.description, look: a.avatar?.character || {} }));
+    writeFileAtomic(path.join(dir, 'squadra.json'), JSON.stringify(roster, null, 2));
+    const provider = await this.providers.resolve(agent.provider);
+    const imgProv = await this.providers.resolveImage(agent.imageProvider || 'auto');
+    const imgOk = imgProv ? (await imgProv.available()).ok : false;
+    const selfGen = provider.id === 'codex';
+    const refs = (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path);
+    const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- squadra.json (in questa cartella): gli agenti, i loro ruoli e l\'aspetto attuale', qaCmd: null,
+      extra: `## Nuovi personaggi per la squadra dello Studio
+Devi disegnare (art direction) i personaggi degli agenti in squadra.json, che siedono nell'ufficio isometrico della Pro Loco.
+Formato che serve allo Studio: ritratto a mezzo busto (testa e spalle, dal petto in su), girato di tre quarti verso chi guarda,
+pixel art pulita e dettagliata con contorno scuro e ombre a pochi toni, STESSO STILE per tutti, fondo magenta pieno #FF00FF
+(niente ombre o oggetti sullo sfondo), immagine quadrata. Ogni personaggio deve far capire il suo ruolo (oggetti, vestiti) e
+avere personalità (alla Ron Gilbert). Rispetta la richiesta dell'utente${refs.length ? ' e le immagini di riferimento allegate' : ''}.
+${selfGen ? 'Se puoi generare immagini col tuo strumento, genera tu i ritratti e salvali in questa cartella come <id>.png (es. dev.png). ' : ''}Nel JSON finale metti "avatars": [{"agent": "<id>", "prompt": "prompt in inglese, dettagliato"}], uno per ogni agente da ridisegnare (tutti, se l'utente non dice diversamente), e "style": "descrizione dello stile comune in inglese".` });
+    const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: dir, mode: 'work', model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+    if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
+    const j = extractJSON(r.text) || extractJSON(r.allText) || {};
+    const list = (Array.isArray(j.avatars) ? j.avatars : []).filter((x) => this.agents.get(x.agent));
+    if (!list.length) return { ok: false, error: 'Cosetta non ha indicato nessun personaggio da ridisegnare (campo "avatars" vuoto)' };
+    if (!imgOk && !selfGen) return { ok: false, blocked: true, error: 'Per generare i personaggi serve un generatore di immagini: metti OPENAI_API_KEY o GEMINI_API_KEY nel file .env (o fai lavorare Cosetta con Codex).' };
+    ensureDir(path.join(this.dataDir, 'avatars'));
+    this.office?.snapshot(this.agents);   // si può tornare indietro con "Annulla ultimo arredo"
+    const done = [], failed = [];
+    let styleRef = null;
+    for (const item of list) {
+      const own = path.join(dir, `${item.agent}.png`);
+      let png = fs.existsSync(own) && fs.statSync(own).mtimeMs > Date.now() - 60 * 60 * 1000 ? fs.readFileSync(own) : null;
+      if (!png && imgOk) {
+        this.agents.activity(agent.id, `disegno ${this.agentName(item.agent)}`, 'agent.editing', { file: `${item.agent}.png` });
+        const g = await imgProv.generate({ prompt: `${j.style ? j.style + '. ' : ''}${item.prompt}. Bust portrait from the chest up, three-quarter view facing the viewer, centered, solid flat magenta (#FF00FF) background, no text.`, size: '1024x1024', references: [...refs, ...(styleRef ? [styleRef] : [])] });
+        if (g.ok) png = g.png; else { failed.push(`${this.agentName(item.agent)}: ${g.error}`); continue; }
+      }
+      if (!png) { failed.push(`${this.agentName(item.agent)}: nessuna immagine`); continue; }
+      const file = `${item.agent}-gen-${Date.now()}.png`;
+      fs.writeFileSync(path.join(this.dataDir, 'avatars', file), png);
+      if (!styleRef) { styleRef = path.join(this.dataDir, 'avatars', file); }
+      const a = this.agents.get(item.agent);
+      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'image', image: `/avatars/${file}`, chroma: '#ff00ff', generated: { prompt: item.prompt, provider: fs.existsSync(own) ? provider.id : imgProv?.id, task: t.id, at: now() } } });
+      done.push(item.agent);
+    }
+    if (!done.length) return { ok: false, error: `nessun personaggio generato: ${failed.join(' · ')}` };
+    return { ok: true, result: { summary: `Nuovi personaggi per ${done.map((id) => this.agentName(id)).join(', ')}.${failed.length ? ` Non riusciti: ${failed.join(' · ')}` : ''}`, notes: 'Se non ti piacciono: "↶ Annulla ultimo arredo" nell\'ufficio riporta i personaggi di prima.', output: truncate(r.text, 3000), avatars: done, provider: provider.id } };
   }
 
   // ─── Codice dello Studio (interfaccia, grafica): repository dello Studio, branch separato ────────
@@ -628,7 +683,7 @@ export class Orchestrator {
     const participants = {};
     for (const t of tasks) { const n = this.agentName(t.agentId); participants[n] = participants[n] || { id: t.agentId, name: n, role: this.agents.get(t.agentId)?.role, tasks: [] }; participants[n].tasks.push(`${t.id} ${t.kind}: ${t.title} → ${t.status}${t.result?.verdict ? ' ' + t.result.verdict : ''}`); }
     const lastTest = [...tests].reverse().find(Boolean);
-    const anyChange = diff.commits.length || sdiff?.commits.length || tasks.some((t) => t.kind === 'office' && t.status === 'DONE');
+    const anyChange = diff.commits.length || sdiff?.commits.length || tasks.some((t) => ['office', 'avatars'].includes(t.kind) && t.status === 'DONE');
     const result = !anyChange && !tasks.some((t) => t.kind === 'test') ? 'NESSUNA MODIFICA' : (lastTest?.verdict === 'PASS' || !lastTest ? 'PASS' : 'FAIL');
     const facts = {
       request: req.text, result, branch: req.branch, baseBranch: req.baseBranch, baseCommit: req.baseCommit?.slice(0, 7),
@@ -638,7 +693,7 @@ export class Orchestrator {
       studioCommits: sdiff ? sdiff.commits.map((c) => `${c.short} ${c.author}: ${c.subject}`) : [],
       studioFiles: sdiff ? sdiff.files : [],
       studioBranch: req.studio?.branch || null,
-      officeChanges: tasks.filter((t) => t.kind === 'office' && t.status === 'DONE').map((t) => t.result?.notes),
+      officeChanges: tasks.filter((t) => ['office', 'avatars'].includes(t.kind) && t.status === 'DONE').map((t) => `${t.result?.summary || ''} ${t.result?.notes || ''}`.trim()),
     };
     let prose = '';
     const director = this.agents.get('director');

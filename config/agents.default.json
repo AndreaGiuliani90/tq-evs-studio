@@ -194,10 +194,12 @@
         "assets",
         "asset_brief",
         "image_generation",
-        "visual_consistency"
+        "visual_consistency",
+        "studio_avatars"
       ],
       "kinds": [
-        "art"
+        "art",
+        "avatars"
       ],
       "provider": "auto",
       "imageProvider": "auto",

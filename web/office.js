@@ -11,6 +11,7 @@
 // Avatar di tipo "spritesheet": al posto del personaggio disegnato si usa il foglio di sprite dell'utente.
 import { drawText, textWidth, shade } from './pixel.js';
 import { cachedSprite, SPRITE_W, SPRITE_H } from './sprites.js';
+import { processedAvatar } from './avatars.js';
 
 const LW = 448, LH = 356;          // risoluzione logica (poi ingrandita a pixel pieni)
 const TW = 16, TH = 8;             // mezza casella isometrica
@@ -730,6 +731,18 @@ export class Office {
         ctx.drawImage(img, f * s.frameWidth, (def.row || 0) * s.frameHeight, s.frameWidth, s.frameHeight, X - s.frameWidth * sc / 2, baseY - s.frameHeight * sc, s.frameWidth * sc, s.frameHeight * sc);
       }
       return;
+    }
+    // avatar generato con l'AI: l'immagine (ripulita e ridotta a pixel art) si muove secondo lo stato
+    if (agent.avatar?.type === 'image' && agent.avatar.image) {
+      const img = processedAvatar(agent.avatar.image, { chroma: agent.avatar.chroma || '#ff00ff', maxW: 44, maxH: 54 });
+      if (img) {
+        const tt = t + agent.id.length;
+        const dy = anim === 'typing' ? Math.floor(tt * 6) % 2 : anim === 'waiting' || anim === 'idle' ? Math.round(Math.sin(tt * 1.5)) : anim === 'writing-notes' ? Math.floor(tt * 1.5) % 2 : 0;
+        const dx = anim === 'playing' ? (Math.floor(tt * 8) % 2 ? 1 : -1) : anim === 'error' ? (Math.floor(tt * 12) % 2 ? 1 : -1) : 0;
+        ctx.drawImage(img, X - Math.floor(img.width / 2) + dx, baseY - img.height + 4 + dy);
+        if (anim === 'playing') { ctx.fillStyle = '#2a2a33'; ctx.fillRect(X - 7, baseY - 16 + dy, 14, 5); ctx.fillStyle = '#ff4fa3'; ctx.fillRect(X - 5, baseY - 15, 1, 1); ctx.fillStyle = '#3fe0d0'; ctx.fillRect(X + 4, baseY - 15, 1, 1); }
+        return;
+      }
     }
     const fps = { typing: 6, playing: 8, 'writing-notes': 1.5, waiting: 1, question: 2, celebrate: 4, error: 5, idle: 0.35 }[anim] || 1;
     const frame = Math.floor(t * fps + (agent.id.length * 0.37)) % 2;

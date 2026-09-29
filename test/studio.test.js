@@ -508,3 +508,26 @@ let input = ''; process.stdin.on('data', (d) => input += d).on('end', () => {
   assert.match(r.text, /col ruolo/);
   assert.ok(ev.includes('Edit'));
 });
+
+test('Cosetta ridisegna i personaggi della squadra: art direction + generatore immagini, applicati e annullabili', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'v', agent: 'art', kind: 'avatars', title: 'Nuovi personaggi', dependsOn: [] }]);
+    if (o.agent.id === 'art') { assert.ok(fs.existsSync(path.join(o.cwd, 'squadra.json'))); return { text: '```json\n{"style":"cozy pixel art","avatars":[{"agent":"dev","prompt":"a hacker"},{"agent":"qa","prompt":"a tester"}],"summary":"ok"}\n```' }; }
+    return { text: '{}' };
+  });
+  const reg = registryWith(prov);
+  const calls = [];
+  reg.register({ id: 'openai-image', kind: 'image', label: 'finto', available: async () => ({ ok: true }), generate: async (o) => { calls.push(o); return { ok: true, png: Buffer.from('PNG' + calls.length) }; } });
+  const s = await studioFor(root, reg);
+  const before = s.agents.get('dev').avatar.type;
+  const req = await s.orch.handleUserMessage('Cosetta, fai nuovi sprite per te e tutti i tuoi colleghi');
+  await waitFor(() => req.status === 'DONE', 10000, 'DONE');
+  assert.equal(req.worktree, undefined);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].references.length, 1, 'il primo ritratto fa da riferimento di stile');
+  assert.equal(s.agents.get('dev').avatar.type, 'image');
+  assert.match(s.agents.get('qa').avatar.image, /^\/avatars\/qa-gen-/);
+  s.office.undo(s.agents);
+  assert.equal(s.agents.get('dev').avatar.type, before);
+});
