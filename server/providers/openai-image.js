@@ -10,6 +10,7 @@ export class OpenAIImageProvider {
     this.label = 'OpenAI Images';
     this.apiKey = apiKey ?? process.env.OPENAI_API_KEY;
     this.model = model || process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2';
+    this.quality = process.env.OPENAI_IMAGE_QUALITY || 'high';   // low | medium | high
     this.fetch = fetchImpl || globalThis.fetch;
   }
 
@@ -26,14 +27,14 @@ export class OpenAIImageProvider {
       if (refs.length) {
         // con reference: endpoint "edits" (le immagini guidano stile e personaggi)
         const fd = new FormData();
-        fd.append('model', this.model); fd.append('prompt', prompt); fd.append('size', size);
+        fd.append('model', this.model); fd.append('prompt', prompt); fd.append('size', size); fd.append('quality', this.quality);
         for (const f of refs) fd.append('image[]', new Blob([fs.readFileSync(f)], { type: f.endsWith('.jpg') || f.endsWith('.jpeg') ? 'image/jpeg' : f.endsWith('.webp') ? 'image/webp' : 'image/png' }), path.basename(f));
         r = await this.fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}` }, body: fd });
       } else {
         r = await this.fetch('https://api.openai.com/v1/images/generations', {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
-          body: JSON.stringify({ model: this.model, prompt, size, n: 1, ...(background ? { background } : {}) }),
+          body: JSON.stringify({ model: this.model, prompt, size, n: 1, quality: this.quality, ...(background ? { background } : {}) }),
         });
       }
       const j = await r.json();

@@ -173,6 +173,9 @@ Il provider di ogni agente è `auto` = il primo disponibile fra:
    - **Nano Banana 2** (Google): `GEMINI_API_KEY=…` nel file `.env` (chiave da aistudio.google.com/apikey, con quota
      gratuita). Per il modello Pro: `GEMINI_IMAGE_MODEL=gemini-3-pro-image`.
    - **auto**: il primo configurato. In **Impostazioni** il pulsante **Prova** genera un'immagine di prova.
+   - **GPT-6 Astra** (tramite Codex): nel pannello di Cosetta *Provider = codex* e *Modello = gpt-6-astra*. Astra
+     ragiona, scrive i prompt, genera con lo strumento immagini di Codex (GPT Image 2), guarda il risultato e corregge.
+     Serve Codex aggiornato (`npm i -g @openai/codex@latest`) e un account abilitato (`codex models` deve elencarlo).
    Cosetta passa al generatore anche immagini di riferimento (sprite esistenti, i tuoi allegati) per restare nello stile.
 
 ```bash
