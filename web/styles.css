@@ -216,6 +216,7 @@ pre.diff .add { color: var(--green); } pre.diff .del { color: var(--red); } pre.
 .office-undo { position: absolute; right: 10px; top: 10px; opacity: .75; }
 .office-undo:hover { opacity: 1; }
 .k-question .mbody { border-color: var(--cyan); }
+.k-quote .mbody { border-color: var(--gold, #e0b050); }
 .qhint { font-size: 12px; margin-top: 6px; }
 .av-gen { background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--av-color) 45%, #1b1230), #140c24); }
 .av-gen canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }

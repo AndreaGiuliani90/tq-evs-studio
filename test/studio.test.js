@@ -519,7 +519,7 @@ test('Cosetta ridisegna i personaggi della squadra: art direction + generatore i
   const reg = registryWith(prov);
   const calls = [];
   reg.register({ id: 'openai-image', kind: 'image', label: 'finto', available: async () => ({ ok: true }), generate: async (o) => { calls.push(o); return { ok: true, png: Buffer.from('PNG' + calls.length) }; } });
-  const s = await studioFor(root, reg, { avatarFrames: 'light' });
+  const s = await studioFor(root, reg, { avatarFrames: 'light', quoteThresholdUsd: 1e6 });
   const before = s.agents.get('dev').avatar.type;
   const req = await s.orch.handleUserMessage('Cosetta, fai nuovi sprite per te e tutti i tuoi colleghi');
   await waitFor(() => req.status === 'DONE', 10000, 'DONE');
@@ -536,4 +536,43 @@ test('Cosetta ridisegna i personaggi della squadra: art direction + generatore i
   assert.match(qa.image, /^\/avatars\/qa-\d+\/idle-1\.png$/);
   s.office.undo(s.agents);
   assert.equal(s.agents.get('dev').avatar.type, before);
+});
+
+test('preventivo: prima dei lavori a pagamento la Regia mostra il costo e aspetta l\'ok (sì / leggera / no)', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'v', agent: 'art', kind: 'avatars', title: 'Nuovi personaggi', dependsOn: [] }]);
+    if (o.agent.id === 'art') return { text: '```json\n{"style":"x","avatars":[{"agent":"dev","prompt":"a hacker"}]}\n```' };
+    return { text: '{}' };
+  });
+  const reg = registryWith(prov);
+  const calls = [];
+  reg.register({ id: 'gemini-image', kind: 'image', model: 'gemini-3.1-flash-image', label: 'finto', available: async () => ({ ok: true }), generate: async (o) => { calls.push(o); return { ok: true, png: Buffer.from('PNG') }; } });
+  const s = await studioFor(root, reg, { quoteThresholdUsd: 0.5 });
+  const team = s.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
+  // 1) "no": nessuna immagine generata
+  const r1 = await s.orch.handleUserMessage('Cosetta, nuovi sprite per tutti');
+  await waitFor(() => r1.status === 'NEEDS_USER' && r1.quotePending, 5000, 'preventivo');
+  assert.equal(r1.quote.usd, Math.round(team * 13 * 0.067 * 100) / 100);
+  assert.equal(r1.quote.usdLight, Math.round(team * 6 * 0.067 * 100) / 100);
+  assert.match(s.store.data.chat.at(-1).text, /Preventivo[\s\S]*incluso nel piano|Preventivo/);
+  assert.equal(s.store.data.chat.at(-1).kind, 'quote');
+  await s.orch.handleUserMessage('no, lascia stare');
+  assert.equal(r1.status, 'CANCELLED');
+  assert.equal(calls.length, 0);
+  assert.equal(Object.keys(s.store.data.tasks).length, 0);
+  // 2) "leggera" in chat: parte con 6 fotogrammi
+  const r2 = await s.orch.handleUserMessage('Cosetta, nuovi sprite per tutti');
+  await waitFor(() => r2.quotePending, 5000, 'preventivo 2');
+  const back = await s.orch.handleUserMessage('vai con la versione leggera');
+  assert.equal(back.id, r2.id, 'la risposta non crea una nuova richiesta');
+  await waitFor(() => r2.status === 'DONE', 10000, 'DONE');
+  assert.equal(calls.length, 6);
+  // 3) sotto soglia nessuna domanda; "preventivo" nel testo la forza comunque
+  s.config.quoteThresholdUsd = 1e6;
+  const r3 = await s.orch.handleUserMessage('fammi un preventivo per nuovi sprite a tutti');
+  await waitFor(() => r3.quotePending, 5000, 'preventivo esplicito');
+  await s.orch.answerQuote(r3.id, 'approve');
+  await waitFor(() => r3.status === 'DONE', 10000, 'DONE 3');
+  assert.equal(calls.length, 6 + 13);
 });

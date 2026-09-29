@@ -142,10 +142,19 @@ immagini (GPT Image o Nano Banana; oppure Codex se Cosetta lavora con Codex) dis
 e lo Studio li ripulisce, li riduce a pixel art e li mette nell'ufficio e nelle schede. Il primo ritratto fa da
 riferimento di stile per gli altri. Ogni personaggio è **animato fotogramma per fotogramma**: dopo il ritratto base il
 generatore disegna le varianti dello stesso personaggio (scrive al computer, gioca col pad, pensa, festeggia, è
-perplesso, si dispera, aspetta, sbatte le palpebre): 12 immagini per agente, oppure 6 in modalità "leggeri"
+perplesso, si dispera, aspetta, sbatte le palpebre): 13 immagini per agente, oppure 6 in modalità "leggeri"
 (Impostazioni). Tutti i fotogrammi hanno lo stesso ritaglio e la stessa scala, così l'animazione non balla. Non ti piacciono? **↶ Annulla ultimo arredo** torna ai personaggi di prima.
 
 Laboratorio dei personaggi (tutte le pose): http://localhost:4173/sprite-lab.html?all=1
+
+### Preventivo prima di spendere
+
+Le immagini via API (GPT Image, Nano Banana) si pagano a consumo, **a parte** rispetto agli abbonamenti. Il lavoro
+degli agenti con Claude Code, Codex o Gemini CLI collegati al tuo account invece è **incluso nel piano** (consuma
+solo i limiti d'uso). Prima di un lavoro che supera la soglia (Impostazioni, predefinita 1 $) la Regia mostra un
+**preventivo** (immagini × prezzo del modello scelto) e aspetta: rispondi *sì*, *leggera* o *no*, oppure usa i
+pulsanti. Scrivi «preventivo» nel messaggio per averlo sempre, anche per lavori piccoli. I prezzi sono indicativi
+e si aggiornano in `config/studio.default.json` → `imagePrices`.
 
 ## Cambiare l'avatar
 

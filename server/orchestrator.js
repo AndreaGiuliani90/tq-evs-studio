@@ -93,6 +93,11 @@ export class Orchestrator {
     this.chat('user', text, attachments.length ? { attachments } : {});
     // se la Regia aveva fatto una domanda, questo messaggio è la risposta: la richiesta originale continua qui
     const asked = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
+    if (asked?.quotePending) {
+      const t = text.toLowerCase().trim();
+      const action = /legger|light|econom|meno fotogramm/.test(t) ? 'light' : /^(s[iì]\b|ok\b|okay|vai|procedi|conferm|approv|va bene|d'accordo|fallo)/.test(t) ? 'approve' : /^(no\b|annulla|lascia (stare|perdere)|stop|ferma|non farlo)/.test(t) ? 'cancel' : null;
+      if (action) return this.answerQuote(asked.id, action);
+    }
     const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [...(asked?.attachments || []), ...attachments] };
     if (asked) { req.continues = asked.id; req.originalText = asked.originalText || asked.text; asked.answeredBy = req.id; this.setRequest(asked, { status: 'ANSWERED' }); }
     this.S.requests[req.id] = req;
@@ -123,6 +128,22 @@ export class Orchestrator {
       this.agents.setStatus('director', 'THINKING', { task: { id: req.id, title: `Pianifico: ${clip(req.text, 60)}` }, text: 'analizzo la richiesta', semantic: 'agent.thinking' });
       const plan = await this.directorPlan(req, director);
       req.plan = plan;
+      if (plan.tasks.length && !req.quoteApproved) {
+        const q = await this.quote(req, plan);
+        req.quote = q;
+        if (q.ask) {
+          this.chat('director', `${plan.reply ? plan.reply + '\n\n' : ''}${q.text}`, { agentId: 'director', requestId: req.id, kind: 'quote' });
+          this.setRequest(req, { status: 'NEEDS_USER', question: q.text, quotePending: true });
+          this.agents.setStatus('director', 'IDLE', { task: null, text: 'aspetto l\'ok al preventivo' });
+          return;
+        }
+      }
+      await this.startPlan(req, plan);
+    } finally { this.planning.delete(req.id); }
+  }
+
+  async startPlan(req, plan) {
+    {
       if (!plan.tasks.length) {
         this.chat('director', plan.reply || 'Fatto.', { agentId: 'director', requestId: req.id, kind: plan.needsUser ? 'question' : 'text' });
         this.setRequest(req, { status: plan.needsUser ? 'NEEDS_USER' : 'ANSWERED', question: plan.needsUser ? plan.reply : null });
@@ -151,7 +172,77 @@ export class Orchestrator {
       this.setRequest(req, { status: 'RUNNING' });
       this.agents.setStatus('director', 'WAITING', { task: { id: req.id, title: `Coordino ${req.id}` }, text: `${req.taskIds.length} task delegati`, semantic: 'agent.waiting' });
       this.schedule();
-    } finally { this.planning.delete(req.id); }
+    }
+  }
+
+  // ─── Preventivo ────────────────────────────────────────────────────────────────────────────────
+  // Prima di lavori che costano soldi (immagini via API, modelli a consumo) la Regia mostra una stima e aspetta l'ok.
+  // Claude Code / Codex / Gemini CLI con login dell'abbonamento: inclusi nel piano (consumano solo i limiti d'uso).
+  imagePrice(p) {
+    const prices = { 'openai-image:high': 0.21, 'openai-image:medium': 0.053, 'openai-image:low': 0.011, 'gemini-3.1-flash-image': 0.067, 'gemini-3-pro-image': 0.134, 'gemini-2.5-flash-image': 0.039, ...(this.config.imagePrices || {}) };
+    if (!p) return 0;
+    const key = p.id === 'openai-image' ? `openai-image:${p.quality || 'high'}` : p.model;
+    return prices[key] ?? (p.id === 'openai-image' ? 0.21 : 0.1);
+  }
+
+  async quote(req, plan) {
+    const text = req.originalText ? `${req.originalText} ${req.text}` : req.text;
+    const explicit = /preventiv|quanto (mi )?cost|quanto (si )?spend/i.test(text);
+    const INCLUDED = { 'claude-code': 'Claude Code (abbonamento Claude)', codex: 'Codex (abbonamento ChatGPT)', gemini: 'Gemini CLI (account Google)' };
+    const included = new Set(), metered = [];
+    const lines = [];
+    let usd = 0, usdLight = null;
+    for (const pt of plan.tasks) {
+      const agent = this.agents.get(pt.agent); if (!agent) continue;
+      const prov = await this.providers.resolve(agent.provider);
+      if (INCLUDED[prov.id]) included.add(INCLUDED[prov.id]);
+      else if (prov.id === 'anthropic') { metered.push(agent.name); usd += 0.3; }
+      if (pt.kind === 'avatars' || pt.kind === 'art') {
+        const img = await this.providers.resolveImage(agent.imageProvider || 'auto');
+        const imgOk = img ? (await img.available()).ok : false;
+        if (!imgOk) { lines.push(`• ${agent.name}: nessun generatore di immagini a pagamento configurato → nessun costo immagini${prov.id === 'codex' ? ' (le disegna Codex col tuo piano)' : ''}`); continue; }
+        const price = this.imagePrice(img);
+        const label = `${img.id === 'openai-image' ? `GPT Image (${img.model}, qualità ${img.quality || 'high'})` : `Nano Banana (${img.model})`} ≈ $${price.toFixed(3)}/immagine`;
+        if (pt.kind === 'avatars') {
+          const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
+          const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
+          const mode = req.avatarFrames || this.config.avatarFrames || 'full';
+          const n = team * count(mode), c = n * price;
+          usd += c;
+          if (mode !== 'light') usdLight = (usdLight ?? 0) + c - team * count('light') * price;   // risparmio
+          lines.push(`• ${agent.name}: personaggi animati, fino a ${team} agenti × ${count(mode)} fotogrammi = **${n} immagini** · ${label} → **≈ $${c.toFixed(2)}**`);
+        } else {
+          const c = 6 * price; usd += c;
+          lines.push(`• ${agent.name}: immagini per il gioco, al massimo 6 · ${label} → **fino a ≈ $${c.toFixed(2)}**`);
+        }
+      }
+    }
+    if (usdLight != null) usdLight = usd - usdLight;   // totale con i personaggi leggeri
+    const threshold = this.config.quoteThresholdUsd ?? 1;
+    const ask = explicit || usd >= threshold;
+    const parts = ['**Preventivo (stima indicativa)**'];
+    if (lines.length) parts.push(lines.join('\n'));
+    if (included.size) parts.push(`• Lavoro degli agenti con ${[...included].join(', ')}: **incluso nel piano**, consuma solo i limiti d'uso.`);
+    if (metered.length) parts.push(`• ${metered.join(', ')} con chiave API Anthropic: a consumo, di solito pochi centesimi per task (≈ $0.30 stimati).`);
+    parts.push(`**Totale stimato: ≈ $${usd.toFixed(2)}**${usdLight != null ? ` (versione leggera: ≈ $${usdLight.toFixed(2)})` : ''}. Le immagini via API si pagano a parte rispetto agli abbonamenti; i prezzi reali dipendono dal listino del momento.`);
+    parts.push(`Procedo? Rispondi **sì**${usdLight != null ? ', **leggera**' : ''} oppure **no** (o usa i pulsanti).`);
+    return { usd: Math.round(usd * 100) / 100, usdLight: usdLight != null ? Math.round(usdLight * 100) / 100 : null, ask, explicit, text: parts.join('\n\n') };
+  }
+
+  // risposta dell'utente al preventivo: approve | light | cancel
+  async answerQuote(reqId, action) {
+    const req = this.S.requests[reqId];
+    if (!req || !req.quotePending) throw new Error('nessun preventivo in attesa per questa richiesta');
+    this.setRequest(req, { quotePending: false, answeredBy: req.id });
+    if (action === 'cancel') {
+      this.setRequest(req, { status: 'CANCELLED' });
+      this.chat('director', 'Va bene, non faccio niente. Nessun costo.', { agentId: 'director', requestId: req.id });
+      return req;
+    }
+    if (action === 'light') req.avatarFrames = 'light';
+    this.setRequest(req, { status: 'PLANNING', quoteApproved: true });
+    this.startPlan(req, req.plan).catch((e) => this.fail(req, e));
+    return req;
   }
 
   async directorPlan(req, director) {
@@ -486,7 +577,7 @@ export class Orchestrator {
     const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director'));
     const roster = team.map((a) => ({ id: a.id, name: a.name, role: a.role, description: a.description, look: a.avatar?.character || {} }));
     writeFileAtomic(path.join(dir, 'squadra.json'), JSON.stringify(roster, null, 2));
-    const plan = AVATAR_FRAMES[this.config.avatarFrames] || AVATAR_FRAMES.full;
+    const plan = AVATAR_FRAMES[req.avatarFrames || this.config.avatarFrames] || AVATAR_FRAMES.full;
     const frameList = Object.entries(plan).flatMap(([anim, frames]) => frames.map((desc, i) => ({ anim, i, desc })));
     const provider = await this.providers.resolve(agent.provider);
     const imgProv = await this.providers.resolveImage(agent.imageProvider || 'auto');

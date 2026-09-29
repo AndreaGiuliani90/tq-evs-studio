@@ -129,6 +129,12 @@ function taskChips(reqId) {
 function requestActions(req) {
   if (!req) return '';
   const b = [];
+  if (req.quotePending) {
+    b.push(`<button class="btn sm primary" data-act="quote-approve" data-req="${req.id}">Procedi (≈ $${Number(req.quote?.usd || 0).toFixed(2)})</button>`);
+    if (req.quote?.usdLight != null) b.push(`<button class="btn sm" data-act="quote-light" data-req="${req.id}">Versione leggera (≈ $${Number(req.quote.usdLight).toFixed(2)})</button>`);
+    b.push(`<button class="btn sm" data-act="quote-cancel" data-req="${req.id}">No, lascia stare</button>`);
+    return b.join('');
+  }
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
   if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
@@ -153,7 +159,7 @@ function msgHTML(m) {
   const a = m.agentId ? S.agents[m.agentId] : null;
   const who = m.role === 'user' ? 'Tu' : a ? a.name : 'Studio';
   const chips = m.kind === 'plan' || m.kind === 'report' || m.kind === 'escalation' ? `<div class="chips" data-req-chips="${esc(m.requestId)}">${taskChips(m.requestId)}</div>` : '';
-  const actions = m.requestId && ['report', 'escalation', 'plan'].includes(m.kind) ? `<div class="actions" data-req-actions="${esc(m.requestId)}">${requestActions(S.requests[m.requestId])}</div>` : '';
+  const actions = m.requestId && ['report', 'escalation', 'plan', 'quote'].includes(m.kind) ? `<div class="actions" data-req-actions="${esc(m.requestId)}">${requestActions(S.requests[m.requestId])}</div>` : '';
   return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}" data-id="${esc(m.id)}">
     ${m.role !== 'user' && a ? `<div class="mav">${avatarHTML(a, { size: 30 })}</div>` : ''}
     <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.requestId ? ' · ' + esc(m.requestId) : ''}</span></div>
@@ -261,6 +267,9 @@ document.addEventListener('click', act(async (ev) => {
     case 'revert-merge': if (confirm('Annullare l\'unione (crea un commit di revert)?')) { await api('POST', `/api/requests/${req}/revert-merge`); toast('Unione annullata.'); } return;
     case 'retry': await api('POST', `/api/requests/${req}/retry`); return;
     case 'cancel': await api('POST', `/api/requests/${req}/cancel`); return;
+    case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
+    case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;
+    case 'quote-cancel': await api('POST', `/api/requests/${req}/quote`, { action: 'cancel' }); return;
     case 'discard': if (confirm('Scartare il lavoro di questa richiesta (branch e copia di lavoro)?')) await api('POST', `/api/requests/${req}/discard`); return;
     case 'close': return closeModal();
     case 'close-drawer': return closeDrawer();
@@ -447,7 +456,8 @@ async function openModal(which) {
         <label>Tentativi per task in errore <input name="maxTaskRetries" type="number" min="0" max="5" value="${cfg.maxTaskRetries}"></label>
         <label>Giri massimi test → correzione → ritest <input name="maxFixLoops" type="number" min="1" max="8" value="${cfg.maxFixLoops}"></label>
         <label>Tempo massimo per task (minuti) <input name="taskTimeoutMin" type="number" min="1" value="${cfg.taskTimeoutMin}"></label>
-        <label>Personaggi generati dall'AI: fotogrammi per agente <select name="avatarFrames"><option value="full" ${cfg.avatarFrames !== 'light' ? 'selected' : ''}>completi (12: tutte le animazioni)</option><option value="light" ${cfg.avatarFrames === 'light' ? 'selected' : ''}>leggeri (6: meno costo)</option></select></label>
+        <label>Personaggi generati dall'AI: fotogrammi per agente <select name="avatarFrames"><option value="full" ${cfg.avatarFrames !== 'light' ? 'selected' : ''}>completi (13: tutte le animazioni)</option><option value="light" ${cfg.avatarFrames === 'light' ? 'selected' : ''}>leggeri (6: meno costo)</option></select></label>
+        <label>Chiedi un preventivo prima di lavori che costano più di $ <input type="number" name="quoteThresholdUsd" min="0" step="0.5" value="${esc(cfg.quoteThresholdUsd ?? 1)}" style="width:5em"> <span class="muted">(0 = sempre; scrivi "preventivo" nel messaggio per averlo comunque)</span></label>
         <label class="check"><input type="checkbox" name="qaBrowser" ${cfg.qaBrowser ? 'checked' : ''}> il QA prova il gioco nel browser (Playwright)</label>
         <label class="check"><input type="checkbox" name="autoMerge" ${cfg.autoMerge ? 'checked' : ''}> unisci da solo quando i test passano</label>
         <label class="check"><input type="checkbox" name="directorProseReport" ${cfg.directorProseReport ? 'checked' : ''}> rapporto finale scritto dalla Regia</label>
@@ -457,7 +467,7 @@ async function openModal(which) {
       try { const r = await api('POST', `/api/providers/${b.dataset.imgtest}/test`, { prompt: 'pixel art, top-down view, a small Italian village square at night with a stone fountain and warm lanterns, detailed, cozy' }); $('#imgtest-out').insertAdjacentHTML('beforeend', `<a href="${esc(r.url)}" target="_blank"><img src="${esc(r.url)}" title="${esc(b.dataset.imgtest)}"></a>`); }
       finally { b.disabled = false; b.textContent = 'Prova'; }
     });
-    $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on', avatarFrames: f.get('avatarFrames') }); S.config = c; toast('Impostazioni salvate.'); });
+    $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on', avatarFrames: f.get('avatarFrames'), quoteThresholdUsd: Number(f.get('quoteThresholdUsd') || 0) }); S.config = c; toast('Impostazioni salvate.'); });
   }
 }
 
