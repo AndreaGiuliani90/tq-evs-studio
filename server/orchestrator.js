@@ -200,10 +200,11 @@ export class Orchestrator {
       if (pt.kind === 'avatars' || pt.kind === 'art') {
         const img = await this.providers.resolveImage(agent.imageProvider || 'auto');
         const imgOk = img ? (await img.available()).ok : false;
-        if (!imgOk) { lines.push(`• ${agent.name}: nessun generatore di immagini a pagamento configurato → nessun costo immagini${prov.id === 'codex' ? ' (le disegna Codex col tuo piano)' : ''}`); continue; }
+        if (!imgOk) { lines.push(`• ${agent.name}: nessun generatore di immagini via API attivo → nessun costo immagini${prov.id === 'codex' ? ' (le disegna Codex col tuo piano)' : ''}. Se hai messo le chiavi nel file .env, controlla che le righe non comincino con #`); continue; }
         const price = this.imagePrice(img);
         const label = `${img.id === 'openai-image' ? `GPT Image (${img.model}, qualità ${img.quality || 'high'})` : `Nano Banana (${img.model})`} ≈ $${price.toFixed(3)}/immagine`;
         if (pt.kind === 'avatars') {
+          if (lines.some((l) => l.includes('personaggi animati'))) continue;
           const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
           const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
           const mode = req.avatarFrames || this.config.avatarFrames || 'full';
@@ -218,6 +219,7 @@ export class Orchestrator {
       }
     }
     if (usdLight != null) usdLight = usd - usdLight;   // totale con i personaggi leggeri
+    lines.splice(0, lines.length, ...new Set(lines));
     const threshold = this.config.quoteThresholdUsd ?? 1;
     const ask = explicit || usd >= threshold;
     const parts = ['**Preventivo (stima indicativa)**'];
@@ -308,7 +310,18 @@ export class Orchestrator {
       keys.add(key);
       out.tasks.push({ key, agent: agent.id, kind, title: clip(t.title || TASK_KINDS[kind], 100), instructions: String(t.instructions || t.title || ''), dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.map(String) : [] });
     }
-    for (const t of out.tasks) t.dependsOn = t.dependsOn.filter((k) => keys.has(k) && k !== t.key);
+    // personaggi dello Studio: UN solo task avatars (Cosetta ridisegna tutti insieme, con uno stile comune);
+    // l'animazione nell'ufficio c'è già, quindi niente task di codice dello Studio "per animarli"
+    const av = out.tasks.filter((t) => t.kind === 'avatars');
+    if (av.length) {
+      const drop = new Set(av.slice(1).map((t) => t.key));
+      if (av.length > 1) av[0].instructions = av.map((t) => t.instructions).join('\n\n');
+      for (const t of out.tasks) if (t.kind === 'studio_ui' && /anim|sprite|personagg|avatar|fotogramm/i.test(`${t.title} ${t.instructions}`)) drop.add(t.key);
+      for (const t of out.tasks) t.dependsOn = t.dependsOn.map((k) => (drop.has(k) && av.some((a) => a.key === k) ? av[0].key : k));
+      out.tasks = out.tasks.filter((t) => !drop.has(t.key));
+      for (const k of drop) keys.delete(k);
+    }
+    for (const t of out.tasks) t.dependsOn = [...new Set(t.dependsOn.filter((k) => keys.has(k) && k !== t.key))];
     // regola dello studio: dopo ogni lavoro che cambia il gioco c'è un test del QA
     const qa = this.agents.forKind('test');
     const writers = out.tasks.filter((t) => GAME_KINDS.includes(t.kind));

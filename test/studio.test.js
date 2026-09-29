@@ -576,3 +576,15 @@ test('preventivo: prima dei lavori a pagamento la Regia mostra il costo e aspett
   await waitFor(() => r3.status === 'DONE', 10000, 'DONE 3');
   assert.equal(calls.length, 6 + 13);
 });
+
+test('piano: più task "avatars" diventano uno solo e sparisce il task di codice per animarli', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  const p = s.orch.normalizePlan({ reply: 'x', tasks: [
+    { key: 'a', agent: 'art', kind: 'avatars', title: 'Sprite lotto 1', instructions: 'primi 5' },
+    { key: 'b', agent: 'art', kind: 'avatars', title: 'Sprite lotto 2', instructions: 'altri 4' },
+    { key: 'c', agent: 'office', kind: 'studio_ui', title: 'Animare gli sprite nell\'ufficio', dependsOn: ['a', 'b'] },
+  ] });
+  assert.equal(p.tasks.length, 1);
+  assert.match(p.tasks[0].instructions, /primi 5[\s\S]*altri 4/);
+});
