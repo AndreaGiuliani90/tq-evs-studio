@@ -326,9 +326,9 @@ function renderDrawer() {
         <label>Animazioni sprite (JSON: nome → {row, frames, fps}) <textarea name="sp_anims" rows="2" placeholder='{"typing":{"row":1,"frames":4,"fps":8}}'>${esc(av.sprite?.animations ? JSON.stringify(av.sprite.animations) : '')}</textarea></label>
         <label>Stato → animazione (JSON) <textarea name="av_anims" rows="2" placeholder='{"WORKING":"typing"}'>${esc(av.animations ? JSON.stringify(av.animations) : '')}</textarea></label>
       </fieldset>
-      <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'codex', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
-      <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="Claude: sonnet, opus, haiku · Codex: lascia vuoto o es. gpt-5"></label>
-      ${a.capabilities?.includes('image_generation') ? `<label>Provider immagini <select name="imageProvider">${['openai-image'].map((p) => `<option ${a.imageProvider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>` : ''}
+      <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'codex', 'gemini', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
+      <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="Claude: sonnet, opus, haiku · Codex/Gemini: vuoto = predefinito"></label>
+      <label>Provider immagini (se l'agente genera immagini) <select name="imageProvider">${[['auto', 'auto (il primo configurato)'], ['openai-image', 'GPT Image (OpenAI)'], ['gemini-image', 'Nano Banana (Google)']].map(([v, l]) => `<option value="${v}" ${(a.imageProvider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Tipi di task gestiti (separati da virgola) <input name="kinds" value="${esc((a.kinds || []).join(', '))}"></label>
       <label>Capacità (separate da virgola) <input name="capabilities" value="${esc((a.capabilities || []).join(', '))}"></label>
       <label>Documenti di contesto <input name="contextDocs" value="${esc((a.contextDocs || []).join(', '))}"></label>
@@ -440,7 +440,8 @@ async function openModal(which) {
   }
   if (which === 'settings') {
     const [prov, cfg] = await Promise.all([api('GET', '/api/providers'), api('GET', '/api/config')]);
-    modal(`<h2>Impostazioni</h2><h3>Provider AI</h3><table class="tasks">${prov.map((p) => `<tr><td><b>${esc(p.id)}</b></td><td class="muted">${esc(p.kind)}</td><td>${p.ok ? '✔ ' + esc(p.version || p.model || p.note || 'pronto') : '· ' + esc(p.reason)}</td></tr>`).join('')}</table>
+    modal(`<h2>Impostazioni</h2><h3>Provider AI</h3><table class="tasks">${prov.map((p) => `<tr><td><b>${esc(p.id)}</b></td><td class="muted">${esc(p.kind === 'image' ? 'immagini' : 'testo/codice')}</td><td>${p.ok ? '✔ ' + esc(p.version || p.model || p.note || 'pronto') : '· ' + esc(p.reason)}</td><td>${p.kind === 'image' && p.ok ? `<button class="btn sm" data-imgtest="${esc(p.id)}">Prova</button>` : ''}</td></tr>`).join('')}</table>
+      <div id="imgtest-out" class="shots"></div>
       <p class="muted">"auto" usa il primo disponibile: Claude Code (la CLI <code>claude</code> già autenticata sul Mac) → API Anthropic → nessun AI. Le chiavi vanno nel file <code>.env</code> dello Studio (vedi <code>.env.example</code>), poi si riavvia lo Studio. Non vengono mai salvate in git.</p>
       <h3>Studio</h3><form id="cfg" class="form">
         <label>Tentativi per task in errore <input name="maxTaskRetries" type="number" min="0" max="5" value="${cfg.maxTaskRetries}"></label>
@@ -450,6 +451,11 @@ async function openModal(which) {
         <label class="check"><input type="checkbox" name="autoMerge" ${cfg.autoMerge ? 'checked' : ''}> unisci da solo quando i test passano</label>
         <label class="check"><input type="checkbox" name="directorProseReport" ${cfg.directorProseReport ? 'checked' : ''}> rapporto finale scritto dalla Regia</label>
         <button class="btn primary">Salva</button></form>`);
+    for (const b of document.querySelectorAll('[data-imgtest]')) b.onclick = act(async () => {
+      b.disabled = true; b.textContent = 'Genero…';
+      try { const r = await api('POST', `/api/providers/${b.dataset.imgtest}/test`, { prompt: 'pixel art, top-down view, a small Italian village square at night with a stone fountain and warm lanterns, detailed, cozy' }); $('#imgtest-out').insertAdjacentHTML('beforeend', `<a href="${esc(r.url)}" target="_blank"><img src="${esc(r.url)}" title="${esc(b.dataset.imgtest)}"></a>`); }
+      finally { b.disabled = false; b.textContent = 'Prova'; }
+    });
     $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on' }); S.config = c; toast('Impostazioni salvate.'); });
   }
 }

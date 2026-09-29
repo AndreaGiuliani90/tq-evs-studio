@@ -200,14 +200,14 @@
         "art"
       ],
       "provider": "auto",
-      "imageProvider": "openai-image",
+      "imageProvider": "auto",
       "model": "",
       "writes": true,
       "contextDocs": [
         "GAME_DESIGN",
         "ASSETS"
       ],
-      "systemInstructions": "Sei Cosetta, Art Director. Stile del gioco: pixel art dettagliata vista dall'alto (top-down), luci suggestive, mai blocchi o pixel enormi ('non Minecraft'). Gli sprite vengono generati su fondo magenta pieno (#FF00FF) e ripuliti dagli script in tools/. Per ogni asset scrivi un brief (cosa, dimensioni in pixel, frame, palette, dove si usa) in docs/memoria/ASSETS.md. Se serve generare immagini, elencale nel campo imageRequests del JSON finale: lo Studio le genera col provider immagini configurato e le salva in assets/generated/ con i metadati.",
+      "systemInstructions": "Sei Cosetta, Art Director. Stile del gioco: pixel art dettagliata vista dall'alto (top-down), luci suggestive, mai blocchi o pixel enormi ('non Minecraft'). Gli sprite vengono generati su fondo magenta pieno (#FF00FF) e ripuliti dagli script in tools/. Per ogni asset scrivi un brief (cosa, dimensioni in pixel, frame, palette, dove si usa) in docs/memoria/ASSETS.md. Se serve generare immagini, elencale nel campo imageRequests del JSON finale: lo Studio le genera col provider immagini configurato (GPT Image o Nano Banana) e le salva in assets/generated/ con i metadati. Per tenere lo stile coerente indica in \"references\" 1-4 immagini esistenti del gioco (es. assets/player.png, un ritratto in assets/portraits/) o gli allegati dell'utente. Prompt in inglese, precisi: soggetto, vista (top-down), dimensioni in pixel, palette, fondo magenta #FF00FF pieno per gli sprite.",
       "avatar": {
         "type": "pixel",
         "emoji": "🎨",

@@ -166,8 +166,14 @@ Il provider di ogni agente è `auto` = il primo disponibile fra:
    ```
    Poi nel pannello di un agente scegli **Provider = codex** (per esempio un secondo QA, o Cosetta). Se `codex` non
    è nel PATH: `CODEX_BIN=/percorso/codex` nel file `.env`.
-4. **Immagini per Cosetta** (facoltativo): `OPENAI_API_KEY=sk-…`. Senza chiave le richieste di immagini restano come
-   brief "in attesa" in `assets/generated/metadata.json`; tutto il resto funziona.
+4. **Gemini come agente** (testo/codice): `npm i -g @google/gemini-cli`, poi lancia una volta `gemini` e fai il login con
+   Google. Nel pannello dell'agente: **Provider = gemini**.
+5. **Immagini** (Cosetta o qualunque agente che genera immagini) — nel pannello dell'agente, *Provider immagini*:
+   - **GPT Image 2** (OpenAI): `OPENAI_API_KEY=…` nel file `.env` (chiave da platform.openai.com, a consumo).
+   - **Nano Banana 2** (Google): `GEMINI_API_KEY=…` nel file `.env` (chiave da aistudio.google.com/apikey, con quota
+     gratuita). Per il modello Pro: `GEMINI_IMAGE_MODEL=gemini-3-pro-image`.
+   - **auto**: il primo configurato. In **Impostazioni** il pulsante **Prova** genera un'immagine di prova.
+   Cosetta passa al generatore anche immagini di riferimento (sprite esistenti, i tuoi allegati) per restare nello stile.
 
 ```bash
 cd ~/Downloads/tq-evs-studio && cp .env.example .env    # poi apri .env e togli il # davanti alle righe che ti servono

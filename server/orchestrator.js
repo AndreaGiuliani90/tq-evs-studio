@@ -413,8 +413,8 @@ export class Orchestrator {
 
   async generateImages(requests, req, agent, t) {
     if (!Array.isArray(requests) || !requests.length) return [];
-    const provider = this.providers.get(agent.imageProvider || 'openai-image');
-    const av = provider ? await provider.available() : { ok: false, reason: 'nessun provider immagini' };
+    const provider = await this.providers.resolveImage(agent.imageProvider || 'auto');
+    const av = provider ? await provider.available() : { ok: false, reason: 'nessun provider immagini configurato (GPT Image o Nano Banana: vedi Impostazioni)' };
     const out = [];
     const metaFile = path.join(req.worktree, 'assets', 'generated', 'metadata.json');
     const meta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, 'utf8')) : { assets: [] };
@@ -424,7 +424,11 @@ export class Orchestrator {
       const entry = { file: rel, prompt: ir.prompt, size: ir.size || '1024x1024', purpose: ir.purpose || '', agent: agent.id, task: t.id, request: req.id, createdAt: now() };
       if (!av.ok) { entry.status = 'pending'; entry.reason = av.reason; out.push(entry); meta.assets.push(entry); continue; }
       this.agents.activity(agent.id, `genera immagine ${rel}`, 'agent.editing', { file: rel });
-      const g = await provider.generate({ prompt: ir.prompt, size: entry.size });
+      // reference: file del gioco (sprite esistenti) o allegati dell'utente, per restare coerenti con lo stile
+      const refs = (Array.isArray(ir.references) ? ir.references : []).map((r) => (path.isAbsolute(r) ? r : path.join(req.worktree, r)))
+        .filter((r) => r.startsWith(req.worktree) || r.startsWith(this.uploadsDir));
+      entry.references = refs.map((r) => path.relative(req.worktree, r));
+      const g = await provider.generate({ prompt: ir.prompt, size: entry.size, references: refs });
       if (g.ok) { ensureDir(path.dirname(path.join(req.worktree, rel))); fs.writeFileSync(path.join(req.worktree, rel), g.png); entry.status = 'generated'; entry.provider = provider.id; this.events.emit('asset.created', { agentId: agent.id, file: rel, requestId: req.id }); }
       else { entry.status = 'error'; entry.reason = g.error; }
       out.push(entry); meta.assets.push(entry);

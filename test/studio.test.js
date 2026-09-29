@@ -462,3 +462,49 @@ test('allegati: caricati via HTTP, finiscono nella richiesta e sono leggibili da
     assert.equal(s.store.data.chat.find((m) => m.role === 'user' && m.attachments).attachments[0].name, 'bug.png');
   } finally { server.close(); }
 });
+
+test('immagini: Nano Banana (Gemini) e GPT Image con reference, scelta automatica del provider', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'img-'));
+  const ref = path.join(dir, 'player.png'); fs.writeFileSync(ref, 'PNGDATA');
+  const { GeminiImageProvider } = await import('../server/providers/gemini-image.js');
+  let sent;
+  const g = new GeminiImageProvider({ apiKey: 'k', fetchImpl: async (url, init) => { sent = { url, body: JSON.parse(init.body), key: init.headers['x-goog-api-key'] }; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'ecco' }, { inlineData: { mimeType: 'image/png', data: Buffer.from('IMG').toString('base64') } }] } }] }) }; } });
+  const r = await g.generate({ prompt: 'sprite', size: '1792x1024', references: [ref] });
+  assert.equal(r.ok, true); assert.equal(r.png.toString(), 'IMG');
+  assert.match(sent.url, /gemini-3\.1-flash-image:generateContent$/);
+  assert.equal(sent.key, 'k');
+  assert.equal(sent.body.generationConfig.imageConfig.aspectRatio, '16:9');
+  assert.equal(sent.body.contents[0].parts[1].inline_data.data, Buffer.from('PNGDATA').toString('base64'));
+
+  const { OpenAIImageProvider } = await import('../server/providers/openai-image.js');
+  let oUrl, oBody;
+  const o = new OpenAIImageProvider({ apiKey: 'k', fetchImpl: async (url, init) => { oUrl = url; oBody = init.body; return { ok: true, json: async () => ({ data: [{ b64_json: Buffer.from('X').toString('base64') }] }) }; } });
+  assert.equal((await o.generate({ prompt: 'p', references: [ref] })).ok, true);
+  assert.match(oUrl, /images\/edits$/); assert.ok(oBody instanceof FormData); assert.equal(oBody.get('model'), 'gpt-image-2');
+  await o.generate({ prompt: 'p' }); assert.match(oUrl, /images\/generations$/);
+
+  const reg = registryWith();
+  reg.register(new GeminiImageProvider({ apiKey: 'k' }));
+  reg.register(new OpenAIImageProvider({ apiKey: '' }));
+  assert.equal((await reg.resolveImage('auto')).id, 'gemini-image', 'senza chiave OpenAI si usa Nano Banana');
+});
+
+test('provider Gemini CLI: legge il JSON di `gemini -p` (CLI finta)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-gemini-'));
+  const bin = path.join(dir, 'gemini');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === '--version') { console.log('0.61.0'); process.exit(0); }
+let input = ''; process.stdin.on('data', (d) => input += d).on('end', () => {
+  if (!a.includes('auto_edit')) { console.log(JSON.stringify({ error: { message: 'modo sbagliato' } })); process.exit(1); }
+  console.log(JSON.stringify({ response: 'fatto ' + (input.includes('RUOLO') ? 'col ruolo' : '') + ' {"summary":"ok da gemini"}', stats: { files: { 'src/a.js': {} } } }));
+});
+`);
+  fs.chmodSync(bin, 0o755);
+  const { GeminiCliProvider } = await import('../server/providers/gemini-cli.js');
+  const ev = [];
+  const r = await new GeminiCliProvider({ bin }).run({ prompt: 'fai', system: 'RUOLO', cwd: dir, mode: 'work', onEvent: (e) => ev.push(e.tool || e.type) });
+  assert.equal(r.ok, true, r.error);
+  assert.match(r.text, /col ruolo/);
+  assert.ok(ev.includes('Edit'));
+});

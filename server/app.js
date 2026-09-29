@@ -166,6 +166,17 @@ export function createServer(studio) {
     ['PUT', /^\/api\/office$/, async (m, b) => { const errs = office.validate(b); if (errs.length) throw new Error(errs.join('; ')); office.snapshot(agents); office.save(b); return { ok: true }; }],
     ['POST', /^\/api\/office\/undo$/, async () => office.undo(agents)],
     ['GET', /^\/api\/providers$/, async () => providers.status()],
+    ['POST', /^\/api\/providers\/([\w-]+)\/test$/, async (m, b) => {
+      // prova di un provider immagini: genera un'immagine e la mette fra gli artefatti
+      const p = providers.get(m[1]);
+      if (!p || p.kind !== 'image') throw new Error('non è un provider immagini');
+      const g = await p.generate({ prompt: String(b.prompt || 'pixel art test'), size: '1024x1024' });
+      if (!g.ok) throw new Error(g.error);
+      const dir = ensureDir(path.join(dataDir, 'artifacts', 'prove-immagini'));
+      const name = `${m[1]}-${Date.now()}.png`;
+      fs.writeFileSync(path.join(dir, name), g.png);
+      return { url: `/artifacts/prove-immagini/${name}` };
+    }],
     ['GET', /^\/api\/config$/, async () => studio.config],
     ['PUT', /^\/api\/config$/, async (m, b) => studio.saveConfig(b)],
   ];

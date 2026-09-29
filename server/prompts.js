@@ -90,7 +90,7 @@ export function taskPrompt({ task, req, agent, deps, contextList, qaCmd, extra }
   out.push('', '## Consegna',
     'Quando hai finito, scrivi un breve riepilogo e chiudi con UN blocco JSON:',
     '```json',
-    '{"summary": "cosa hai fatto in 1-3 frasi", "filesChanged": ["percorsi"], "handoff": "cosa deve sapere chi viene dopo (per il QA: come verificare)", "notes": "limiti o dubbi"' + (task.kind === 'art' ? ', "imageRequests": [{"file": "assets/generated/nome.png", "prompt": "prompt dettagliato", "size": "1024x1024", "purpose": "dove si usa"}]' : '') + '}',
+    '{"summary": "cosa hai fatto in 1-3 frasi", "filesChanged": ["percorsi"], "handoff": "cosa deve sapere chi viene dopo (per il QA: come verificare)", "notes": "limiti o dubbi"' + (task.kind === 'art' ? ', "imageRequests": [{"file": "assets/generated/nome.png", "prompt": "prompt dettagliato", "size": "1024x1024", "purpose": "dove si usa", "references": ["assets/player.png"]}]' : '') + '}',
     '```');
   return out.filter((x) => x !== '').join('\n');
 }

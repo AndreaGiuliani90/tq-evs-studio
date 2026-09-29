@@ -4,6 +4,8 @@ import { ClaudeCodeProvider } from './claude-code.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIImageProvider } from './openai-image.js';
 import { CodexProvider } from './codex.js';
+import { GeminiCliProvider } from './gemini-cli.js';
+import { GeminiImageProvider } from './gemini-image.js';
 
 export class MockProvider {
   constructor() { this.id = 'mock'; this.kind = 'text'; this.label = 'Nessun AI (modalità dimostrativa)'; }
@@ -20,12 +22,21 @@ export class ProviderRegistry {
     this.register(new ClaudeCodeProvider());
     this.register(new AnthropicProvider());
     this.register(new CodexProvider());
+    this.register(new GeminiCliProvider());
+    this.register(new GeminiImageProvider());
     this.register(new OpenAIImageProvider());
     this.register(new MockProvider());
     this.autoOrder = ['claude-code', 'anthropic', 'mock'];
   }
 
   register(p) { this.providers.set(p.id, p); return p; }
+
+  // provider immagini: quello scelto per l'agente, oppure "auto" = il primo configurato fra GPT Image e Nano Banana
+  async resolveImage(id = 'auto') {
+    const order = id && id !== 'auto' ? [id, 'openai-image', 'gemini-image'] : ['openai-image', 'gemini-image'];
+    for (const k of order) { const p = this.get(k); if (p && p.kind === 'image' && (await p.available()).ok) return p; }
+    return this.get(id && id !== 'auto' ? id : 'openai-image') || null;
+  }
   get(id) { return this.providers.get(id) || null; }
 
   async resolve(id = 'auto') {
