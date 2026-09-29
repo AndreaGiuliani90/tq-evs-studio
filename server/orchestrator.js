@@ -95,8 +95,16 @@ export class Orchestrator {
     const asked = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
     if (asked?.quotePending) {
       const t = text.toLowerCase().trim();
-      const action = /legger|light|econom|meno fotogramm/.test(t) ? 'light' : /^(s[iì]\b|ok\b|okay|vai|procedi|conferm|approv|va bene|d'accordo|fallo)/.test(t) ? 'approve' : /^(no\b|annulla|lascia (stare|perdere)|stop|ferma|non farlo)/.test(t) ? 'cancel' : null;
-      if (action) return this.answerQuote(asked.id, action);
+      const opts = asked.quote?.options || [];
+      const pick = (f) => opts.find(f)?.id;
+      const choice = /banana pro|nano ?banana ?pro|gemini pro/.test(t) ? pick((o) => /pro/.test(o.id))
+        : /banana|gemini/.test(t) ? pick((o) => o.id === 'gemini-image:gemini-3.1-flash-image') || pick((o) => o.id.startsWith('gemini'))
+        : /gpt|openai/.test(t) ? (/media|medium/.test(t) ? pick((o) => o.id === 'openai-image:medium') : pick((o) => o.id === 'openai-image:high') || pick((o) => o.id.startsWith('openai')))
+        : /piano|abbonamento|codex|gratis/.test(t) ? pick((o) => o.plan) : undefined;
+      const cancel = /^(no\b|annulla|lascia (stare|perdere)|stop|ferma|non farlo)/.test(t);
+      const lightW = /legger|light|econom|meno fotogramm/.test(t);
+      const action = cancel ? 'cancel' : lightW ? 'light' : (choice || /^(s[iì]\b|ok\b|okay|vai|procedi|conferm|approv|va bene|d'accordo|fallo)/.test(t)) ? 'approve' : null;
+      if (action) return this.answerQuote(asked.id, action, { choice });
     }
     const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [...(asked?.attachments || []), ...attachments] };
     if (asked) { req.continues = asked.id; req.originalText = asked.originalText || asked.text; asked.answeredBy = req.id; this.setRequest(asked, { status: 'ANSWERED' }); }
@@ -178,11 +186,30 @@ export class Orchestrator {
   // ─── Preventivo ────────────────────────────────────────────────────────────────────────────────
   // Prima di lavori che costano soldi (immagini via API, modelli a consumo) la Regia mostra una stima e aspetta l'ok.
   // Claude Code / Codex / Gemini CLI con login dell'abbonamento: inclusi nel piano (consumano solo i limiti d'uso).
-  imagePrice(p) {
+  imagePriceFor(key) {
     const prices = { 'openai-image:high': 0.21, 'openai-image:medium': 0.053, 'openai-image:low': 0.011, 'gemini-3.1-flash-image': 0.067, 'gemini-3-pro-image': 0.134, 'gemini-2.5-flash-image': 0.039, ...(this.config.imagePrices || {}) };
-    if (!p) return 0;
-    const key = p.id === 'openai-image' ? `openai-image:${p.quality || 'high'}` : p.model;
-    return prices[key] ?? (p.id === 'openai-image' ? 0.21 : 0.1);
+    return prices[key] ?? (key.startsWith('openai') ? 0.21 : 0.1);
+  }
+
+  // Generatori di immagini possibili per un agente. id: "openai-image:<qualità>", "gemini-image:<modello>", "plan"
+  // ("plan" = le disegna Codex col piano ChatGPT, solo se l'agente lavora con Codex: niente costi API).
+  async imageOptions(agent) {
+    const out = [];
+    const o = this.providers.get('openai-image'), g = this.providers.get('gemini-image');
+    if (o && (await o.available()).ok) for (const q of [...new Set([o.quality || 'high', 'high', 'medium'])]) out.push({ id: `openai-image:${q}`, prov: o, opts: { quality: q }, label: `GPT Image 2 · qualità ${q === 'high' ? 'alta' : q === 'medium' ? 'media' : 'bassa'}`, price: this.imagePriceFor(`openai-image:${q}`) });
+    if (g && (await g.available()).ok) for (const m of [...new Set([g.model, 'gemini-3.1-flash-image', 'gemini-3-pro-image'])]) out.push({ id: `gemini-image:${m}`, prov: g, opts: { model: m }, label: m === 'gemini-3-pro-image' ? 'Nano Banana Pro' : m === 'gemini-3.1-flash-image' ? 'Nano Banana 2' : `Nano Banana (${m})`, price: this.imagePriceFor(m) });
+    const tp = await this.providers.resolve(agent.provider);
+    if (tp.id === 'codex') out.push({ id: 'plan', plan: true, label: 'Codex col tuo piano ChatGPT (sperimentale)', price: 0 });
+    return out;
+  }
+
+  // il generatore scelto: quello indicato nella richiesta (dal preventivo), altrimenti quello dell'agente
+  async imageFor(agent, req) {
+    const opts = await this.imageOptions(agent);
+    const want = req?.imageChoice || agent.imageProvider || 'auto';
+    const o = this.providers.get('openai-image'), g = this.providers.get('gemini-image');
+    const id = want === 'openai-image' ? `openai-image:${o?.quality || 'high'}` : want === 'gemini-image' ? `gemini-image:${g?.model}` : want;
+    return opts.find((x) => x.id === id) || opts.find((x) => x.id.startsWith(`${want}:`)) || (want === 'plan' ? null : opts.find((x) => x.id === `openai-image:${o?.quality || 'high'}`) || opts.find((x) => !x.plan)) || opts.find((x) => x.plan) || null;
   }
 
   async quote(req, plan) {
@@ -191,50 +218,56 @@ export class Orchestrator {
     const INCLUDED = { 'claude-code': 'Claude Code (abbonamento Claude)', codex: 'Codex (abbonamento ChatGPT)', gemini: 'Gemini CLI (account Google)' };
     const included = new Set(), metered = [];
     const lines = [];
-    let usd = 0, usdLight = null;
+    let base = 0, nFull = 0, nLight = 0, imgAgent = null, avatarsSeen = false;
+    const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
+    const mode = req.avatarFrames || this.config.avatarFrames || 'full';
     for (const pt of plan.tasks) {
       const agent = this.agents.get(pt.agent); if (!agent) continue;
       const prov = await this.providers.resolve(agent.provider);
       if (INCLUDED[prov.id]) included.add(INCLUDED[prov.id]);
-      else if (prov.id === 'anthropic') { metered.push(agent.name); usd += 0.3; }
-      if (pt.kind === 'avatars' || pt.kind === 'art') {
-        const img = await this.providers.resolveImage(agent.imageProvider || 'auto');
-        const imgOk = img ? (await img.available()).ok : false;
-        if (!imgOk) { lines.push(`• ${agent.name}: nessun generatore di immagini via API attivo → nessun costo immagini${prov.id === 'codex' ? ' (le disegna Codex col tuo piano)' : ''}. Se hai messo le chiavi nel file .env, controlla che le righe non comincino con #`); continue; }
-        const price = this.imagePrice(img);
-        const label = `${img.id === 'openai-image' ? `GPT Image (${img.model}, qualità ${img.quality || 'high'})` : `Nano Banana (${img.model})`} ≈ $${price.toFixed(3)}/immagine`;
-        if (pt.kind === 'avatars') {
-          if (lines.some((l) => l.includes('personaggi animati'))) continue;
-          const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
-          const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
-          const mode = req.avatarFrames || this.config.avatarFrames || 'full';
-          const n = team * count(mode), c = n * price;
-          usd += c;
-          if (mode !== 'light') usdLight = (usdLight ?? 0) + c - team * count('light') * price;   // risparmio
-          lines.push(`• ${agent.name}: personaggi animati, fino a ${team} agenti × ${count(mode)} fotogrammi = **${n} immagini** · ${label} → **≈ $${c.toFixed(2)}**`);
-        } else {
-          const c = 6 * price; usd += c;
-          lines.push(`• ${agent.name}: immagini per il gioco, al massimo 6 · ${label} → **fino a ≈ $${c.toFixed(2)}**`);
-        }
+      else if (prov.id === 'anthropic') { metered.push(agent.name); base += 0.3; }
+      if (pt.kind === 'avatars' && !avatarsSeen) {
+        avatarsSeen = true; imgAgent ??= agent;
+        const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
+        nFull += team * count(mode); nLight += team * count('light');
+        lines.push(`• ${agent.name}: personaggi animati, fino a ${team} agenti × ${count(mode)} fotogrammi = **${team * count(mode)} immagini**${mode !== 'light' ? ` (versione leggera: ${team * count('light')})` : ''}`);
+      } else if (pt.kind === 'art') {
+        imgAgent ??= agent; nFull += 6; nLight += 6;
+        lines.push(`• ${agent.name}: immagini per il gioco, al massimo 6`);
       }
     }
-    if (usdLight != null) usdLight = usd - usdLight;   // totale con i personaggi leggeri
-    lines.splice(0, lines.length, ...new Set(lines));
+    const light = mode !== 'light' && nLight < nFull;
+    let options = [], current = null;
+    if (imgAgent) {
+      const opts = await this.imageOptions(imgAgent);
+      current = await this.imageFor(imgAgent, req);
+      options = opts.map((o) => ({ id: o.id, label: o.label, usd: Math.round((base + nFull * o.price) * 100) / 100, usdLight: light ? Math.round((base + nLight * o.price) * 100) / 100 : null, current: o.id === current?.id, plan: !!o.plan, price: o.price }));
+      if (!opts.length) lines.push('• Nessun generatore di immagini attivo: metti una chiave OpenAI o Gemini nel file .env (righe senza # davanti), oppure fai lavorare Cosetta con Codex per usare il piano ChatGPT.');
+    }
+    const cur = options.find((o) => o.current);
+    const usd = cur ? cur.usd : Math.round(base * 100) / 100, usdLight = cur ? cur.usdLight : null;
     const threshold = this.config.quoteThresholdUsd ?? 1;
     const ask = explicit || usd >= threshold;
     const parts = ['**Preventivo (stima indicativa)**'];
     if (lines.length) parts.push(lines.join('\n'));
+    if (options.length) parts.push(`Generatore di immagini:\n${options.map((o) => `${o.current ? '▶' : '•'} ${o.label}: ${o.plan ? '**incluso nel piano** (usa i limiti d\'uso; da provare: non è detto che regga tante immagini)' : `≈ $${o.price.toFixed(3)}/immagine → **≈ $${o.usd.toFixed(2)}**${o.usdLight != null ? ` · leggera ≈ $${o.usdLight.toFixed(2)}` : ''}`}${o.current ? ' ← scelto' : ''}`).join('\n')}`);
     if (included.size) parts.push(`• Lavoro degli agenti con ${[...included].join(', ')}: **incluso nel piano**, consuma solo i limiti d'uso.`);
-    if (metered.length) parts.push(`• ${metered.join(', ')} con chiave API Anthropic: a consumo, di solito pochi centesimi per task (≈ $0.30 stimati).`);
+    if (metered.length) parts.push(`• ${metered.join(', ')} con chiave API Anthropic: a consumo (≈ $0.30 stimati per task).`);
     parts.push(`**Totale stimato: ≈ $${usd.toFixed(2)}**${usdLight != null ? ` (versione leggera: ≈ $${usdLight.toFixed(2)})` : ''}. Le immagini via API si pagano a parte rispetto agli abbonamenti; i prezzi reali dipendono dal listino del momento.`);
-    parts.push(`Procedo? Rispondi **sì**${usdLight != null ? ', **leggera**' : ''} oppure **no** (o usa i pulsanti).`);
-    return { usd: Math.round(usd * 100) / 100, usdLight: usdLight != null ? Math.round(usdLight * 100) / 100 : null, ask, explicit, text: parts.join('\n\n') };
+    parts.push(`Procedo? Rispondi **sì**${usdLight != null ? ', **leggera**' : ''} oppure **no**${options.length > 1 ? ', o scegli un altro generatore (es. «leggera con Nano Banana»)' : ''}. Puoi usare anche i pulsanti.`);
+    return { usd, usdLight, options, ask, explicit, text: parts.join('\n\n') };
   }
 
   // risposta dell'utente al preventivo: approve | light | cancel
-  async answerQuote(reqId, action) {
+  async answerQuote(reqId, action, { choice, light } = {}) {
     const req = this.S.requests[reqId];
     if (!req || !req.quotePending) throw new Error('nessun preventivo in attesa per questa richiesta');
+    if (choice && action !== 'cancel') {
+      const o = (req.quote?.options || []).find((x) => x.id === choice);
+      if (!o) throw new Error(`generatore non disponibile: ${choice}`);
+      req.imageChoice = o.id;
+    }
+    if (light) action = 'light';
     this.setRequest(req, { quotePending: false, answeredBy: req.id });
     if (action === 'cancel') {
       this.setRequest(req, { status: 'CANCELLED' });
@@ -541,8 +574,9 @@ export class Orchestrator {
 
   async generateImages(requests, req, agent, t) {
     if (!Array.isArray(requests) || !requests.length) return [];
-    const provider = await this.providers.resolveImage(agent.imageProvider || 'auto');
-    const av = provider ? await provider.available() : { ok: false, reason: 'nessun provider immagini configurato (GPT Image o Nano Banana: vedi Impostazioni)' };
+    const choice = await this.imageFor(agent, req);
+    const provider = choice && !choice.plan ? choice.prov : null;
+    const av = provider ? { ok: true } : { ok: false, reason: choice?.plan ? 'scelto il piano ChatGPT: le immagini le disegna Codex' : 'nessun provider immagini configurato (GPT Image o Nano Banana: vedi Impostazioni)' };
     const out = [];
     const metaFile = path.join(req.worktree, 'assets', 'generated', 'metadata.json');
     const meta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, 'utf8')) : { assets: [] };
@@ -556,7 +590,7 @@ export class Orchestrator {
       const refs = (Array.isArray(ir.references) ? ir.references : []).map((r) => (path.isAbsolute(r) ? r : path.join(req.worktree, r)))
         .filter((r) => r.startsWith(req.worktree) || r.startsWith(this.uploadsDir));
       entry.references = refs.map((r) => path.relative(req.worktree, r));
-      const g = await provider.generate({ prompt: ir.prompt, size: entry.size, references: refs });
+      const g = await provider.generate({ ...choice.opts, prompt: ir.prompt, size: entry.size, references: refs });
       if (g.ok) { ensureDir(path.dirname(path.join(req.worktree, rel))); fs.writeFileSync(path.join(req.worktree, rel), g.png); entry.status = 'generated'; entry.provider = provider.id; this.events.emit('asset.created', { agentId: agent.id, file: rel, requestId: req.id }); }
       else { entry.status = 'error'; entry.reason = g.error; }
       out.push(entry); meta.assets.push(entry);
@@ -593,8 +627,9 @@ export class Orchestrator {
     const plan = AVATAR_FRAMES[req.avatarFrames || this.config.avatarFrames] || AVATAR_FRAMES.full;
     const frameList = Object.entries(plan).flatMap(([anim, frames]) => frames.map((desc, i) => ({ anim, i, desc })));
     const provider = await this.providers.resolve(agent.provider);
-    const imgProv = await this.providers.resolveImage(agent.imageProvider || 'auto');
-    const imgOk = imgProv ? (await imgProv.available()).ok : false;
+    const choice = await this.imageFor(agent, req);
+    const imgOk = !!choice && !choice.plan;
+    const imgProv = imgOk ? choice.prov : null;
     const selfGen = provider.id === 'codex';
     const refs = (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path);
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- squadra.json (in questa cartella): gli agenti, i loro ruoli e l\'aspetto attuale', qaCmd: null,
@@ -631,7 +666,7 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
         if (!png && imgOk) {
           const isBase = f.anim === 'idle' && f.i === 0;
           const p = isBase ? `${style}${item.prompt}. ${fixed}` : `The SAME character as in the first reference image, identical face, hair, clothes, colors, art style, framing and scale, on the same flat magenta (#FF00FF) background. Change only the pose/expression: ${f.desc}. ${fixed}`;
-          const g = await imgProv.generate({ prompt: p, size: '1024x1024', references: isBase ? [...refs, ...(styleRef ? [styleRef] : [])] : [base, ...(styleRef && styleRef !== base ? [styleRef] : [])] });
+          const g = await imgProv.generate({ ...choice.opts, prompt: p, size: '1024x1024', references: isBase ? [...refs, ...(styleRef ? [styleRef] : [])] : [base, ...(styleRef && styleRef !== base ? [styleRef] : [])] });
           if (!g.ok) { errors++; if (errors === 1) failed.push(`${this.agentName(item.agent)}: ${g.error}`); return; }
           png = g.png;
         }
@@ -654,7 +689,7 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
       }
       for (const a of Object.keys(frames)) frames[a] = frames[a].filter(Boolean);
       const a = this.agents.get(item.agent);
-      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'frames', frames, fps: AVATAR_FPS, image: frames.idle[0], chroma: '#ff00ff', generated: { prompt: item.prompt, style: j.style || '', provider: imgOk ? imgProv.id : provider.id, task: t.id, at: now() } } });
+      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'frames', frames, fps: AVATAR_FPS, image: frames.idle[0], chroma: '#ff00ff', generated: { prompt: item.prompt, style: j.style || '', provider: imgOk ? choice.id : provider.id, task: t.id, at: now() } } });
       done.push(`${this.agentName(item.agent)} (${Object.values(frames).flat().length} fotogrammi)`);
     }
     if (!done.length) return { ok: false, error: `nessun personaggio generato: ${failed.join(' · ')}` };

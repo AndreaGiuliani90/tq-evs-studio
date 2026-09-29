@@ -22,7 +22,7 @@ export class GeminiImageProvider {
   }
 
   // references: percorsi di immagini (sprite esistenti, reference dell'utente) per tenere lo stile coerente
-  async generate({ prompt, size = '1024x1024', references = [] }) {
+  async generate({ prompt, size = '1024x1024', references = [], model }) {
     if (!this.apiKey) return { ok: false, error: 'GEMINI_API_KEY non impostata', code: 'PROVIDER_UNAVAILABLE' };
     const parts = [{ text: prompt }];
     for (const r of references.slice(0, 6)) {
@@ -30,7 +30,7 @@ export class GeminiImageProvider {
     }
     const body = { contents: [{ role: 'user', parts }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: RATIOS[size] || '1:1' } } };
     try {
-      const r = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, {
+      const r = await this.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || this.model)}:generateContent`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body),
       });
       const j = await r.json();

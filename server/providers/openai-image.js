@@ -19,7 +19,8 @@ export class OpenAIImageProvider {
   }
 
   // → { ok, png: Buffer, revisedPrompt }
-  async generate({ prompt, size = '1024x1024', background, references = [] }) {
+  async generate({ prompt, size = '1024x1024', background, references = [], quality }) {
+    const q = quality || this.quality;
     if (!this.apiKey) return { ok: false, error: 'OPENAI_API_KEY non impostata', code: 'PROVIDER_UNAVAILABLE' };
     try {
       let r;
@@ -27,18 +28,18 @@ export class OpenAIImageProvider {
       if (refs.length) {
         // con reference: endpoint "edits" (le immagini guidano stile e personaggi)
         const fd = new FormData();
-        fd.append('model', this.model); fd.append('prompt', prompt); fd.append('size', size); fd.append('quality', this.quality);
+        fd.append('model', this.model); fd.append('prompt', prompt); fd.append('size', size); fd.append('quality', q);
         for (const f of refs) fd.append('image[]', new Blob([fs.readFileSync(f)], { type: f.endsWith('.jpg') || f.endsWith('.jpeg') ? 'image/jpeg' : f.endsWith('.webp') ? 'image/webp' : 'image/png' }), path.basename(f));
         r = await this.fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}` }, body: fd });
       } else {
         r = await this.fetch('https://api.openai.com/v1/images/generations', {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
-          body: JSON.stringify({ model: this.model, prompt, size, n: 1, quality: this.quality, ...(background ? { background } : {}) }),
+          body: JSON.stringify({ model: this.model, prompt, size, n: 1, quality: q, ...(background ? { background } : {}) }),
         });
       }
       const j = await r.json();
-      if (!r.ok && this.model === 'gpt-image-2' && /model/i.test(j?.error?.message || '')) { this.model = 'gpt-image-1'; return this.generate({ prompt, size, background, references }); }   // account senza gpt-image-2
+      if (!r.ok && this.model === 'gpt-image-2' && /model/i.test(j?.error?.message || '')) { this.model = 'gpt-image-1'; return this.generate({ prompt, size, background, references, quality }); }   // account senza gpt-image-2
       if (!r.ok) return { ok: false, error: `API ${r.status}: ${j?.error?.message || ''}` };
       const d = j.data?.[0];
       if (d?.b64_json) return { ok: true, png: Buffer.from(d.b64_json, 'base64'), revisedPrompt: d.revised_prompt };

@@ -575,6 +575,17 @@ test('preventivo: prima dei lavori a pagamento la Regia mostra il costo e aspett
   await s.orch.answerQuote(r3.id, 'approve');
   await waitFor(() => r3.status === 'DONE', 10000, 'DONE 3');
   assert.equal(calls.length, 6 + 13);
+  // 4) alternative nel preventivo: «leggera con Nano Banana Pro» sceglie il modello Pro e 6 fotogrammi
+  const r4 = await s.orch.handleUserMessage('preventivo: nuovi sprite a tutti');
+  await waitFor(() => r4.quotePending, 5000, 'preventivo 4');
+  const pro = r4.quote.options.find((o) => o.id === 'gemini-image:gemini-3-pro-image');
+  assert.ok(pro && !pro.current);
+  assert.equal(pro.usd, Math.round(team * 13 * 0.134 * 100) / 100);
+  await s.orch.handleUserMessage('leggera con nano banana pro');
+  await waitFor(() => r4.status === 'DONE', 10000, 'DONE 4');
+  assert.equal(r4.imageChoice, 'gemini-image:gemini-3-pro-image');
+  assert.equal(calls.length, 6 + 13 + 6);
+  assert.ok(calls.slice(-6).every((c) => c.model === 'gemini-3-pro-image'));
 });
 
 test('piano: più task "avatars" diventano uno solo e sparisce il task di codice per animarli', async () => {

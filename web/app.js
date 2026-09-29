@@ -130,9 +130,15 @@ function requestActions(req) {
   if (!req) return '';
   const b = [];
   if (req.quotePending) {
-    b.push(`<button class="btn sm primary" data-act="quote-approve" data-req="${req.id}">Procedi (≈ $${Number(req.quote?.usd || 0).toFixed(2)})</button>`);
-    if (req.quote?.usdLight != null) b.push(`<button class="btn sm" data-act="quote-light" data-req="${req.id}">Versione leggera (≈ $${Number(req.quote.usdLight).toFixed(2)})</button>`);
+    const q = req.quote || {}, opts = q.options || [];
+    b.push(`<button class="btn sm primary" data-act="quote-approve" data-req="${req.id}">Procedi (≈ $${Number(q.usd || 0).toFixed(2)})</button>`);
+    if (q.usdLight != null) b.push(`<button class="btn sm" data-act="quote-light" data-req="${req.id}">Versione leggera (≈ $${Number(q.usdLight).toFixed(2)})</button>`);
     b.push(`<button class="btn sm" data-act="quote-cancel" data-req="${req.id}">No, lascia stare</button>`);
+    const alt = opts.filter((o) => !o.current);
+    if (alt.length) {
+      const price = (o, l) => (o.plan ? 'incluso nel piano' : `≈ $${Number(l && o.usdLight != null ? o.usdLight : o.usd).toFixed(2)}`);
+      b.push(`<div class="quote-alt">Oppure con <select data-quote-choice="${req.id}">${alt.map((o) => `<option value="${esc(o.id)}">${esc(o.label)} — ${price(o)}${o.usdLight != null && !o.plan ? ` · leggera ${price(o, true)}` : ''}</option>`).join('')}</select>${q.usdLight != null ? ` <label class="muted"><input type="checkbox" data-quote-light="${req.id}"> leggera</label>` : ''} <button class="btn sm" data-act="quote-choice" data-req="${req.id}">Procedi così</button></div>`);
+    }
     return b.join('');
   }
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
@@ -269,6 +275,7 @@ document.addEventListener('click', act(async (ev) => {
     case 'cancel': await api('POST', `/api/requests/${req}/cancel`); return;
     case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
     case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;
+    case 'quote-choice': await api('POST', `/api/requests/${req}/quote`, { action: 'approve', choice: document.querySelector(`[data-quote-choice="${req}"]`)?.value, light: !!document.querySelector(`[data-quote-light="${req}"]`)?.checked }); return;
     case 'quote-cancel': await api('POST', `/api/requests/${req}/quote`, { action: 'cancel' }); return;
     case 'discard': if (confirm('Scartare il lavoro di questa richiesta (branch e copia di lavoro)?')) await api('POST', `/api/requests/${req}/discard`); return;
     case 'close': return closeModal();
@@ -337,7 +344,7 @@ function renderDrawer() {
       </fieldset>
       <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'codex', 'gemini', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
       <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="Claude: sonnet, opus, haiku · Codex/Gemini: vuoto = predefinito"></label>
-      <label>Provider immagini (se l'agente genera immagini) <select name="imageProvider">${[['auto', 'auto (il primo configurato)'], ['openai-image', 'GPT Image (OpenAI)'], ['gemini-image', 'Nano Banana (Google)']].map(([v, l]) => `<option value="${v}" ${(a.imageProvider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Provider immagini (se l'agente genera immagini) <select name="imageProvider">${[['auto', 'auto (il primo configurato)'], ['openai-image', 'GPT Image (qualità dal file .env)'], ['openai-image:medium', 'GPT Image · qualità media (più economica)'], ['gemini-image', 'Nano Banana (modello dal file .env)'], ['gemini-image:gemini-3.1-flash-image', 'Nano Banana 2'], ['gemini-image:gemini-3-pro-image', 'Nano Banana Pro'], ['plan', 'Codex col piano ChatGPT (sperimentale, solo se l\'agente usa Codex)']].map(([v, l]) => `<option value="${v}" ${(a.imageProvider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Tipi di task gestiti (separati da virgola) <input name="kinds" value="${esc((a.kinds || []).join(', '))}"></label>
       <label>Capacità (separate da virgola) <input name="capabilities" value="${esc((a.capabilities || []).join(', '))}"></label>
       <label>Documenti di contesto <input name="contextDocs" value="${esc((a.contextDocs || []).join(', '))}"></label>

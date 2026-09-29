@@ -153,7 +153,7 @@ Le immagini via API (GPT Image, Nano Banana) si pagano a consumo, **a parte** ri
 degli agenti con Claude Code, Codex o Gemini CLI collegati al tuo account invece è **incluso nel piano** (consuma
 solo i limiti d'uso). Prima di un lavoro che supera la soglia (Impostazioni, predefinita 1 $) la Regia mostra un
 **preventivo** (immagini × prezzo del modello scelto) e aspetta: rispondi *sì*, *leggera* o *no*, oppure usa i
-pulsanti. Scrivi «preventivo» nel messaggio per averlo sempre, anche per lavori piccoli. I prezzi sono indicativi
+pulsanti. Il preventivo elenca anche i **generatori alternativi** (GPT Image alta/media, Nano Banana 2, Nano Banana Pro e, se Cosetta lavora con Codex, il **piano ChatGPT**, sperimentale) con il loro costo: scegli dal menu sotto il preventivo o scrivi, per esempio, «leggera con Nano Banana». Scrivi «preventivo» nel messaggio per averlo sempre, anche per lavori piccoli. I prezzi sono indicativi
 e si aggiornano in `config/studio.default.json` → `imagePrices`.
 
 ## Cambiare l'avatar

@@ -141,7 +141,7 @@ export function createServer(studio) {
     ['GET', /^\/api\/tasks\/([\w-]+)$/, async (m) => store.data.tasks[m[1]] || null],
     ['POST', /^\/api\/requests\/([\w-]+)\/retry$/, async (m) => orch.retry(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/cancel$/, async (m) => orch.cancel(m[1])],
-    ['POST', /^\/api\/requests\/([\w-]+)\/quote$/, async (m, b) => orch.answerQuote(m[1], ['approve', 'light', 'cancel'].includes(b?.action) ? b.action : 'approve')],
+    ['POST', /^\/api\/requests\/([\w-]+)\/quote$/, async (m, b) => orch.answerQuote(m[1], ['approve', 'light', 'cancel'].includes(b?.action) ? b.action : 'approve', { choice: b?.choice, light: !!b?.light })],
     ['POST', /^\/api\/requests\/([\w-]+)\/merge$/, async (m) => orch.merge(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/revert-merge$/, async (m) => orch.revertMerge(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/discard$/, async (m) => orch.discard(m[1])],
