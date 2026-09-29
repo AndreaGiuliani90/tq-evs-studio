@@ -447,6 +447,7 @@ async function openModal(which) {
         <label>Tentativi per task in errore <input name="maxTaskRetries" type="number" min="0" max="5" value="${cfg.maxTaskRetries}"></label>
         <label>Giri massimi test → correzione → ritest <input name="maxFixLoops" type="number" min="1" max="8" value="${cfg.maxFixLoops}"></label>
         <label>Tempo massimo per task (minuti) <input name="taskTimeoutMin" type="number" min="1" value="${cfg.taskTimeoutMin}"></label>
+        <label>Personaggi generati dall'AI: fotogrammi per agente <select name="avatarFrames"><option value="full" ${cfg.avatarFrames !== 'light' ? 'selected' : ''}>completi (12: tutte le animazioni)</option><option value="light" ${cfg.avatarFrames === 'light' ? 'selected' : ''}>leggeri (6: meno costo)</option></select></label>
         <label class="check"><input type="checkbox" name="qaBrowser" ${cfg.qaBrowser ? 'checked' : ''}> il QA prova il gioco nel browser (Playwright)</label>
         <label class="check"><input type="checkbox" name="autoMerge" ${cfg.autoMerge ? 'checked' : ''}> unisci da solo quando i test passano</label>
         <label class="check"><input type="checkbox" name="directorProseReport" ${cfg.directorProseReport ? 'checked' : ''}> rapporto finale scritto dalla Regia</label>
@@ -456,7 +457,7 @@ async function openModal(which) {
       try { const r = await api('POST', `/api/providers/${b.dataset.imgtest}/test`, { prompt: 'pixel art, top-down view, a small Italian village square at night with a stone fountain and warm lanterns, detailed, cozy' }); $('#imgtest-out').insertAdjacentHTML('beforeend', `<a href="${esc(r.url)}" target="_blank"><img src="${esc(r.url)}" title="${esc(b.dataset.imgtest)}"></a>`); }
       finally { b.disabled = false; b.textContent = 'Prova'; }
     });
-    $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on' }); S.config = c; toast('Impostazioni salvate.'); });
+    $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on', avatarFrames: f.get('avatarFrames') }); S.config = c; toast('Impostazioni salvate.'); });
   }
 }
 

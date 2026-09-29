@@ -9,5 +9,6 @@
   "autoMerge": false,
   "directorProseReport": true,
   "chatContextMessages": 8,
-  "studioTests": true
+  "studioTests": true,
+  "avatarFrames": "full"
 }

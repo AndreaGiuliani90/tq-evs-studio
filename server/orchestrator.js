@@ -16,6 +16,27 @@ const GAME_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'p
 // tipi che non toccano il repository del gioco: l'arredo dell'ufficio (dati) e il codice dello Studio (repository suo)
 const STUDIO_KINDS = ['office', 'studio_ui', 'avatars'];
 
+// Fotogrammi dei personaggi animati (avatar generati): animazione → descrizione di ogni fotogramma per il generatore
+const AVATAR_FRAMES = {
+  full: {
+    idle: ['relaxed neutral pose, slight smile', 'same relaxed pose, eyes closed (blinking)'],
+    typing: ['typing on a keyboard just below the frame, both hands visible at the bottom, left hand pressing keys, focused on a screen', 'typing on a keyboard, right hand pressing keys, focused'],
+    playing: ['holding a game controller with both hands, excited, leaning slightly left', 'holding a game controller, leaning slightly right, mouth open with excitement'],
+    'writing-notes': ['thinking, one hand on the chin, eyes looking up', 'writing in a small notebook with a pencil, concentrated'],
+    celebrate: ['both arms raised in celebration, big open smile', 'fists up cheering, eyes closed with joy'],
+    waiting: ['arms crossed, bored, glancing sideways'],
+    question: ['puzzled, scratching the head, one eyebrow raised'],
+    error: ['shocked, both hands on the cheeks, mouth open, a sweat drop'],
+  },
+  light: {
+    idle: ['relaxed neutral pose, slight smile', 'same relaxed pose, eyes closed (blinking)'],
+    typing: ['typing on a keyboard just below the frame, hands visible, focused', 'typing, other hand pressing keys'],
+    celebrate: ['both arms raised in celebration, big open smile'],
+    question: ['puzzled, scratching the head'],
+  },
+};
+const AVATAR_FPS = { idle: 0.4, typing: 6, playing: 5, 'writing-notes': 1, celebrate: 3, waiting: 1, question: 1, error: 4 };
+
 export class Orchestrator {
   constructor({ store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir, qaRunner, office, studioGit }) {
     Object.assign(this, { store, events, agents, providers, git, knowledge, config, studioDir, projectRoot, dataDir, office, studioGit });
@@ -465,47 +486,75 @@ export class Orchestrator {
     const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director'));
     const roster = team.map((a) => ({ id: a.id, name: a.name, role: a.role, description: a.description, look: a.avatar?.character || {} }));
     writeFileAtomic(path.join(dir, 'squadra.json'), JSON.stringify(roster, null, 2));
+    const plan = AVATAR_FRAMES[this.config.avatarFrames] || AVATAR_FRAMES.full;
+    const frameList = Object.entries(plan).flatMap(([anim, frames]) => frames.map((desc, i) => ({ anim, i, desc })));
     const provider = await this.providers.resolve(agent.provider);
     const imgProv = await this.providers.resolveImage(agent.imageProvider || 'auto');
     const imgOk = imgProv ? (await imgProv.available()).ok : false;
     const selfGen = provider.id === 'codex';
     const refs = (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path);
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- squadra.json (in questa cartella): gli agenti, i loro ruoli e l\'aspetto attuale', qaCmd: null,
-      extra: `## Nuovi personaggi per la squadra dello Studio
+      extra: `## Nuovi personaggi animati per la squadra dello Studio
 Devi disegnare (art direction) i personaggi degli agenti in squadra.json, che siedono nell'ufficio isometrico della Pro Loco.
-Formato che serve allo Studio: ritratto a mezzo busto (testa e spalle, dal petto in su), girato di tre quarti verso chi guarda,
-pixel art pulita e dettagliata con contorno scuro e ombre a pochi toni, STESSO STILE per tutti, fondo magenta pieno #FF00FF
-(niente ombre o oggetti sullo sfondo), immagine quadrata. Ogni personaggio deve far capire il suo ruolo (oggetti, vestiti) e
-avere personalità (alla Ron Gilbert). Rispetta la richiesta dell'utente${refs.length ? ' e le immagini di riferimento allegate' : ''}.
-${selfGen ? 'Se puoi generare immagini col tuo strumento, genera tu i ritratti e salvali in questa cartella come <id>.png (es. dev.png). ' : ''}Nel JSON finale metti "avatars": [{"agent": "<id>", "prompt": "prompt in inglese, dettagliato"}], uno per ogni agente da ridisegnare (tutti, se l'utente non dice diversamente), e "style": "descrizione dello stile comune in inglese".` });
+Ogni personaggio è animato fotogramma per fotogramma: lo Studio genera prima il ritratto base, poi ogni fotogramma come
+variante dello STESSO personaggio (stessa inquadratura, stessa scala). Formato: mezzo busto (dal petto in su), tre quarti
+verso chi guarda, pixel art pulita e dettagliata con contorno scuro e ombre a pochi toni, STESSO STILE per tutti, fondo
+magenta pieno #FF00FF, immagine quadrata, figura centrata con spazio intorno (nei fotogrammi alza le braccia).
+Ogni personaggio deve far capire il suo ruolo (oggetti, vestiti) e avere personalità (alla Ron Gilbert). Rispetta la
+richiesta dell'utente${refs.length ? ' e le immagini di riferimento allegate' : ''}.
+Fotogrammi che lo Studio genererà per ognuno: ${frameList.map((f) => `${f.anim}-${f.i + 1}`).join(', ')}.
+${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente salva in questa cartella <id>-<fotogramma>.png (es. dev-idle-1.png, dev-typing-1.png …).\n` : ''}Nel JSON finale metti "avatars": [{"agent": "<id>", "prompt": "descrizione del personaggio in inglese, dettagliata"}], uno per ogni agente da ridisegnare (tutti, se l'utente non dice diversamente), e "style": "descrizione dello stile comune in inglese".` });
     const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: dir, mode: 'work', model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
     const j = extractJSON(r.text) || extractJSON(r.allText) || {};
     const list = (Array.isArray(j.avatars) ? j.avatars : []).filter((x) => this.agents.get(x.agent));
     if (!list.length) return { ok: false, error: 'Cosetta non ha indicato nessun personaggio da ridisegnare (campo "avatars" vuoto)' };
     if (!imgOk && !selfGen) return { ok: false, blocked: true, error: 'Per generare i personaggi serve un generatore di immagini: metti OPENAI_API_KEY o GEMINI_API_KEY nel file .env (o fai lavorare Cosetta con Codex).' };
-    ensureDir(path.join(this.dataDir, 'avatars'));
-    this.office?.snapshot(this.agents);   // si può tornare indietro con "Annulla ultimo arredo"
+    this.office?.snapshot(this.agents);   // "Annulla ultimo arredo" torna ai personaggi di prima
     const done = [], failed = [];
     let styleRef = null;
+    const style = j.style ? `${j.style}. ` : '';
+    const fixed = 'Bust portrait from the chest up, three-quarter view facing the viewer, centered with empty space around, solid flat magenta (#FF00FF) background, no text, no frame.';
     for (const item of list) {
-      const own = path.join(dir, `${item.agent}.png`);
-      let png = fs.existsSync(own) && fs.statSync(own).mtimeMs > Date.now() - 60 * 60 * 1000 ? fs.readFileSync(own) : null;
-      if (!png && imgOk) {
-        this.agents.activity(agent.id, `disegno ${this.agentName(item.agent)}`, 'agent.editing', { file: `${item.agent}.png` });
-        const g = await imgProv.generate({ prompt: `${j.style ? j.style + '. ' : ''}${item.prompt}. Bust portrait from the chest up, three-quarter view facing the viewer, centered, solid flat magenta (#FF00FF) background, no text.`, size: '1024x1024', references: [...refs, ...(styleRef ? [styleRef] : [])] });
-        if (g.ok) png = g.png; else { failed.push(`${this.agentName(item.agent)}: ${g.error}`); continue; }
+      if (signal?.aborted) break;
+      const outDir = ensureDir(path.join(this.dataDir, 'avatars', `${item.agent}-${Date.now()}`));
+      const rel = (f) => `/avatars/${path.basename(outDir)}/${f}`;
+      const frames = {};
+      let base = null, errors = 0;
+      const own = (f) => { const p = path.join(dir, `${item.agent}-${f.anim}-${f.i + 1}.png`); return fs.existsSync(p) ? fs.readFileSync(p) : null; };
+      const gen = async (f) => {
+        let png = own(f);
+        if (!png && imgOk) {
+          const isBase = f.anim === 'idle' && f.i === 0;
+          const p = isBase ? `${style}${item.prompt}. ${fixed}` : `The SAME character as in the first reference image, identical face, hair, clothes, colors, art style, framing and scale, on the same flat magenta (#FF00FF) background. Change only the pose/expression: ${f.desc}. ${fixed}`;
+          const g = await imgProv.generate({ prompt: p, size: '1024x1024', references: isBase ? [...refs, ...(styleRef ? [styleRef] : [])] : [base, ...(styleRef && styleRef !== base ? [styleRef] : [])] });
+          if (!g.ok) { errors++; if (errors === 1) failed.push(`${this.agentName(item.agent)}: ${g.error}`); return; }
+          png = g.png;
+        }
+        if (!png) return;
+        const name = `${f.anim}-${f.i + 1}.png`;
+        fs.writeFileSync(path.join(outDir, name), png);
+        (frames[f.anim] ??= [])[f.i] = rel(name);
+        return path.join(outDir, name);
+      };
+      this.agents.activity(agent.id, `disegno ${this.agentName(item.agent)} (ritratto base)`, 'agent.editing', { file: `${item.agent}` });
+      base = await gen(frameList[0]);
+      if (!base) { if (!failed.some((x) => x.startsWith(this.agentName(item.agent)))) failed.push(`${this.agentName(item.agent)}: nessuna immagine`); continue; }
+      styleRef ??= base;
+      // gli altri fotogrammi, un po' in parallelo
+      const rest = frameList.slice(1);
+      for (let k = 0; k < rest.length; k += 3) {
+        if (signal?.aborted) break;
+        this.agents.activity(agent.id, `${this.agentName(item.agent)}: fotogrammi ${rest.slice(k, k + 3).map((f) => `${f.anim}-${f.i + 1}`).join(', ')}`, 'agent.editing');
+        await Promise.all(rest.slice(k, k + 3).map(gen));
       }
-      if (!png) { failed.push(`${this.agentName(item.agent)}: nessuna immagine`); continue; }
-      const file = `${item.agent}-gen-${Date.now()}.png`;
-      fs.writeFileSync(path.join(this.dataDir, 'avatars', file), png);
-      if (!styleRef) { styleRef = path.join(this.dataDir, 'avatars', file); }
+      for (const a of Object.keys(frames)) frames[a] = frames[a].filter(Boolean);
       const a = this.agents.get(item.agent);
-      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'image', image: `/avatars/${file}`, chroma: '#ff00ff', generated: { prompt: item.prompt, provider: fs.existsSync(own) ? provider.id : imgProv?.id, task: t.id, at: now() } } });
-      done.push(item.agent);
+      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'frames', frames, fps: AVATAR_FPS, image: frames.idle[0], chroma: '#ff00ff', generated: { prompt: item.prompt, style: j.style || '', provider: imgOk ? imgProv.id : provider.id, task: t.id, at: now() } } });
+      done.push(`${this.agentName(item.agent)} (${Object.values(frames).flat().length} fotogrammi)`);
     }
     if (!done.length) return { ok: false, error: `nessun personaggio generato: ${failed.join(' · ')}` };
-    return { ok: true, result: { summary: `Nuovi personaggi per ${done.map((id) => this.agentName(id)).join(', ')}.${failed.length ? ` Non riusciti: ${failed.join(' · ')}` : ''}`, notes: 'Se non ti piacciono: "↶ Annulla ultimo arredo" nell\'ufficio riporta i personaggi di prima.', output: truncate(r.text, 3000), avatars: done, provider: provider.id } };
+    return { ok: true, result: { summary: `Nuovi personaggi animati: ${done.join(', ')}.${failed.length ? ` Problemi: ${failed.join(' · ')}` : ''}`, notes: 'Se non ti piacciono: "↶ Annulla ultimo arredo" nell\'ufficio riporta i personaggi di prima.', output: truncate(r.text, 3000), avatars: list.map((x) => x.agent), provider: provider.id } };
   }
 
   // ─── Codice dello Studio (interfaccia, grafica): repository dello Studio, branch separato ────────

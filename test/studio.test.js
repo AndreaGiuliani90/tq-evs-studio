@@ -519,15 +519,21 @@ test('Cosetta ridisegna i personaggi della squadra: art direction + generatore i
   const reg = registryWith(prov);
   const calls = [];
   reg.register({ id: 'openai-image', kind: 'image', label: 'finto', available: async () => ({ ok: true }), generate: async (o) => { calls.push(o); return { ok: true, png: Buffer.from('PNG' + calls.length) }; } });
-  const s = await studioFor(root, reg);
+  const s = await studioFor(root, reg, { avatarFrames: 'light' });
   const before = s.agents.get('dev').avatar.type;
   const req = await s.orch.handleUserMessage('Cosetta, fai nuovi sprite per te e tutti i tuoi colleghi');
   await waitFor(() => req.status === 'DONE', 10000, 'DONE');
   assert.equal(req.worktree, undefined);
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].references.length, 1, 'il primo ritratto fa da riferimento di stile');
-  assert.equal(s.agents.get('dev').avatar.type, 'image');
-  assert.match(s.agents.get('qa').avatar.image, /^\/avatars\/qa-gen-/);
+  assert.equal(calls.length, 12, 'modalità light: 6 fotogrammi per agente, 2 agenti');
+  const dev = s.agents.get('dev').avatar, qa = s.agents.get('qa').avatar;
+  assert.equal(dev.type, 'frames');
+  assert.deepEqual(Object.keys(dev.frames).sort(), ['celebrate', 'idle', 'question', 'typing']);
+  assert.equal(dev.frames.idle.length, 2); assert.equal(dev.frames.typing.length, 2);
+  // le varianti partono dal ritratto base; il base del secondo agente usa il primo come riferimento di stile
+  const qaBase = calls.find((c) => /a tester/.test(c.prompt));
+  assert.equal(qaBase.references.length, 1);
+  assert.ok(calls.filter((c) => /SAME character/.test(c.prompt)).every((c) => c.references.length >= 1));
+  assert.match(qa.image, /^\/avatars\/qa-\d+\/idle-1\.png$/);
   s.office.undo(s.agents);
   assert.equal(s.agents.get('dev').avatar.type, before);
 });

@@ -11,7 +11,7 @@
 // Avatar di tipo "spritesheet": al posto del personaggio disegnato si usa il foglio di sprite dell'utente.
 import { drawText, textWidth, shade } from './pixel.js';
 import { cachedSprite, SPRITE_W, SPRITE_H } from './sprites.js';
-import { processedAvatar } from './avatars.js';
+import { processedAvatar, processedFrames } from './avatars.js';
 
 const LW = 448, LH = 356;          // risoluzione logica (poi ingrandita a pixel pieni)
 const TW = 16, TH = 8;             // mezza casella isometrica
@@ -731,6 +731,22 @@ export class Office {
         ctx.drawImage(img, f * s.frameWidth, (def.row || 0) * s.frameHeight, s.frameWidth, s.frameHeight, X - s.frameWidth * sc / 2, baseY - s.frameHeight * sc, s.frameWidth * sc, s.frameHeight * sc);
       }
       return;
+    }
+    // personaggio animato generato con l'AI: fotogrammi per ogni stato
+    if (agent.avatar?.type === 'frames' && agent.avatar.frames) {
+      const set = processedFrames(agent.avatar.frames, { chroma: agent.avatar.chroma || '#ff00ff', maxW: 46, maxH: 56 });
+      if (set) {
+        const want = celebrate ? 'celebrate' : anim === 'celebrate' ? 'idle' : anim;
+        const list = set[want]?.length ? set[want] : set.idle || Object.values(set).find(Array.isArray);
+        const fps = agent.avatar.fps?.[want] ?? 2;
+        const tt = t + agent.id.length * 0.7;
+        let fr = Math.floor(tt * fps) % list.length;
+        if (want === 'idle' && list.length > 1) fr = (tt % 4.5) < 0.18 ? 1 : 0;   // sbatte le palpebre ogni tanto
+        const img = list[fr];
+        const anchorH = set.__anchor.h || img.height;
+        ctx.drawImage(img, X - Math.floor(img.width / 2), baseY - anchorH + 4 - (img.height - anchorH));
+        return;
+      }
     }
     // avatar generato con l'AI: l'immagine (ripulita e ridotta a pixel art) si muove secondo lo stato
     if (agent.avatar?.type === 'image' && agent.avatar.image) {

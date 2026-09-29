@@ -140,7 +140,10 @@ Chiedi in chat, per esempio *«Cosetta, fai nuovi sprite per te e per tutti i tu
 (puoi allegare immagini di riferimento). Cosetta scrive un prompt per ogni agente con uno stile comune, il generatore
 immagini (GPT Image o Nano Banana; oppure Codex se Cosetta lavora con Codex) disegna i ritratti su fondo magenta,
 e lo Studio li ripulisce, li riduce a pixel art e li mette nell'ufficio e nelle schede. Il primo ritratto fa da
-riferimento di stile per gli altri. Non ti piacciono? **↶ Annulla ultimo arredo** torna ai personaggi di prima.
+riferimento di stile per gli altri. Ogni personaggio è **animato fotogramma per fotogramma**: dopo il ritratto base il
+generatore disegna le varianti dello stesso personaggio (scrive al computer, gioca col pad, pensa, festeggia, è
+perplesso, si dispera, aspetta, sbatte le palpebre): 12 immagini per agente, oppure 6 in modalità "leggeri"
+(Impostazioni). Tutti i fotogrammi hanno lo stesso ritaglio e la stessa scala, così l'animazione non balla. Non ti piacciono? **↶ Annulla ultimo arredo** torna ai personaggi di prima.
 
 Laboratorio dei personaggi (tutte le pose): http://localhost:4173/sprite-lab.html?all=1
 
