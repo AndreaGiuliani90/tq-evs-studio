@@ -955,7 +955,13 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
       this.setTask(t, { status: 'FAILED', finishedAt: now(), lastError: truncate(res.error, 2000) }, `fallito: ${truncate(res.error, 300)}`);
       agent.runtime.stats.failed++;
       this.agents.setStatus(agent.id, res.blocked ? 'BLOCKED' : 'ERROR', { task: t, text: truncate(res.error, 200), semantic: res.blocked ? 'agent.blocked' : 'agent.failed' });
-      this.escalate(req, `${agent.name} non è riuscito a completare "${t.title}": ${truncate(res.error, 500)}`, res.blocked);
+      let why = truncate(res.error, 500);
+      // generatore di immagini senza credito: si dice cosa fare e con cosa si può riprovare subito
+      if (/API (402|429)|credit|quota|billing|insufficient|exceeded/i.test(res.error || '') && ['avatars', 'art', 'office_paint'].includes(t.kind)) {
+        const alt = (req.quote?.options || []).filter((o) => !o.current && !o.plan && !o.id.startsWith(String(req.imageChoice || '').split(':')[0])).map((o) => o.label);
+        why += `\n\nIl generatore di immagini ha finito il credito (le API si pagano a parte rispetto agli abbonamenti). Ricarica il credito sul sito del fornitore e premi "Riprova"${alt.length ? `, oppure riprova subito con un altro generatore: ${alt.join(', ')}` : ''}.`;
+      }
+      this.escalate(req, `${agent.name} non ha completato "${t.title}": ${why}`, res.blocked);
       return;
     }
     const r = res.result;
@@ -998,7 +1004,7 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
     // i task ancora in attesa di questa richiesta non partiranno
     for (const t of this.tasksOf(req.id)) if (t.status === 'PENDING') this.setTask(t, { status: 'CANCELLED' }, 'annullato: la richiesta è passata all\'utente');
     this.setRequest(req, { status: 'NEEDS_USER', escalation: text });
-    this.chat('director', `⚠️ Serve una tua decisione su ${req.id}.\n${text}\n\n${blocked ? 'Configura un provider AI (Impostazioni → Provider) e premi "Riprova".' : 'Puoi: premere "Riprova" (rimette in coda i task non riusciti), scrivermi come procedere, oppure scartare il branch.'} Il lavoro fatto finora è nel branch ${req.branch || '-'}.`, { agentId: 'director', requestId: req.id, kind: 'escalation' });
+    this.chat('director', `⚠️ Serve una tua decisione su ${req.id}.\n${text}\n\n${blocked ? 'Configura un provider AI (Impostazioni → Provider) e premi "Riprova".' : `Puoi: premere "Riprova" (rimette in coda i task non riusciti), scrivermi come procedere${req.branch ? ', oppure scartare il branch' : ''}.`}${req.branch ? ` Il lavoro fatto finora è nel branch ${req.branch}.` : ''}`, { agentId: 'director', requestId: req.id, kind: 'escalation' });
     this.agents.setStatus('director', 'BLOCKED', { task: { id: req.id, title: `Decisione richiesta: ${req.id}` }, text, semantic: 'agent.blocked' });
     this.appendKnownIssue(req, text, task).catch(() => {});
   }
@@ -1081,9 +1087,13 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
   }
 
   // ─── azioni dell'utente ────────────────────────────────────────────────────────────────────────
-  retry(reqId) {
+  retry(reqId, { choice } = {}) {
     const req = this.S.requests[reqId];
     if (!req) throw new Error('richiesta sconosciuta');
+    if (choice) {
+      if (!(req.quote?.options || []).some((o) => o.id === choice)) throw new Error(`generatore non disponibile: ${choice}`);
+      req.imageChoice = choice;
+    }
     this.setRequest(req, { status: 'RUNNING', escalation: null });
     for (const t of this.tasksOf(reqId)) {
       if (t.status === 'FAILED' && !t.superseded && t.kind === 'test' && t.result?.verdict === 'FAIL') {

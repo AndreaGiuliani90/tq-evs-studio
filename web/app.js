@@ -177,7 +177,12 @@ function requestActions(req) {
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
   if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
-  if (['NEEDS_USER', 'FAILED'].includes(req.status) && req.worktree) b.push(`<button class="btn sm primary" data-act="retry" data-req="${req.id}">Riprova</button>`);
+  const failed = Object.values(S.tasks).some((t) => t.requestId === req.id && ['FAILED', 'CANCELLED'].includes(t.status) && !t.superseded);
+  if (['NEEDS_USER', 'FAILED'].includes(req.status) && !req.quotePending && (req.worktree || failed)) {
+    b.push(`<button class="btn sm primary" data-act="retry" data-req="${req.id}">Riprova</button>`);
+    const alt = (req.quote?.options || []).filter((o) => !o.plan && o.id !== req.imageChoice);
+    if (alt.length && failed) b.push(`<span class="quote-alt">Riprova con <select data-retry-choice="${req.id}">${alt.map((o) => `<option value="${esc(o.id)}">${esc(o.label)} — ≈ $${Number(o.usd).toFixed(2)}</option>`).join('')}</select> <button class="btn sm" data-act="retry-choice" data-req="${req.id}">Riprova così</button></span>`);
+  }
   if (['RUNNING', 'PLANNING', 'NEEDS_USER'].includes(req.status)) b.push(`<button class="btn sm" data-act="cancel" data-req="${req.id}">Ferma</button>`);
   if (req.branch && !req.discarded && !['RUNNING', 'PLANNING'].includes(req.status)) b.push(`<button class="btn sm danger" data-act="discard" data-req="${req.id}">Scarta</button>`);
   return b.join('');
@@ -305,6 +310,7 @@ document.addEventListener('click', act(async (ev) => {
     case 'merge': if (confirm('Unire le modifiche nel tuo branch? Si può annullare in ogni momento.')) { await api('POST', `/api/requests/${req}/merge`); toast('Unito.'); } return;
     case 'revert-merge': if (confirm('Annullare l\'unione (crea un commit di revert)?')) { await api('POST', `/api/requests/${req}/revert-merge`); toast('Unione annullata.'); } return;
     case 'retry': await api('POST', `/api/requests/${req}/retry`); return;
+    case 'retry-choice': await api('POST', `/api/requests/${req}/retry`, { choice: document.querySelector(`[data-retry-choice="${req}"]`)?.value }); return;
     case 'cancel': await api('POST', `/api/requests/${req}/cancel`); return;
     case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
     case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;

@@ -709,3 +709,25 @@ test('ridipintura dell\'ufficio: preventivo, maquette + stile al generatore, sfo
   s.office.undo(s.agents);
   assert.equal(s.office.paint(), null, 'annulla: torna senza sfondo dipinto');
 });
+
+test('generatore senza credito: messaggio chiaro, "Riprova" anche senza branch, e riprova con un altro generatore', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => (o.agent.id === 'director' ? planJSON([{ key: 'p', agent: 'art', kind: 'office_paint', title: 'Ridipingi', dependsOn: [] }]) : { text: '{}' }));
+  const reg = registryWith(prov);
+  const oa = [], gm = [];
+  reg.register({ id: 'openai-image', kind: 'image', quality: 'high', label: 'o', available: async () => ({ ok: true }), generate: async (o) => { oa.push(o); return { ok: false, error: 'API 429: You have no credits remaining.' }; } });
+  reg.register({ id: 'gemini-image', kind: 'image', model: 'gemini-3.1-flash-image', label: 'g', available: async () => ({ ok: true }), generate: async (o) => { gm.push(o); return { ok: true, png: Buffer.from('X') }; } });
+  const s = await studioFor(root, reg, { maxTaskRetries: 0 });
+  s.orch.snapshotter = async ({ out }) => { fs.writeFileSync(out, 'M'); return { file: out, W: 3, H: 2, ox: 0, oy: 0, scale: 2 }; };
+  const req = await s.orch.handleUserMessage('ridipingi l\'ufficio');
+  await waitFor(() => req.quotePending, 5000, 'preventivo');
+  await s.orch.answerQuote(req.id, 'approve');
+  await waitFor(() => req.status === 'NEEDS_USER' && !req.quotePending, 8000, 'escalation');
+  const esc = s.store.data.chat.filter((m) => m.kind === 'escalation').at(-1).text;
+  assert.match(esc, /finito il credito[\s\S]*Nano Banana/);
+  assert.doesNotMatch(esc, /branch -/);
+  s.orch.retry(req.id, { choice: 'gemini-image:gemini-3.1-flash-image' });
+  await waitFor(() => req.status === 'DONE', 8000, 'DONE');
+  assert.equal(gm.length, 1);
+  assert.equal(gm[0].model, 'gemini-3.1-flash-image');
+});
