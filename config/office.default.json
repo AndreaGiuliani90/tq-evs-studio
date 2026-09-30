@@ -10,56 +10,56 @@
     {
       "agent": "dev",
       "wall": "R",
-      "at": 1.4,
+      "at": 3.0,
       "b0": 0,
       "kind": "pc"
     },
     {
       "agent": "qa",
       "wall": "R",
-      "at": 5.8,
+      "at": 7.2,
       "b0": 0,
       "kind": "tv"
     },
     {
       "agent": "level",
       "wall": "R",
-      "at": 10.2,
+      "at": 11.4,
       "b0": 0,
       "kind": "drafting"
     },
     {
       "agent": "audio",
       "wall": "R",
-      "at": 14.6,
+      "at": 15.6,
       "b0": 0,
       "kind": "audio"
     },
     {
       "agent": "narrative",
       "wall": "L",
-      "at": 1.4,
+      "at": 3.0,
       "b0": 0,
       "kind": "typewriter"
     },
     {
       "agent": "art",
       "wall": "L",
-      "at": 5.8,
+      "at": 7.2,
       "b0": 0,
       "kind": "easel"
     },
     {
       "agent": "lore",
       "wall": "L",
-      "at": 10.2,
+      "at": 11.4,
       "b0": 0,
       "kind": "library"
     },
     {
       "agent": "puzzle",
       "wall": "L",
-      "at": 14.6,
+      "at": 15.6,
       "b0": 0,
       "kind": "puzzle"
     },
@@ -104,14 +104,14 @@
     {
       "type": "banner",
       "wall": "R",
-      "at": 1.2,
-      "w": 3.2,
+      "at": 0.6,
+      "w": 3.0,
       "text": "PRO LOCO"
     },
     {
       "type": "shelf",
       "wall": "R",
-      "at": 1.6,
+      "at": 0.9,
       "w": 2.4,
       "z": 86
     },
@@ -158,12 +158,6 @@
       "y": 10.0,
       "w": 7.0,
       "d": 5.4
-    },
-    {
-      "type": "tallplant",
-      "x": 0.9,
-      "y": 0.9,
-      "size": 1.2
     },
     {
       "type": "plant",
@@ -283,24 +277,24 @@
     },
     {
       "type": "rug",
-      "x": 18.0,
+      "x": 18.4,
       "y": 1.8,
-      "w": 6.0,
+      "w": 5.6,
       "d": 5.6
     },
     {
       "type": "coffee",
-      "x": 18.6,
+      "x": 19.0,
       "y": 0.25
     },
     {
       "type": "watercooler",
-      "x": 20.6,
+      "x": 21.0,
       "y": 0.3
     },
     {
       "type": "arcade",
-      "x": 22.9,
+      "x": 23.0,
       "y": 0.3,
       "color": "#5b3a8c"
     },
@@ -344,6 +338,24 @@
       "type": "plant",
       "x": 23.3,
       "y": 6.6,
+      "size": 0.9
+    },
+    {
+      "type": "tallplant",
+      "x": 1.2,
+      "y": 1.2,
+      "size": 1.25
+    },
+    {
+      "type": "plant",
+      "x": 0.7,
+      "y": 2.4,
+      "size": 0.9
+    },
+    {
+      "type": "plant",
+      "x": 2.4,
+      "y": 0.7,
       "size": 0.9
     }
   ],
