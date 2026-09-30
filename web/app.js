@@ -1,6 +1,7 @@
 // GAME STUDIO — interfaccia. Vanilla JS, nessun build: stato dal server + eventi in diretta (SSE).
 import { avatarHTML, applyAvatarState, pulse, paintPortraits } from './avatars.js';
 import { Office } from './office.js';
+import { OfficeView } from './office-view.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,6 +29,10 @@ async function boot() {
   for (const t of st.tasks) S.tasks[t.id] = t;
   S.chat = st.chat; S.config = st.config; S.lastSeq = st.lastSeq; S.costs = st.costs;
   S.office = new Office($('#office'), $('#office-overlay'), { onSelect: (id) => openDrawer(id), onBoard: () => openModal('costs') });
+  S.view = new OfficeView($('#office-wrap'), $('#office-stage'), S.office);
+  S.office.view = S.view;
+  S.office.onFocusChange = (id) => { S.focus = id; renderFocus(); };
+  for (const b of document.querySelectorAll('[data-zoom]')) b.onclick = () => { const z = b.dataset.zoom; if (z === 'fit') S.view.fit(true); else S.view.zoomBy(z === 'in' ? 1.5 : 1 / 1.5); };
   window.studioOffice = S.office;   // per le prove automatiche e per sperimentare dalla console
   await loadOffice();
   renderAll();
@@ -62,6 +67,7 @@ function onEvent(e) {
     S.office?.updateAgent(a); S.office?.event(e.agentId, t);
     if (e.agentId === 'director') renderDirector();
     if (S.drawer === e.agentId) renderDrawer();
+    if (S.focus === e.agentId) renderFocus();
   }
   if (t === 'task.created' || t === 'task.updated') { S.tasks[e.task.id] = e.task; renderTasks(); refreshChips(e.task.requestId); if (S.drawer) renderDrawer(); }
   if (t === 'request.created' || t === 'request.updated') { S.requests[e.request.id] = e.request; renderTasks(); refreshChips(e.request.id); refreshActions(e.request.id); }
@@ -97,6 +103,23 @@ function renderFloor() {
     d.onclick = () => openDrawer(d.dataset.agent);
     d.onkeydown = (ev) => { if (ev.key === 'Enter') openDrawer(d.dataset.agent); };
   }
+}
+
+// superzoom: scheda con il ritratto grande del personaggio inquadrato
+function renderFocus() {
+  const box = $('#office-focus');
+  const a = S.focus && S.agents[S.focus];
+  if (!a) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const r = a.runtime || {};
+  box.innerHTML = `<div class="fc-head"><div class="fc-portrait">${avatarHTML(a, { size: 96 })}</div><div><h3>${esc(a.name)}</h3><div class="muted">${esc(a.role)}</div><span class="badge b-${esc(r.status || 'IDLE')}">${esc(r.status || 'IDLE')}</span></div></div>
+    <div class="fc-task">${r.currentTaskTitle ? `“${esc(r.currentTaskTitle)}”` : '<span class="muted">nessun task in corso</span>'}</div>
+    ${r.lastText ? `<div class="fc-act muted">${esc(r.lastText)}</div>` : ''}
+    <div class="fc-btns"><button class="btn sm primary" data-fc="open">Scheda completa</button><button class="btn sm" data-fc="close">Torna alla stanza</button></div>`;
+  box.classList.remove('hidden');
+  paintPortraits(box); applyAvatarState(box, a);
+  box.querySelector('[data-fc="open"]').onclick = () => openDrawer(a.id);
+  box.querySelector('[data-fc="close"]').onclick = () => S.view.fit(true);
+  box.onpointerdown = (e) => e.stopPropagation();
 }
 
 function updateDesk(id, evType) {

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { readJSON, writeFileAtomic, ensureDir, now } from './util.js';
 
 export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table'];
-export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard'];
+export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade'];
 const LOOK_FIELDS = ['skin', 'hair', 'eyes', 'shirt', 'accColor', 'hairStyle', 'outfit', 'facial', 'accessory'];
 
 export class OfficeStore {
@@ -17,6 +17,18 @@ export class OfficeStore {
     this.historyDir = path.join(dataDir, 'office-history');
     this.wsRoot = path.join(dataDir, 'office-workspace');
     this.events = events;
+    this.migrate();
+  }
+
+  // una pianta nuova dello Studio (layoutVersion più alta) sostituisce l'ufficio personalizzato, che resta nella
+  // cronologia: "↶ Annulla ultimo arredo" lo riporta com'era
+  migrate() {
+    const def = readJSON(this.defFile, {}), own = readJSON(this.file, null);
+    if (!own || (own.layoutVersion || 1) >= (def.layoutVersion || 1)) return;
+    ensureDir(this.historyDir);
+    writeFileAtomic(path.join(this.historyDir, `${Date.now()}.json`), JSON.stringify({ at: now(), note: `ufficio prima della pianta v${def.layoutVersion}`, office: own, avatars: {} }, null, 2));
+    fs.renameSync(this.file, `${this.file}.v${own.layoutVersion || 1}.bak`);
+    this.migrated = true;
   }
 
   get() {
@@ -35,7 +47,7 @@ export class OfficeStore {
     const errs = [];
     if (!o || typeof o !== 'object') return ['il file non è un oggetto JSON'];
     const r = o.room || {};
-    if (!(r.w >= 6 && r.w <= 24 && r.d >= 6 && r.d <= 24)) errs.push('room.w e room.d devono stare fra 6 e 24');
+    if (!(r.w >= 6 && r.w <= 32 && r.d >= 6 && r.d <= 32)) errs.push('room.w e room.d devono stare fra 6 e 32');
     if (!Array.isArray(o.stations)) errs.push('stations deve essere un elenco');
     if (!Array.isArray(o.decor)) errs.push('decor deve essere un elenco');
     for (const s of o.stations || []) {
@@ -54,7 +66,12 @@ export class OfficeStore {
     return f;
   }
 
-  save(o) { writeFileAtomic(this.file, JSON.stringify(o, null, 2)); this.events?.emit('office.updated', {}); }
+  // ciò che si salva è l'ufficio scelto: vale come "pianta attuale" (non verrà sostituito da una migrazione)
+  save(o) {
+    const v = readJSON(this.defFile, {}).layoutVersion || 1;
+    writeFileAtomic(this.file, JSON.stringify({ ...o, layoutVersion: Math.max(o.layoutVersion || 1, v) }, null, 2));
+    this.events?.emit('office.updated', {});
+  }
 
   undo(agents) {
     if (!fs.existsSync(this.historyDir)) throw new Error('nessuna modifica da annullare');
@@ -109,7 +126,7 @@ precedente resta salvata (l'utente può annullare con un clic).
 
 ## office.json — la stanza
 - \`room\`: { w, d, wallH } — larghezza lungo la parete destra (x), profondità lungo la parete sinistra (y), altezza
-  pareti in pixel. w e d fra 6 e 24.
+  pareti in pixel. w e d fra 6 e 32 (la stanza grande è 24×20: lo Studio adatta la tela e si può zoomare).
 - Coordinate: il pavimento è una griglia di caselle isometriche. x cresce lungo la parete **destra (R)**, y lungo la
   parete **sinistra (L)**. L'angolo in fondo è (0,0); la parte vicina a chi guarda ha x e y grandi.
 - \`stations\` — le postazioni degli agenti (una per agente, campo \`agent\` = id):
@@ -123,6 +140,8 @@ precedente resta salvata (l'utente può annullare con un clic).
     lantern · costboard { w } (la lavagna delle spese: il contenuto lo scrive lo Studio) · bookcase { w, h } · shelf { w, z } · frame { w, z, h, picture: "borgo"|"foto"|"tq" }
   - rug { x, y, w, d } · plant { x, y, size } · tallplant { x, y, size } · floorlamp { x, y } · crates { x, y } ·
     sideboard { x, y } · bench { x, y }
+  - angolo relax: coffee { x, y } (bancone con macchinetta del caffè) · watercooler { x, y } · sofa { x, y, w, rot: 0|1, color } ·
+    armchair { x, y, rot, color } · coffeetable { x, y } · arcade { x, y, color }
 - Evita sovrapposizioni: lascia almeno mezza casella fra i mobili; niente fuori dalla stanza.
 
 ## agents-look.json — l'aspetto dei personaggi

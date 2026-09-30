@@ -23,8 +23,17 @@
   <main class="layout">
     <section class="left">
       <div class="office-wrap" id="office-wrap">
-        <canvas id="office" aria-label="L'ufficio della Pro Loco: gli agenti alle loro postazioni"></canvas>
-        <div class="office-overlay" id="office-overlay"></div>
+        <div class="office-stage" id="office-stage">
+          <canvas id="office" aria-label="L'ufficio della Pro Loco: gli agenti alle loro postazioni"></canvas>
+          <div class="office-overlay" id="office-overlay"></div>
+        </div>
+        <div class="office-zoom" aria-label="Zoom dell'ufficio">
+          <button class="btn sm" data-zoom="in" title="Avvicina (+, rotellina, pizzico)">＋</button>
+          <button class="btn sm" data-zoom="out" title="Allontana (−)">－</button>
+          <button class="btn sm" data-zoom="fit" title="Tutta la stanza (0 o Esc)">⤢</button>
+        </div>
+        <div class="office-hint muted">Rotellina o pizzico per lo zoom · trascina per muoverti · clic su un personaggio per avvicinarti</div>
+        <div class="office-focus hidden" id="office-focus"></div>
         <div class="office-name" id="office-name"></div>
         <button class="btn sm office-undo" data-act="office-undo" title="Annulla l'ultima modifica del Responsabile dell'ufficio">↶ Annulla ultimo arredo</button>
       </div>

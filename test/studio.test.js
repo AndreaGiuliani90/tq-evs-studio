@@ -658,3 +658,22 @@ test('Stratega a regole: codice su qualità alta, arredo su bassa; costi API reg
   s.orch.costs.reset();
   assert.equal(s.orch.costs.summary().totalUsd, 0);
 });
+
+test('ufficio: la pianta grande sostituisce quella vecchia personalizzata, che resta recuperabile con "Annulla"', async () => {
+  const root = makeFixtureRepo();
+  const dataDir = path.join(root, '.studio-data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  const old = { name: 'Sede vecchia', room: { w: 15, d: 13, wallH: 112 }, stations: [{ agent: 'dev', wall: 'R', at: 1, kind: 'pc' }], decor: [{ type: 'costboard', wall: 'L', at: 3, w: 2.2 }] };
+  fs.writeFileSync(path.join(dataDir, 'office.json'), JSON.stringify(old));
+  const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  const o = s.office.get();
+  assert.equal(o.room.w, 24);
+  assert.ok(['coffee', 'sofa', 'costboard'].every((t) => o.decor.some((d) => d.type === t)), 'angolo relax e lavagna');
+  assert.ok(o.stations.some((st) => st.agent === 'strategist'));
+  assert.equal(s.office.validate(o).length, 0);
+  // "Annulla ultimo arredo" riporta l'ufficio di prima, e al riavvio non viene sostituito di nuovo
+  s.office.undo(s.agents);
+  assert.equal(s.office.get().room.w, 15);
+  const s2 = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  assert.equal(s2.office.get().room.w, 15);
+});

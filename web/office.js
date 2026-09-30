@@ -13,7 +13,9 @@ import { drawText, textWidth, shade } from './pixel.js';
 import { cachedSprite, SPRITE_W, SPRITE_H } from './sprites.js';
 import { processedAvatar, processedFrames } from './avatars.js';
 
-const LW = 448, LH = 356;          // risoluzione logica (poi ingrandita a pixel pieni)
+// risoluzione logica: dipende dalla stanza (setLayout), poi si ingrandisce a pixel pieni e si zooma
+let LW = 448, LH = 356;
+export function logicalSize(room) { return [(room.w + room.d) * 16 + 24, room.wallH + (room.w + room.d) * 8 + 30]; }
 const TW = 16, TH = 8;             // mezza casella isometrica
 
 const PAL = {
@@ -82,7 +84,17 @@ export class Office {
     this.timer = setInterval(() => this.draw(), 1000 / 15);
   }
 
-  setLayout(layout) { this.layout = layout; this.iso = makeIso(layout.room); this.staticLayer = null; this.placeLabels(); }
+  setLayout(layout) {
+    this.layout = layout;
+    [LW, LH] = logicalSize(layout.room);
+    this.LW = LW; this.LH = LH;
+    if (this.canvas.width !== LW || this.canvas.height !== LH) {
+      this.canvas.width = LW; this.canvas.height = LH; this.ctx.imageSmoothingEnabled = false;
+      [this.darkC, this.darkX] = tela(LW, LH);
+    }
+    this.iso = makeIso(layout.room); this.staticLayer = null; this.placeLabels();
+    this.onResize?.();
+  }
   setCosts(c) { this.costs = c; this.staticLayer = null; this.placeLabels(); }
   setAgents(list) { for (const a of list) this.agents[a.id] = a; this.placeLabels(); }
   updateAgent(a) { this.agents[a.id] = a; this.updateLabel(a); }
@@ -133,7 +145,7 @@ export class Office {
       el.dataset.agent = a.id;
       el.style.left = `${(sx / LW) * 100}%`;
       el.style.top = `${(sy / LH) * 100}%`;
-      el.onclick = () => this.onSelect?.(a.id);
+      el.onclick = () => { if (!this.view?.wasDrag) this.onSelect?.(a.id); };
       this.overlay.appendChild(el);
       this.updateLabel(a);
       // area cliccabile sul personaggio
@@ -141,7 +153,7 @@ export class Office {
       hit.className = 'ohit'; hit.title = `${a.name} — ${a.role}`;
       const [hx, hy] = this.iso(x, y, 44);
       hit.style.left = `${(hx / LW) * 100}%`; hit.style.top = `${(hy / LH) * 100}%`;
-      hit.onclick = () => this.onSelect?.(a.id);
+      hit.onclick = () => { if (!this.view?.wasDrag) this.focusAgent(a.id); };
       this.overlay.appendChild(hit);
     }
     this.placeBoardHit();
@@ -150,7 +162,7 @@ export class Office {
   placeBoardHit() {
     const d = (this.layout?.decor || []).find((x) => x.type === 'costboard');
     if (!d || !this.overlay || !this.wallRect) return;
-    const r = this.wallRect(d.wall, d.at + (d.w || 2.2) * 0.55, d.at + (d.w || 2.2), 58, 74);
+    const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + (d.w || 2.8), z0 + 22, z0 + 38);
     const cx = r.pts.reduce((s, p) => s + p[0], 0) / r.pts.length, cy = r.pts.reduce((s, p) => s + p[1], 0) / r.pts.length;
     const c = this.costs || { totalUsd: 0, providers: [] };
     const SHORT = { 'openai-image': 'GPT', 'gemini-image': 'Nano', anthropic: 'API' };
@@ -160,9 +172,21 @@ export class Office {
     b.className = 'oboard'; b.title = 'Spese dello Studio: clic per i dettagli';
     b.innerHTML = `<b>SPESE</b> $${Number(c.totalUsd || 0).toFixed(2)}<small>${escapeHTML(sub)}</small>`;
     b.style.left = `${(cx / LW) * 100}%`; b.style.top = `${(cy / LH) * 100}%`;
-    b.onclick = () => this.onBoard?.();
+    b.onclick = () => { if (!this.view?.wasDrag) this.onBoard?.(); };
     this.overlay.appendChild(b);
   }
+
+  // superzoom sul personaggio (la scheda con il ritratto grande la mostra l'app: onFocusChange)
+  focusAgent(id) {
+    const st = this.stations().find((x) => x.agentId === id);
+    if (!st || !this.view) return this.onSelect?.(id);
+    const [x, y] = this.seatOf(st);
+    const [sx, sy] = this.iso(x, y, 34);
+    this.view.focusOn(sx, sy, 5, id);
+    this.onFocusChange?.(id);
+  }
+  // punto (logico) sopra la testa di un agente: per chi vuole agganciarci qualcosa
+  headOf(id) { const st = this.stations().find((x) => x.agentId === id); if (!st) return null; const [x, y] = this.seatOf(st); return this.iso(x, y, 50); }
 
   updateLabel(a) {
     const el = this.overlay?.querySelector(`.otag[data-agent="${CSS.escape(a.id)}"]`);
@@ -424,7 +448,7 @@ export class Office {
     }
     if (d.type === 'costboard') {
       // la lavagna delle spese: totale + subtotali per provider a pagamento; gli abbonamenti = "PIANO"
-      const w = d.w || 2.2, TW = Math.round(w * 22), TH = 46;
+      const w = d.w || 2.8, TW = Math.round(w * 22), TH = 60;
       const [img, x] = tela(TW, TH);
       x.fillStyle = PAL.woodD; x.fillRect(0, 0, TW, TH);
       x.fillStyle = '#2f4a3a'; x.fillRect(2, 2, TW - 4, TH - 6);
@@ -434,7 +458,7 @@ export class Office {
       // scritte di gesso decorative: le cifre vere sono nel cartellino sopra (leggibile a ogni scala)
       drawText(x, 'SPESE', 4, 4, '#f3e27a');
       for (let i = 0; i < 4; i++) { x.fillStyle = '#d8e8dc99'; x.fillRect(4, 13 + i * 7, 8 + Math.floor(rnd(i + 1) * 10), 1); x.fillRect(TW - 16, 13 + i * 7, 10, 1); }
-      const r = this.wallRect(d.wall, d.at, d.at + w, 38, 84);
+      const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + w, z0, z0 + 60);
       mapFace(ctx, img, r.p0, r.pu, r.pv);
     }
     if (d.type === 'map') {
@@ -728,6 +752,65 @@ export class Office {
       this.box(x + 0.32, y + 0.42, 35, 0.26, 0.26, 3, '#2a2a30', '#1c1c20', '#1c1c20');
       if (Math.floor(t * 2) % 3 === 0) { const [sx, sy] = this.iso(x + 0.45, y + 0.55, 40); this.ctx.fillStyle = '#ffffff66'; this.ctx.fillRect(Math.round(sx), Math.round(sy) - (Math.floor(t * 4) % 4), 1, 2); }
       for (let i = 0; i < 3; i++) { const [sx, sy] = this.iso(x + 0.4, y + 1.2 + i * 0.3, 27); this.ctx.fillStyle = '#6b3b1a'; this.ctx.fillRect(Math.round(sx), Math.round(sy) - 9, 2, 9); this.ctx.fillStyle = '#e8c46a'; this.ctx.fillRect(Math.round(sx), Math.round(sy) - 5, 2, 2); }
+    }
+    if (d.type === 'coffee') {
+      // angolo caffè: bancone con la macchinetta espresso, tazzine e il vapore
+      const { x, y } = d;
+      this.wood(x, y, 0, 1.6, 0.8, 26);
+      this.box(x - 0.03, y - 0.03, 26, 1.66, 0.86, 2, '#d8c8a8', '#bfae8c', '#a89676');
+      this.box(x + 0.15, y + 0.12, 28, 0.8, 0.55, 17, '#c9352c', '#a52a22', '#86221c');   // la macchinetta
+      this.box(x + 0.15, y + 0.12, 45, 0.8, 0.55, 2, '#d9dde4', '#b6bbc5', '#9aa0ac');
+      this.box(x + 0.35, y + 0.6, 33, 0.12, 0.1, 5, '#2a2a30', '#1c1c20', '#1c1c20');     // beccuccio
+      for (let i = 0; i < 3; i++) this.box(x + 1.05 + (i % 2) * 0.22, y + 0.2 + i * 0.18, 28, 0.14, 0.14, 3, '#fbf6ea', '#e6dfcf', '#d4ccba');
+      const [sx, sy] = this.iso(x + 0.5, y + 0.4, 47);
+      for (let i = 0; i < 4; i++) { const k = (t * 0.8 + i / 4) % 1; this.ctx.fillStyle = `rgba(255,255,255,${0.45 * (1 - k)})`; this.ctx.fillRect(Math.round(sx + Math.sin(k * 6 + i) * 2), Math.round(sy - k * 14), 2, 2); }
+      return;
+    }
+    if (d.type === 'watercooler') {
+      const { x, y } = d;
+      this.box(x, y, 0, 0.55, 0.55, 24, '#e9ecef', '#cfd4da', '#b8bec6');
+      this.box(x + 0.08, y + 0.08, 24, 0.4, 0.4, 13, '#9fd8f2', '#7ec3e3', '#66aecf');
+      this.box(x + 0.2, y + 0.55, 12, 0.14, 0.05, 3, '#3a7bd5', '#2d62ab', '#2d62ab');
+      return;
+    }
+    if (d.type === 'sofa' || d.type === 'armchair') {
+      // divano / poltrona: schienale verso la parete (rot 0: parete destra, rot 1: parete sinistra)
+      const { x, y } = d, L = d.type === 'sofa' ? (d.w || 2.4) : 1.05, c = d.color || (d.type === 'sofa' ? '#3f6f78' : '#8a4a3a');
+      const top = shade(c, 0.15), fr = c, sd = shade(c, -0.2);
+      if (!d.rot) {
+        this.box(x, y, 0, L, 0.95, 8, top, fr, sd);
+        this.box(x, y, 8, L, 0.3, 14, top, fr, sd);                       // schienale
+        this.box(x, y + 0.3, 8, 0.22, 0.65, 6, top, fr, sd); this.box(x + L - 0.22, y + 0.3, 8, 0.22, 0.65, 6, top, fr, sd);
+        for (let i = 0; i < Math.round(L / 0.8); i++) this.box(x + 0.25 + i * ((L - 0.5) / Math.round(L / 0.8)), y + 0.32, 8, (L - 0.5) / Math.round(L / 0.8) - 0.05, 0.6, 2, shade(c, 0.25), fr, sd);
+      } else {
+        this.box(x, y, 0, 0.95, L, 8, top, fr, sd);
+        this.box(x, y, 8, 0.3, L, 14, top, fr, sd);
+        this.box(x + 0.3, y, 8, 0.65, 0.22, 6, top, fr, sd); this.box(x + 0.3, y + L - 0.22, 8, 0.65, 0.22, 6, top, fr, sd);
+        for (let i = 0; i < Math.round(L / 0.8); i++) this.box(x + 0.32, y + 0.25 + i * ((L - 0.5) / Math.round(L / 0.8)), 8, 0.6, (L - 0.5) / Math.round(L / 0.8) - 0.05, 2, shade(c, 0.25), fr, sd);
+      }
+      if (d.type === 'sofa') { const [sx, sy] = this.iso(x + (d.rot ? 0.5 : L * 0.7), y + (d.rot ? L * 0.7 : 0.5), 12); this.ctx.fillStyle = '#e8c46a'; this.ctx.fillRect(Math.round(sx) - 3, Math.round(sy) - 4, 6, 5); this.ctx.fillStyle = '#c99a3a'; this.ctx.fillRect(Math.round(sx) - 3, Math.round(sy), 6, 1); }
+      return;
+    }
+    if (d.type === 'coffeetable') {
+      const { x, y } = d;
+      this.wood(x + 0.1, y + 0.1, 0, 0.12, 0.12, 8); this.wood(x + 1.08, y + 0.58, 0, 0.12, 0.12, 8);
+      this.box(x, y, 8, 1.3, 0.8, 2, PAL.woodT, PAL.woodF, PAL.woodS);
+      this.box(x + 0.2, y + 0.2, 10, 0.5, 0.35, 1, '#f4ecd8', '#d9cfb8', '#c9bfa6');       // giornale
+      this.box(x + 0.9, y + 0.3, 10, 0.15, 0.15, 3, '#fbf6ea', '#e6dfcf', '#d4ccba');      // tazzina
+      return;
+    }
+    if (d.type === 'arcade') {
+      // cabinato: lo schermo lampeggia con un giochino
+      const { x, y } = d, c = d.color || '#5b3a8c';
+      this.box(x, y, 0, 0.85, 0.8, 46, shade(c, 0.2), c, shade(c, -0.25));
+      const iso = this.iso, fy = y + 0.8;
+      poly(this.ctx, [iso(x + 0.1, fy, 42), iso(x + 0.75, fy, 42), iso(x + 0.75, fy, 26), iso(x + 0.1, fy, 26)], '#0e1024');
+      const fr = Math.floor(t * 4);
+      for (let i = 0; i < 5; i++) { const [px, py] = iso(x + 0.16 + ((i * 13 + fr * 3) % 50) / 100, fy, 29 + ((i * 7 + fr) % 11)); this.ctx.fillStyle = ['#ff5d8f', '#ffd166', '#7bd88f', '#6fd3ff', '#ffffff'][i]; this.ctx.fillRect(Math.round(px), Math.round(py), 2, 1); }
+      poly(this.ctx, [iso(x + 0.05, fy, 25), iso(x + 0.8, fy, 25), iso(x + 0.8, fy, 21), iso(x + 0.05, fy, 21)], shade(c, 0.35));
+      const [bx, by] = iso(x + 0.35, fy, 23); this.ctx.fillStyle = '#e8414e'; this.ctx.fillRect(Math.round(bx), Math.round(by) - 1, 2, 2); this.ctx.fillStyle = '#3fe0d0'; this.ctx.fillRect(Math.round(bx) + 4, Math.round(by) + 1, 2, 2);
+      poly(this.ctx, [iso(x + 0.05, fy, 50), iso(x + 0.8, fy, 50), iso(x + 0.8, fy, 44), iso(x + 0.05, fy, 44)], '#ffcf6b');
+      return;
     }
     if (d.type === 'bench') {
       const { x, y } = d;

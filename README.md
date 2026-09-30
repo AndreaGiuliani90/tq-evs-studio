@@ -116,12 +116,21 @@ task, non per nome. **Ripristina predefinito** riporta i valori di partenza.
 La parte alta dello Studio è la **sede della Pro Loco** in pixel art isometrica: ogni agente siede alla sua
 postazione e si anima secondo lo stato (Tizo scrive codice e lo schermo scorre, Tizia gioca alla TV col pad, Coso
 batte a macchina, Cosetta dipinge al cavalletto; `?` giallo = serve te, `!` rosso = errore, coriandoli = fatto).
-Le luci seguono l'ora vera (giorno, tramonto, notte). Clic su un personaggio → dettaglio dell'agente.
+Le luci seguono l'ora vera (giorno, tramonto, notte).
+
+La sede è una stanza grande (24×20 caselle) con l'isola al centro, il tavolo della Regia, l'**angolo relax** in fondo
+a destra (macchinetta del caffè, divano, poltrona, cabinato) e la **lavagna delle spese** sopra il bancone del caffè.
+Ci si muove come su una mappa: **rotellina** o **pizzico** per lo zoom, **trascina** per spostarti, doppio clic per
+avvicinarti a un punto, pulsanti ＋ － ⤢ in basso a destra (da tastiera: + − 0, frecce, Esc). **Clic su un
+personaggio → superzoom** su di lui con la scheda del ritratto grande; clic sul nome → scheda completa dell'agente.
+Se avevi un ufficio personalizzato, con la pianta nuova resta nella cronologia: **↶ Annulla ultimo arredo** lo
+riporta com'era.
 
 L'ufficio è un file di dati: `config/office.default.json` (stanza, postazioni per id agente, arredi).
 Per personalizzarlo copialo in `data/office.json` e modificalo: lo Studio usa quello. Tipi di postazione:
 `pc`, `tv`, `typewriter`, `easel`, `table`; arredi: `window`, `banner`, `noticeboard`, `map`, `clock`, `lantern`,
-`rug`, `plant`, `crates`, `sideboard`, `bench`. Il disegno è tutto in `web/office.js`.
+`rug`, `plant`, `crates`, `sideboard`, `bench`, `costboard`, `coffee`, `watercooler`, `sofa`, `armchair`,
+`coffeetable`, `arcade`. Il disegno è in `web/office.js`, lo zoom in `web/office-view.js`.
 
 ### Il Responsabile dell'ufficio
 
