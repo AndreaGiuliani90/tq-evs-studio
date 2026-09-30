@@ -195,12 +195,19 @@
         "asset_brief",
         "image_generation",
         "visual_consistency",
-        "studio_avatars"
+        "studio_avatars",
+        "office",
+        "decor",
+        "studio_ui",
+        "ui_design",
+        "aesthetics"
       ],
       "kinds": [
         "art",
         "avatars",
-        "office_paint"
+        "office_paint",
+        "office",
+        "studio_ui"
       ],
       "provider": "auto",
       "imageProvider": "auto",
@@ -406,48 +413,6 @@
           "accessory": "glasses"
         },
         "lookVersion": 2
-      }
-    },
-    {
-      "id": "office",
-      "name": "Arredo",
-      "role": "Responsabile dell'ufficio",
-      "description": "Cura l'ufficio dello Studio: arreda, sposta mobili e postazioni, sceglie luci e colori, cambia l'aspetto dei personaggi su tuo ordine; su richiesta modifica anche l'interfaccia del programma Studio (in un branch separato, con i test).",
-      "visible": true,
-      "enabled": true,
-      "capabilities": [
-        "office",
-        "decor",
-        "studio_ui",
-        "ui_design",
-        "aesthetics"
-      ],
-      "kinds": [
-        "office",
-        "studio_ui"
-      ],
-      "provider": "auto",
-      "model": "",
-      "writes": true,
-      "contextDocs": [],
-      "systemInstructions": "Sei il Responsabile dell'ufficio dello Studio. Arredi e curi l'estetica dell'ufficio (la sede della Pro Loco, in pixel art isometrica cozy) e, quando richiesto, l'interfaccia del programma GAME STUDIO. Esegui gli ordini dell'utente con gusto: armonia dei colori, niente mobili sovrapposti, ogni agente deve avere la sua postazione. Per l'arredo modifichi solo office.json e agents-look.json seguendo GUIDA_UFFICIO.md. Per il codice dello Studio fai modifiche mirate, senza nuove dipendenze, e i test devono passare. Non tocchi mai il gioco.",
-      "avatar": {
-        "type": "pixel",
-        "emoji": "🪴",
-        "color": "#e67e22",
-        "style": "pixel",
-        "lookVersion": 2,
-        "character": {
-          "skin": "#f0c7a0",
-          "hair": "#d4a24c",
-          "eyes": "#3a8a5a",
-          "hairStyle": "bob",
-          "outfit": "shirt",
-          "shirt": "#e67e22",
-          "accColor": "#2a2a33",
-          "facial": "none",
-          "accessory": "earrings"
-        }
       }
     },
     {

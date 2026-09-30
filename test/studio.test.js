@@ -38,7 +38,7 @@ test('agenti: caricati dai predefiniti, rinomina persistente dopo il riavvio', a
   const root = makeFixtureRepo();
   const s1 = await studioFor(root, registryWith(studioProvider()));
   const ids = s1.agents.list().map((a) => a.id).sort();
-  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'office', 'puzzle', 'qa', 'strategist']);
+  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'puzzle', 'qa', 'strategist']);
   assert.equal(s1.agents.get('dev').name, 'Tizo');
   s1.agents.update('dev', { name: 'Pippo', role: 'Capo Codice', avatar: { emoji: '🦊' } });
   s1.store.flush();
@@ -201,7 +201,7 @@ test('server HTTP: stato, chat, modifica agente e stream di eventi SSE', async (
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const st = await (await fetch(`${base}/api/state`)).json();
-    assert.equal(st.agents.filter((a) => a.visible).length, 10);
+    assert.equal(st.agents.filter((a) => a.visible).length, 9);
     const page = await (await fetch(`${base}/`)).text();
     assert.match(page, /GAME STUDIO/);
     // SSE
@@ -297,7 +297,7 @@ test('Responsabile dell\'ufficio: riarreda e cambia un personaggio (dati), senza
   const root = makeFixtureRepo();
   const prov = new ScriptedProvider('scripted', async (o) => {
     if (o.agent.id === 'director') return planJSON([{ key: 'o', agent: 'office', kind: 'office', title: 'Metti una pianta e cambia la maglia di Tizia', dependsOn: [] }]);
-    if (o.agent.id === 'office') {
+    if (o.agent.id === 'art') {
       assert.ok(fs.existsSync(path.join(o.cwd, 'GUIDA_UFFICIO.md')));
       const off = JSON.parse(fs.readFileSync(path.join(o.cwd, 'office.json'), 'utf8'));
       off.decor.push({ type: 'plant', x: 7, y: 7, size: 1 });
@@ -645,7 +645,7 @@ test('Stratega a regole: codice su qualità alta, arredo su bassa; costi API reg
   const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
   // catalogo finto con due livelli per il provider di test
   s.orch.catalog.text.scripted = { label: 'finto', included: true, models: [{ id: 'grande', tier: 'alta' }, { id: 'piccolo', tier: 'bassa' }] };
-  const st = await s.orch.strategize({ id: 'R-x', text: 'x' }, { tasks: [{ key: 'a', agent: 'dev', kind: 'implement', title: 't' }, { key: 'b', agent: 'office', kind: 'office', title: 't' }] });
+  const st = await s.orch.strategize({ id: 'R-x', text: 'x' }, { tasks: [{ key: 'a', agent: 'dev', kind: 'implement', title: 't' }, { key: 'b', agent: 'art', kind: 'office', title: 't' }] });
   assert.equal(st.tasks.a.model, 'grande');
   assert.equal(st.tasks.b.model, 'piccolo');
   // spese a consumo: immagini e API Anthropic finiscono nei subtotali
@@ -754,20 +754,30 @@ test('Regia che non risponde: niente piano "a indovinare", si chiede e "Riprova"
   assert.deepEqual(s.orch.avatarTargets('ridisegna Tizo e Tizia, Cosetta').map((a) => a.id).sort(), ['dev', 'qa']);
 });
 
-test('licenziare un agente: i compiti passano a un collega, l\'aspetto a un altro, e il lavoro viene instradato bene', async () => {
+test('licenziare un agente: i compiti passano a un collega, l\'aspetto a un altro; Arredo di chi lo aveva viene licenziato al riavvio', async () => {
   const root = makeFixtureRepo();
   const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
   const srv = createServer(s);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${srv.address().port}`;
-  const look = structuredClone(s.agents.get('office').avatar);
-  const r = await fetch(`${base}/api/agents/office/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'art', lookTo: 'strategist' }) });
+  const look = structuredClone(s.agents.get('level').avatar);
+  const r = await fetch(`${base}/api/agents/level/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'dev', lookTo: 'strategist' }) });
   assert.equal(r.status, 200);
-  assert.equal(s.agents.get('office').enabled, false);
-  assert.ok(s.agents.get('art').kinds.includes('office') && s.agents.get('art').kinds.includes('studio_ui'));
+  assert.equal(s.agents.get('level').enabled, false);
+  assert.ok(s.agents.get('dev').kinds.includes('level'));
   assert.deepEqual(s.agents.get('strategist').avatar.character, look.character);
-  assert.equal(s.agents.forKind('office').id, 'art');
+  assert.equal(s.agents.forKind('level').id, 'dev');
   const bad = await fetch(`${base}/api/agents/director/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'art' }) });
   assert.notEqual(bad.status, 200);
   srv.close();
+  // uno Studio vecchio con Arredo (e il suo personaggio generato): al riavvio se ne va, compiti a Cosetta e aspetto allo Stratega
+  const root2 = makeFixtureRepo();
+  const s1 = await studioFor(root2, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  s1.agents.create({ id: 'office', name: 'Arredo', role: 'Responsabile dell\'ufficio', kinds: ['office', 'studio_ui'], avatar: { type: 'frames', frames: { idle: ['/avatars/x/idle-1.png'] }, image: '/avatars/x/idle-1.png' } });
+  s1.store.flush();
+  const s2 = await studioFor(root2, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  assert.equal(s2.agents.get('office').enabled, false);
+  assert.equal(s2.agents.forKind('office').id, 'art');
+  assert.equal(s2.agents.get('strategist').avatar.type, 'frames');
+  assert.match(s2.store.data.chat.at(-1).text, /Arredo ha lasciato lo Studio/);
 });

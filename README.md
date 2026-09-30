@@ -13,7 +13,7 @@ la Regia smista il lavoro alla squadra, segue le dipendenze, fa testare e ti scr
 | **Rumore** — Suono & Musica | `audio` | effetti, integrazione delle tracce, volumi |
 | **Custode** — Custode della Bibbia | `lore` | canone, coerenza, cosa riportare nella Bibbia del mondo |
 | **Enigma** — Enigmista | `puzzle` | indagini ed enigmi: indizi, prerequisiti, soluzioni |
-| **Arredo** — Responsabile dell'ufficio | `office` | arreda l'ufficio e cambia l'aspetto dei personaggi su tuo ordine; su richiesta modifica l'interfaccia dello Studio |
+| **Stratega** — Stratega e contabile | `strategy` | sceglie i modelli per ogni task, prepara i preventivi, tiene la lavagna delle spese |
 | Regia — Director (solo in chat) | `director` | capisce, pianifica, delega, riferisce |
 
 Lo Studio è un **repository separato** dal gioco. Sul Mac le due cartelle stanno una accanto all'altra:
@@ -143,7 +143,13 @@ Costa **una sola immagine** (lo Stratega mostra il preventivo) e **nessun token*
 Il pulsante 🎨 nell'ufficio passa dal dipinto al disegno in codice; **↶ Annulla ultimo arredo** torna allo sfondo di
 prima. Se Arredo sposta i mobili, lo Studio lo segnala: il dipinto va rifatto.
 
-### Il Responsabile dell'ufficio
+### Arredo e interfaccia (Cosetta)
+
+L'arredo dell'ufficio e le modifiche all'interfaccia dello Studio le fa **Cosetta** (tipi `office` e `studio_ui`; il
+vecchio "Responsabile dell'ufficio" è stato licenziato). Un agente si licenzia dalla sua scheda (**Licenzia…**):
+i compiti passano a un collega e l'aspetto, se vuoi, a un altro.
+
+#### Come funziona
 
 Chiedi in chat, per esempio *«metti una pianta grande vicino alla finestra e dai a Tizia i capelli corti»*:
 la Regia passa il lavoro al Responsabile dell'ufficio, che modifica l'arredo e l'aspetto dei personaggi. Il cambiamento

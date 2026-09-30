@@ -49,6 +49,13 @@ export async function createStudio({ projectRoot, dataDir, providers, qaRunner, 
   // il repository dello Studio stesso (per le modifiche al programma fatte dal Responsabile dell'ufficio)
   const studioGit = studioRepo === false ? null : new GitService(studioRepo || STUDIO_DIR, { worktreesDir: path.join(dataDir, 'studio-worktrees'), events });
   const orch = new Orchestrator({ store, events, agents, providers, git, knowledge, config, studioDir: STUDIO_DIR, projectRoot, dataDir, qaRunner, office, studioGit });
+  // Arredo non è più fra gli agenti predefiniti: chi lo aveva lo licenzia (compiti a Cosetta, aspetto allo Stratega)
+  const arredo = agents.get('office');
+  if (arredo && arredo.enabled !== false && !arredo.dismissed && !agents.defaults.some((d) => d.id === 'office') && agents.get('art')) {
+    const strat = agents.get('strategist');
+    const giveLook = strat && !strat.avatar?.userEdited && ['frames', 'image'].includes(arredo.avatar?.type) && !['frames', 'image'].includes(strat.avatar?.type);
+    try { dismissAgent({ agents, store, orch }, 'office', 'art', giveLook ? 'strategist' : null); } catch { /* ha task in corso: si riprova al prossimo avvio */ }
+  }
   await orch.init();
   knowledge.regenerate(store.data);
   const saveConfig = (patch) => {
@@ -81,6 +88,19 @@ async function body(req, limit = 12 * 1024 * 1024) {
   for await (const c of req) { size += c.length; if (size > limit) throw new Error('richiesta troppo grande'); chunks.push(c); }
   const t = Buffer.concat(chunks).toString('utf8');
   return t ? JSON.parse(t) : {};
+}
+
+export function dismissAgent({ agents, store, orch }, id, toId, lookToId) {
+  const a = agents.get(id), to = agents.get(toId);
+  if (!a || ['director', 'strategist'].includes(a.id)) throw new Error('questo agente non si può licenziare');
+  if (!to || to.id === a.id || to.enabled === false) throw new Error('scegli a chi passare i compiti');
+  if (Object.values(store.data.tasks).some((t) => t.agentId === a.id && ['PENDING', 'RUNNING'].includes(t.status))) throw new Error(`${a.name} ha dei task in corso: aspetta che finiscano o fermali`);
+  agents.update(to.id, { kinds: [...new Set([...(to.kinds || []), ...(a.kinds || [])])], capabilities: [...new Set([...(to.capabilities || []), ...(a.capabilities || [])])] });
+  const heir = lookToId && agents.get(lookToId);
+  if (heir && heir.id !== a.id) agents.update(heir.id, { avatar: { ...structuredClone(a.avatar || {}), userEdited: true } });
+  agents.update(a.id, { enabled: false, dismissed: { at: new Date().toISOString(), to: to.id, lookTo: heir?.id || null } });
+  orch.chat('system', `${a.name} ha lasciato lo Studio: i suoi compiti ora li fa ${to.name}${heir ? `, e ${heir.name} ha preso il suo aspetto` : ''}. Si può riassumere dalla Gestione agenti.`);
+  return { ok: true };
 }
 
 export function createServer(studio) {
@@ -127,18 +147,7 @@ export function createServer(studio) {
     ['PUT', /^\/api\/agents\/([\w-]+)$/, async (m, b) => agents.public(agents.update(m[1], b))],
     ['POST', /^\/api\/agents\/([\w-]+)\/reset$/, async (m) => agents.public(agents.resetToDefault(m[1]))],
     // licenziare un agente: i suoi compiti passano a un collega, il suo aspetto (se si vuole) a un altro; si può riassumere
-    ['POST', /^\/api\/agents\/([\w-]+)\/dismiss$/, async (m, b) => {
-      const a = agents.get(m[1]), to = agents.get(b?.to);
-      if (!a || ['director', 'strategist'].includes(a.id)) throw new Error('questo agente non si può licenziare');
-      if (!to || to.id === a.id || to.enabled === false) throw new Error('scegli a chi passare i compiti');
-      if (Object.values(store.data.tasks).some((t) => t.agentId === a.id && ['PENDING', 'RUNNING'].includes(t.status))) throw new Error(`${a.name} ha dei task in corso: aspetta che finiscano o fermali`);
-      agents.update(to.id, { kinds: [...new Set([...(to.kinds || []), ...(a.kinds || [])])], capabilities: [...new Set([...(to.capabilities || []), ...(a.capabilities || [])])] });
-      const heir = b?.lookTo && agents.get(b.lookTo);
-      if (heir && heir.id !== a.id) agents.update(heir.id, { avatar: { ...structuredClone(a.avatar || {}), userEdited: true } });
-      agents.update(a.id, { enabled: false, dismissed: { at: new Date().toISOString(), to: to.id, lookTo: heir?.id || null } });
-      orch.chat('system', `${a.name} ha lasciato lo Studio: i suoi compiti ora li fa ${to.name}${heir ? `, e ${heir.name} ha preso il suo aspetto` : ''}. Si può riassumere dalla Gestione agenti.`);
-      return { ok: true };
-    }],
+    ['POST', /^\/api\/agents\/([\w-]+)\/dismiss$/, async (m, b) => dismissAgent(studio, m[1], b?.to, b?.lookTo)],
     ['POST', /^\/api\/agents\/([\w-]+)\/avatar$/, async (m, b) => {
       // b.dataUrl = "data:image/png;base64,..." → salvato in data/avatars e collegato all'avatar
       const mm = String(b.dataUrl || '').match(/^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,(.+)$/);

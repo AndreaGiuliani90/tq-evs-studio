@@ -64,11 +64,12 @@
       "kind": "puzzle"
     },
     {
-      "agent": "office",
+      "agent": null,
       "wall": "R",
       "at": 6.4,
       "b0": 7.2,
-      "kind": "manager"
+      "kind": "manager",
+      "spare": true
     },
     {
       "agent": "strategist",
