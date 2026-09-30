@@ -7,7 +7,7 @@ import path from 'node:path';
 import { readJSON, writeFileAtomic, ensureDir, now } from './util.js';
 
 export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table'];
-export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade', 'chesstable'];
+export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade', 'chesstable', 'glasswall'];
 const LOOK_FIELDS = ['skin', 'hair', 'eyes', 'shirt', 'accColor', 'hairStyle', 'outfit', 'facial', 'accessory'];
 
 export class OfficeStore {
@@ -143,7 +143,8 @@ precedente resta salvata (l'utente può annullare con un clic).
   - kind: ${STATION_KINDS.join(', ')}
   - \`spare: true\` = postazione libera per nuovi agenti.
 - \`decor\` — arredi. A parete ({ type, wall, at, w?, … }) oppure a pavimento ({ type, x, y, … }):
-  - window { w } · banner { w, text (MAIUSCOLO, lettere A-Z 0-9) } · noticeboard { w, title } · map { w } · clock ·
+  - glasswall { wall, from, to, pane } (parete vetrata a tutta altezza con il panorama; pane = larghezza dei vetri) ·
+    window { w, big } · banner { w, text (MAIUSCOLO, lettere A-Z 0-9) } · noticeboard { w, title } · map { w } · clock ·
     lantern · costboard { w } (la lavagna delle spese: il contenuto lo scrive lo Studio) · bookcase { w, h } · shelf { w, z } · frame { w, z, h, picture: "borgo"|"foto"|"tq" }
   - rug { x, y, w, d } · plant { x, y, size } · tallplant { x, y, size } · floorlamp { x, y } · crates { x, y } ·
     sideboard { x, y } · bench { x, y }

@@ -163,20 +163,29 @@ export class Office {
     this.placeBoardHit();
   }
 
+  // lavagna delle spese: sopra c'è solo un'area sensibile grande quanto la lavagna; il cartellino con le cifre
+  // compare passandoci sopra col cursore (o al primo tocco); il clic apre il dettaglio
   placeBoardHit() {
     const d = (this.layout?.decor || []).find((x) => x.type === 'costboard');
     if (!d || !this.overlay || !this.wallRect) return;
-    const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + (d.w || 2.8), z0 + 22, z0 + 38);
-    const cx = r.pts.reduce((s, p) => s + p[0], 0) / r.pts.length, cy = r.pts.reduce((s, p) => s + p[1], 0) / r.pts.length;
+    const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + (d.w || 2.8), z0, z0 + 60);
+    const xs = r.pts.map((p) => p[0]), ys = r.pts.map((p) => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
     const c = this.costs || { totalUsd: 0, providers: [] };
     const SHORT = { 'openai-image': 'GPT', 'gemini-image': 'Nano', anthropic: 'API' };
     const paid = (c.providers || []).filter((p) => !p.included && (p.usd > 0 || p.images > 0));
     const sub = paid.length ? paid.slice(0, 3).map((p) => `${SHORT[p.id] || p.short} ${p.usd.toFixed(2)}`).join(' · ') : 'piano: incluso';
     const b = document.createElement('button');
-    b.className = 'oboard'; b.title = 'Spese dello Studio: clic per i dettagli';
-    b.innerHTML = `<b>SPESE</b> $${Number(c.totalUsd || 0).toFixed(2)}<small>${escapeHTML(sub)}</small>`;
-    b.style.left = `${(cx / LW) * 100}%`; b.style.top = `${(cy / LH) * 100}%`;
-    b.onclick = () => { if (!this.view?.wasDrag) this.onBoard?.(); };
+    b.className = 'oboard-hit'; b.title = 'Spese dello Studio';
+    Object.assign(b.style, { left: `${(x0 / LW) * 100}%`, top: `${(y0 / LH) * 100}%`, width: `${((x1 - x0) / LW) * 100}%`, height: `${((y1 - y0) / LH) * 100}%` });
+    b.innerHTML = `<span class="oboard"><b>SPESE</b> $${Number(c.totalUsd || 0).toFixed(2)}<small>${escapeHTML(sub)}</small><small class="muted">clic per il dettaglio</small></span>`;
+    b.onclick = (e) => {
+      if (this.view?.wasDrag) return;
+      // sui touch il primo tocco mostra il cartellino, il secondo apre il dettaglio
+      if (matchMedia('(hover: none)').matches && !b.classList.contains('open')) { b.classList.add('open'); e.preventDefault(); return; }
+      this.onBoard?.();
+    };
+    b.onblur = () => b.classList.remove('open');
     this.overlay.appendChild(b);
   }
 
@@ -476,8 +485,109 @@ export class Office {
     for (let i = 0; i < w * 4; i++) { const [sx, sy] = iso(x + i / 4, y + dd); ctx.fillRect(Math.round(sx), Math.round(sy), 1, 2); }
   }
 
+  // ── PARETE VETRATA: un'unica vetrata a tutta altezza con il panorama (Gran Sasso, colline, il borgo), la luce
+  // del momento (alba, giorno, tramonto, notte), i riflessi sul vetro e i riquadri di luce che entrano sul pavimento
+  panorama(W, Hh, sky, date, seed = 1) {
+    const [c, x] = tela(W, Hh);
+    const h = date.getHours() + date.getMinutes() / 60;
+    const night = sky.night > 0.7, dusk = !night && sky.night > 0;
+    const evening = h >= 12;
+    // cielo: tre fasce con bagliore sull'orizzonte
+    const g = x.createLinearGradient(0, 0, 0, Hh * 0.75);
+    if (night) { g.addColorStop(0, '#070b22'); g.addColorStop(0.6, '#141c46'); g.addColorStop(1, '#27305f'); }
+    else if (dusk) { g.addColorStop(0, evening ? '#2d2f6b' : '#3d4f94'); g.addColorStop(0.55, evening ? '#c4607a' : '#e7a0a0'); g.addColorStop(1, evening ? '#ffb45c' : '#ffd79a'); }
+    else { g.addColorStop(0, '#4f9ee0'); g.addColorStop(0.6, '#8cc6ef'); g.addColorStop(1, '#d9eef8'); }
+    x.fillStyle = g; x.fillRect(0, 0, W, Hh);
+    // sole / luna con alone
+    const t = night ? ((h + 24 - 19) % 24) / 11 : Math.min(1, Math.max(0, (h - 6) / 13));
+    const bx = W * (0.12 + 0.76 * t), by = Hh * (0.55 - Math.sin(t * Math.PI) * 0.42);
+    const halo = x.createRadialGradient(bx, by, 0, bx, by, night ? 26 : 60);
+    halo.addColorStop(0, night ? 'rgba(220,230,255,0.45)' : dusk ? 'rgba(255,190,110,0.8)' : 'rgba(255,250,215,0.75)'); halo.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = halo; x.fillRect(0, 0, W, Hh);
+    x.fillStyle = night ? '#eef0ff' : dusk ? '#ffd28a' : '#fffbe6'; x.beginPath(); x.arc(bx, by, night ? 5 : 7, 0, 7); x.fill();
+    if (night) { x.fillStyle = '#141c46'; x.beginPath(); x.arc(bx + 2.5, by - 1, 4.4, 0, 7); x.fill(); }
+    if (night) for (let i = 0; i < 140; i++) { const sx = rnd(i * 7 + seed) * W, sy = rnd(i * 13 + seed) * Hh * 0.55; x.fillStyle = `rgba(255,255,255,${0.35 + rnd(i) * 0.65})`; x.fillRect(Math.round(sx), Math.round(sy), rnd(i + 3) > 0.93 ? 2 : 1, 1); }
+    // nuvole morbide (si spostano piano con i minuti)
+    const drift = (date.getHours() * 60 + date.getMinutes()) * 0.35;
+    for (let i = 0; i < 7; i++) {
+      const cx = ((rnd(i + 40) * W * 1.4 + drift * (0.5 + rnd(i) * 0.5)) % (W + 120)) - 60, cy = Hh * (0.08 + rnd(i + 9) * 0.28), cw = 30 + rnd(i + 2) * 50;
+      for (let k = 0; k < 9; k++) { x.fillStyle = night ? 'rgba(120,130,190,0.06)' : dusk ? 'rgba(255,200,190,0.16)' : 'rgba(255,255,255,0.22)'; x.beginPath(); x.ellipse(cx + k * cw * 0.11, cy + Math.sin(k * 1.7) * 2.5, cw * (0.18 + (k % 3) * 0.05), 3 + (k % 3) * 1.6, 0, 0, 7); x.fill(); }
+    }
+    // il Gran Sasso: creste frastagliate, facce in luce e in ombra, neve, foschia
+    const ridge = (u, base, amp, c1) => base - amp * (0.55 * Math.abs(Math.sin(u * 0.011 + c1)) + 0.3 * Math.abs(Math.sin(u * 0.037 + c1 * 3)) + 0.15 * Math.abs(Math.sin(u * 0.11 + c1 * 7)));
+    const haze = night ? '#1c2452' : dusk ? '#b67a8e' : '#a9c3de';
+    for (const L of [{ base: Hh * 0.46, amp: Hh * 0.32, c1: 0.7, col: night ? '#1a2148' : dusk ? '#6d5a86' : '#7f97bd', snow: true }, { base: Hh * 0.53, amp: Hh * 0.18, c1: 2.9, col: night ? '#151b3b' : dusk ? '#5b5470' : '#6f8aa6', snow: !night }]) {
+      for (let px = 0; px < W; px++) {
+        const top = ridge(px + seed * 50, L.base, L.amp, L.c1), prev = ridge(px - 1 + seed * 50, L.base, L.amp, L.c1);
+        const lit = (top - prev) * (evening ? 1 : -1) > 0;
+        x.fillStyle = lit ? shade(L.col, night ? 0.05 : 0.12) : shade(L.col, -0.08); x.fillRect(px, Math.round(top), 1, Hh);
+        if (L.snow && top < L.base - L.amp * 0.62) { x.fillStyle = night ? '#9aa6d8' : lit ? '#ffffff' : '#dfe7f5'; x.fillRect(px, Math.round(top), 1, Math.max(1, Math.round((L.base - L.amp * 0.62 - top) * 0.7))); }
+      }
+      x.fillStyle = haze; x.globalAlpha = 0.28; x.fillRect(0, L.base - L.amp * 0.2, W, Hh); x.globalAlpha = 1;
+    }
+    // colline con i boschi
+    for (const L of [{ base: Hh * 0.6, amp: Hh * 0.07, c1: 5.1, col: night ? '#101830' : dusk ? '#4c5a44' : '#6b9a57' }, { base: Hh * 0.68, amp: Hh * 0.05, c1: 8.3, col: night ? '#0c1426' : dusk ? '#3d4d38' : '#5a8a48' }]) {
+      for (let px = 0; px < W; px++) { const top = L.base - L.amp * (0.5 + 0.5 * Math.sin(px * 0.017 + L.c1) * Math.sin(px * 0.005 + L.c1)); x.fillStyle = L.col; x.fillRect(px, Math.round(top), 1, Hh); }
+      for (let i = 0; i < W / 3; i++) { const px = rnd(i * 3 + L.c1) * W, py = L.base - L.amp * 0.2 + rnd(i * 5 + L.c1) * Hh * 0.12; x.fillStyle = shade(L.col, -0.18); x.beginPath(); x.arc(px, py, 1.6 + rnd(i) * 1.4, 0, 7); x.fill(); }
+    }
+    // il borgo sul colle: case in pietra, tetti in coppi, campanile, finestre accese la sera
+    const vx = W * 0.5, vy = Hh * 0.6, wall = night ? '#2a3160' : dusk ? '#c79a86' : '#e0c49e', roof = night ? '#1c2046' : '#b0563c';
+    for (let i = 0; i < 30; i++) {
+      const hx = vx - 120 + i * 8 + Math.round(rnd(i) * 4), hh = 6 + Math.round(rnd(i + 5) * 7) - Math.abs(i - 15) * 0.3, hw = 7 + Math.round(rnd(i + 8) * 3);
+      const top = vy - hh - (15 - Math.abs(i - 15)) * 0.8;
+      x.fillStyle = shade(wall, (i % 3) * -0.05); x.fillRect(hx, top, hw, Hh);
+      x.fillStyle = roof; x.fillRect(hx - 1, top - 2, hw + 2, 2); x.fillStyle = shade(roof, -0.2); x.fillRect(hx - 1, top, hw + 2, 1);
+      for (let q = 0; q < 2; q++) { x.fillStyle = night || dusk ? (rnd(i * 4 + q) > 0.35 ? '#ffd27a' : shade(wall, -0.3)) : shade(wall, -0.35); x.fillRect(hx + 2 + q * 3, top + 3, 1, 2); }
+    }
+    x.fillStyle = shade(wall, -0.03); x.fillRect(vx + 4, vy - 38, 6, 30); x.fillStyle = roof; x.fillRect(vx + 3, vy - 41, 8, 3); x.fillRect(vx + 6, vy - 45, 2, 4);
+    x.fillStyle = night ? '#ffd27a' : '#3a2a20'; x.fillRect(vx + 6, vy - 34, 2, 3);
+    if (night || dusk) { const gl = x.createRadialGradient(vx, vy - 10, 0, vx, vy - 10, 90); gl.addColorStop(0, 'rgba(255,190,100,0.22)'); gl.addColorStop(1, 'rgba(255,190,100,0)'); x.fillStyle = gl; x.fillRect(0, 0, W, Hh); }
+    // primo piano: prato, cipressi, e il muretto del terrazzo
+    x.fillStyle = night ? '#0a1120' : dusk ? '#34462f' : '#4f7f3f'; x.fillRect(0, Hh * 0.74, W, Hh);
+    for (let i = 0; i < 9; i++) { const px = rnd(i + 70) * W, ph = 14 + rnd(i + 71) * 12; x.fillStyle = night ? '#08101c' : '#2f5a33'; x.beginPath(); x.ellipse(px, Hh * 0.76 - ph / 2, 3, ph / 2, 0, 0, 7); x.fill(); }
+    return c;
+  }
+
+  drawGlassWall(ctx, d, sky, date) {
+    const H = this.layout.room.wallH, wall = d.wall || 'L';
+    const a0 = d.from ?? 0.3, a1 = d.to ?? ((wall === 'L' ? this.layout.room.d : this.layout.room.w) - 0.3);
+    const z0 = 30, z1 = H - 10, PX = 30;
+    const W = Math.round((a1 - a0) * PX), Hh = Math.round(z1 - z0);
+    const pano = this.panorama(W, Hh, sky, date, wall === 'L' ? 3 : 9);
+    const inner = this.wallRect(wall, a0, a1, z0, z1);
+    ctx.save(); ctx.beginPath(); inner.pts.forEach((p, i) => (i ? ctx.lineTo(...p) : ctx.moveTo(...p))); ctx.closePath(); ctx.clip();
+    mapFace(ctx, pano, inner.p0, inner.pu, inner.pv);
+    // vetro: leggera tinta, riflessi obliqui
+    const [gC, gx] = tela(W, Hh);
+    gx.fillStyle = sky.night > 0.7 ? 'rgba(90,120,200,0.10)' : 'rgba(200,230,255,0.10)'; gx.fillRect(0, 0, W, Hh);
+    for (let i = 0; i < 9; i++) { const sx = rnd(i + 21) * W; gx.fillStyle = `rgba(255,255,255,${0.05 + rnd(i) * 0.07})`; gx.beginPath(); gx.moveTo(sx, 0); gx.lineTo(sx + 16 + rnd(i + 2) * 22, 0); gx.lineTo(sx - 30 + rnd(i + 2) * 22, Hh); gx.lineTo(sx - 46, Hh); gx.closePath(); gx.fill(); }
+    mapFace(ctx, gC, inner.p0, inner.pu, inner.pv);
+    ctx.restore();
+    // telaio: montanti sottili in legno scuro, traverso, davanzale e bordo in alto
+    const frame = PAL.beamD, frameL = PAL.beam;
+    const step = d.pane || 2.4, n = Math.max(1, Math.round((a1 - a0) / step));
+    for (let i = 0; i <= n; i++) { const a = a0 + ((a1 - a0) * i) / n; const m = this.wallRect(wall, a - 0.06, a + 0.06, z0, z1); poly(ctx, m.pts, frame); const hl = this.wallRect(wall, a - 0.06, a - 0.02, z0, z1); poly(ctx, hl.pts, frameL); }
+    const tz = z0 + (z1 - z0) * 0.72; const tr = this.wallRect(wall, a0, a1, tz - 1.5, tz + 1.5); poly(ctx, tr.pts, frame);
+    const top = this.wallRect(wall, a0 - 0.08, a1 + 0.08, z1, z1 + 3); poly(ctx, top.pts, frame);
+    const sill = this.wallRect(wall, a0 - 0.12, a1 + 0.12, z0 - 4, z0); poly(ctx, sill.pts, PAL.woodT);
+    const sillF = this.wallRect(wall, a0 - 0.12, a1 + 0.12, z0 - 6, z0 - 4); poly(ctx, sillF.pts, PAL.woodS);
+    // luce che entra: i riquadri dei vetri proiettati sul pavimento (calda di giorno, arancio al tramonto, fredda la notte)
+    const col = sky.night > 0.7 ? 'rgba(150,170,255,' : sky.night > 0 ? 'rgba(255,170,90,' : 'rgba(255,236,170,';
+    const alpha = sky.night > 0.7 ? 0.07 : sky.night > 0 ? 0.16 : 0.13;
+    const h = date.getHours() + date.getMinutes() / 60, lean = h < 13 ? 1.2 : -1.2, depth = sky.night > 0 && sky.night <= 0.7 ? 7 : 5;
+    const iso = this.iso;
+    for (let i = 0; i < n; i++) {
+      const b0 = a0 + ((a1 - a0) * i) / n + 0.1, b1 = a0 + ((a1 - a0) * (i + 1)) / n - 0.1;
+      const q = wall === 'L' ? [iso(0, b0), iso(0, b1), iso(depth, b1 + lean), iso(depth, b0 + lean)] : [iso(b0, 0), iso(b1, 0), iso(b1 + lean, depth), iso(b0 + lean, depth)];
+      const gr = ctx.createLinearGradient(q[0][0], q[0][1], q[3][0], q[3][1]);
+      gr.addColorStop(0, `${col}${alpha})`); gr.addColorStop(1, `${col}0)`);
+      poly(ctx, q, gr);
+    }
+  }
+
   drawWallDecor(ctx, d, sky, date) {
     const H = this.layout.room.wallH;
+    if (d.type === 'glasswall') return this.drawGlassWall(ctx, d, sky, date);
     // mobili appoggiati al muro: si disegnano con box() sulla tela statica
     if (['bookcase', 'shelf', 'frame'].includes(d.type)) {
       const keep = this.ctx; this.ctx = ctx;

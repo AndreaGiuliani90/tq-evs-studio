@@ -127,23 +127,7 @@
     {
       "type": "lantern",
       "wall": "R",
-      "at": 21.2
-    },
-    {
-      "type": "noticeboard",
-      "wall": "L",
-      "at": 17.4,
-      "w": 2.0,
-      "title": "SAGRA"
-    },
-    {
-      "type": "frame",
-      "wall": "R",
-      "at": 22.0,
-      "w": 1.1,
-      "z": 58,
-      "h": 24,
-      "picture": "foto"
+      "at": 23.6
     },
     {
       "type": "costboard",
@@ -227,55 +211,6 @@
       "at": 16.9
     },
     {
-      "type": "window",
-      "wall": "L",
-      "at": 0.6,
-      "w": 2.0,
-      "big": true
-    },
-    {
-      "type": "window",
-      "wall": "L",
-      "at": 2.95,
-      "w": 2.0,
-      "big": true
-    },
-    {
-      "type": "window",
-      "wall": "L",
-      "at": 5.3,
-      "w": 2.0,
-      "big": true
-    },
-    {
-      "type": "window",
-      "wall": "L",
-      "at": 7.65,
-      "w": 2.0,
-      "big": true
-    },
-    {
-      "type": "window",
-      "wall": "L",
-      "at": 10.0,
-      "w": 2.0,
-      "big": true
-    },
-    {
-      "type": "window",
-      "wall": "L",
-      "at": 12.35,
-      "w": 2.0,
-      "big": true
-    },
-    {
-      "type": "window",
-      "wall": "L",
-      "at": 14.7,
-      "w": 2.0,
-      "big": true
-    },
-    {
       "type": "rug",
       "x": 18.4,
       "y": 1.8,
@@ -357,6 +292,20 @@
       "x": 2.4,
       "y": 0.7,
       "size": 0.9
+    },
+    {
+      "type": "glasswall",
+      "wall": "L",
+      "from": 0.3,
+      "to": 19.7,
+      "pane": 2.45
+    },
+    {
+      "type": "noticeboard",
+      "wall": "R",
+      "at": 21.1,
+      "w": 2.0,
+      "title": "SAGRA"
     }
   ],
   "layoutVersion": 2,
