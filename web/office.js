@@ -129,6 +129,7 @@ export class Office {
   }
 
   seatOf(st) {
+    if (st.spot) return [st.x, st.y];
     if (st.kind === 'table') return [st.x + 1.2, st.y + 0.35];
     const L = this.local(st);
     return L.xy(1.4, 0.75);
@@ -138,8 +139,9 @@ export class Office {
   placeLabels() {
     if (!this.layout || !this.overlay) return;
     this.overlay.innerHTML = '';
-    for (const st of this.stations()) {
-      const a = this.agents[st.agentId]; if (!a) continue;
+    for (const st0 of this.stations()) {
+      const a = this.agents[st0.agentId]; if (!a) continue;
+      const st = this.spotOf(st0.agentId) || st0;
       const [x, y] = this.seatOf(st);
       const [sx, sy] = this.iso(x, y, 74);
       const el = document.createElement('button');
@@ -178,9 +180,63 @@ export class Office {
     this.overlay.appendChild(b);
   }
 
+  // ── pause: chi è libero da un po' va nell'angolo relax (caffè, telefono sul divano, scacchi) ─────────
+  relaxSpots() {
+    const out = [];
+    for (const d of this.layout?.decor || []) {
+      if (d.type === 'coffee') out.push({ x: d.x + 0.8, y: d.y + 1.55, act: 'coffee', face: 'left', group: `c${d.x}` });
+      if (d.type === 'sofa' || d.type === 'armchair') {
+        const L = d.type === 'sofa' ? (d.w || 2.4) : 1.05, rot = d.rot || 0, H = rot % 2 === 0;
+        const seatB = [0.62, 0.62, 0.33, 0.33][rot];
+        const face = ['left', 'right', 'right', 'left'][rot];
+        for (const k of [0.5]) out.push({ x: d.x + (H ? L * k : seatB), y: d.y + (H ? seatB : L * k), act: 'phone', face, group: `s${d.x}${d.y}${k}` });
+      }
+      if (d.type === 'chesstable') { out.push({ x: d.x - 0.3, y: d.y + 0.45, act: 'chess', face: 'right', group: `k${d.x}`, pair: 0 }); out.push({ x: d.x + 1.3, y: d.y + 0.45, act: 'chess', face: 'left', group: `k${d.x}`, pair: 1 }); }
+    }
+    return out;
+  }
+
+  updateIdle() {
+    const now = performance.now(), fast = /[?&]pausa=veloce/.test(location.search);
+    const WAIT = fast ? 2500 : 75000, SLOT = fast ? 12000 : 180000;
+    this.idleSince ??= {}; this.away ??= {};
+    const hash = (str) => { let h = 7; for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
+    const slot = Math.floor(Date.now() / SLOT);
+    const idle = [];
+    for (const st of this.stations()) {
+      if (st.kind === 'table') continue;
+      const a = this.agents[st.agentId];
+      if (!a || (a.runtime?.status || 'IDLE') !== 'IDLE') { delete this.idleSince[st.agentId]; continue; }
+      this.idleSince[st.agentId] ??= now;
+      if (now - this.idleSince[st.agentId] > WAIT && hash(`${a.id}${slot}`) % 4 !== 0) idle.push(a.id);   // qualcuno resta alla scrivania
+    }
+    idle.sort((p, q) => hash(`${p}${slot}`) - hash(`${q}${slot}`));
+    const spots = this.relaxSpots(), next = {};
+    const chess = spots.filter((p) => p.act === 'chess'), other = spots.filter((p) => p.act !== 'chess');
+    let i = 0;
+    if (chess.length >= 2 && idle.length >= 2 && hash(`scacchi${slot}`) % 2 === 0) { next[idle[i++]] = chess[0]; next[idle[i++]] = chess[1]; }
+    for (const p of other) { if (i >= idle.length) break; next[idle[i++]] = p; }
+    const key = JSON.stringify(Object.entries(next).map(([k, v]) => [k, v.group]).sort());
+    if (key !== this.awayKey) { this.away = next; this.awayKey = key; this.placeLabels(); }
+  }
+  spotOf(agentId) { const p = this.away?.[agentId]; return p ? { spot: true, x: p.x, y: p.y, face: p.face, act: p.act, agentId } : null; }
+
+  drawProp(st, t) {
+    const [sx, sy] = this.iso(st.x, st.y, 0), ctx = this.ctx, X = Math.round(sx), Y = Math.round(sy);
+    if (st.act === 'coffee') {
+      const hx = X + (st.face === 'left' ? -9 : 7), hy = Y - 30;
+      ctx.fillStyle = '#fbf6ea'; ctx.fillRect(hx, hy, 4, 4); ctx.fillStyle = '#6b3b1a'; ctx.fillRect(hx, hy, 4, 1); ctx.fillStyle = '#fbf6ea'; ctx.fillRect(hx + 4, hy + 1, 1, 2);
+      const k = (t * 0.7) % 1; ctx.fillStyle = `rgba(255,255,255,${0.5 * (1 - k)})`; ctx.fillRect(hx + 1 + Math.round(Math.sin(k * 6) * 1.5), hy - 2 - Math.round(k * 8), 1, 2);
+    } else if (st.act === 'phone') {
+      const hx = X - 2, hy = Y - 34;
+      ctx.fillStyle = '#1c1c22'; ctx.fillRect(hx, hy, 5, 8);
+      ctx.fillStyle = Math.floor(t * 1.5) % 5 === 0 ? '#ffd166' : '#6fd3ff'; ctx.fillRect(hx + 1, hy + 1, 3, 6);
+    }
+  }
+
   // superzoom sul personaggio (la scheda con il ritratto grande la mostra l'app: onFocusChange)
   focusAgent(id) {
-    const st = this.stations().find((x) => x.agentId === id);
+    const st = this.spotOf(id) || this.stations().find((x) => x.agentId === id);
     if (!st || !this.view) return this.onSelect?.(id);
     const [x, y] = this.seatOf(st);
     const [sx, sy] = this.iso(x, y, 34);
@@ -253,7 +309,8 @@ export class Office {
     this.drawLight(sky, t);
 
     // fumetti sopra la testa (dopo la luce: restano leggibili)
-    for (const st of this.stations()) this.drawBubble(st, this.agents[st.agentId], t);
+    for (const st of this.stations()) this.drawBubble(this.spotOf(st.agentId) || st, this.agents[st.agentId], t);
+    if (!this.idleT || t - this.idleT > 2) { this.idleT = t; this.updateIdle(); }
   }
 
   sceneItems(t, { furniture = true, characters = true } = {}) {
@@ -263,15 +320,17 @@ export class Office {
     for (const st of this.stations({ all: !characters })) {
       const a = this.agents[st.agentId] || NOBODY;
       const [cx, cy] = this.seatOf(st);
+      const away = characters && this.spotOf(st.agentId);
+      if (away) items.push({ k: away.x + away.y + 0.3, draw: () => { this.drawCharacter(away, a, t); this.drawProp(away, t); } });
       if (st.kind === 'table') {
-        if (characters) items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
+        if (characters && !away) items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
         if (furniture) items.push({ k: st.x + st.y + 1.9, draw: () => this.drawTable(st, a, t) });
         continue;
       }
       const L = this.local(st);
       const [bx, by] = L.xy(1.4, 0.3);
       if (furniture) items.push({ k: bx + by, draw: () => this.drawChair(st, a) });
-      if (characters) items.push({ k: cx + cy, draw: () => (this.painted ? this.behindDesk(st, () => this.drawCharacter(st, a, t)) : this.drawCharacter(st, a, t)) });
+      if (characters && !away) items.push({ k: cx + cy, draw: () => (this.painted ? this.behindDesk(st, () => this.drawCharacter(st, a, t)) : this.drawCharacter(st, a, t)) });
       const [dx, dy] = L.xy(1.4, 1.9);
       if (furniture) items.push({ k: dx + dy, draw: () => this.drawStation(st, a, t) });
     }
@@ -463,37 +522,59 @@ export class Office {
       return;
     }
     if (d.type === 'window') {
-      const w = d.w || 1.6, z0 = 44, z1 = H - 22;
+      // finestra: un pezzo del panorama continuo (montagne, colline, il borgo), con davanzale e gerani
+      const w = d.w || 1.6, z0 = d.big ? 36 : 44, z1 = H - (d.big ? 16 : 22), PX = 26;
       const r = this.wallRect(d.wall, d.at, d.at + w, z0 - 3, z1 + 3);
       poly(ctx, r.pts, PAL.woodD);
-      const [img, x] = tela(40, 44);
-      const g = x.createLinearGradient(0, 0, 0, 44); g.addColorStop(0, sky.top); g.addColorStop(1, sky.bottom);
-      x.fillStyle = g; x.fillRect(0, 0, 40, 44);
-      if (sky.night > 0.4) {
-        for (let i = 0; i < 18; i++) { x.fillStyle = i % 5 ? '#cfd8ff' : '#ffffff'; x.fillRect(Math.floor(rnd(i + d.at) * 40), Math.floor(rnd(i * 3 + d.at) * 24), 1, 1); }
-        x.fillStyle = '#f5f1d6'; x.beginPath(); x.arc(28 - d.at * 2, 9, 4, 0, 7); x.fill();
-        x.fillStyle = sky.top; x.beginPath(); x.arc(30 - d.at * 2, 8, 3.4, 0, 7); x.fill();
-      } else { x.fillStyle = '#fff3c4'; x.beginPath(); x.arc(30, 10, 4, 0, 7); x.fill(); x.fillStyle = '#ffffffcc'; x.fillRect(5, 12, 9, 2); x.fillRect(8, 11, 5, 1); }
-      // tetti e campanile del borgo
-      const roof = sky.night > 0.4 ? '#141833' : '#7b4a3a', wall = sky.night > 0.4 ? '#1d2346' : '#caa98a';
-      x.fillStyle = sky.night > 0.4 ? '#101428' : '#6b8f5a'; x.fillRect(0, 34, 40, 10);
-      const houses = [[0, 30, 9, 8], [8, 27, 8, 11], [15, 31, 9, 7], [23, 25, 6, 13], [28, 29, 12, 9]];
-      for (const [hx, hy, hw, hh] of houses) { x.fillStyle = wall; x.fillRect(hx, hy, hw, hh); x.fillStyle = roof; x.fillRect(hx - 1, hy - 2, hw + 2, 2); }
-      x.fillStyle = wall; x.fillRect(24, 18, 4, 7); x.fillStyle = roof; x.fillRect(23, 16, 6, 2); x.fillRect(25, 14, 2, 2);
-      if (sky.night > 0.4) for (const [lx, ly] of [[3, 33], [11, 30], [12, 34], [18, 34], [25, 28], [32, 32], [36, 34]]) { x.fillStyle = '#ffcf6b'; x.fillRect(lx, ly, 1, 2); }
+      const TWp = Math.max(8, Math.round(w * PX)), THp = Math.round(z1 - z0);
+      const [img, x] = tela(TWp, THp);
+      const night = sky.night > 0.4, dusk = sky.night > 0 && !night;
+      const g = x.createLinearGradient(0, 0, 0, THp); g.addColorStop(0, sky.top); g.addColorStop(1, sky.bottom);
+      x.fillStyle = g; x.fillRect(0, 0, TWp, THp);
+      const U = (d.wall === 'L' ? 700 : 0) + d.at * PX;          // coordinata del panorama: le finestre vicine continuano
+      const ridge = (u, a, b, c) => a + Math.sin(u * 0.021 + c) * b + Math.sin(u * 0.057 + c * 2) * b * 0.45 + Math.abs(Math.sin(u * 0.009 + c)) * b * 0.9;
+      if (night) { for (let i = 0; i < 26; i++) { const sx = Math.floor(rnd(i + U) * TWp), sy = Math.floor(rnd(i * 3 + U) * THp * 0.45); x.fillStyle = i % 5 ? '#cfd8ff' : '#ffffff'; x.fillRect(sx, sy, 1, 1); } }
+      else { x.fillStyle = '#ffffffb0'; for (let i = 0; i < 3; i++) { const cx = Math.round(((U * 0.6 + i * 37 + date.getMinutes() * 0.4) % (TWp + 30)) - 15), cy = 6 + i * 5; x.fillRect(cx, cy, 10, 2); x.fillRect(cx + 3, cy - 1, 5, 1); } }
+      if ((U % 180) < PX * w && d.wall === 'L') { const mx = Math.round(12 - (U % 180) + 20); x.fillStyle = night ? '#f5f1d6' : '#fff3c4'; x.beginPath(); x.arc(mx, 9, 4, 0, 7); x.fill(); if (night) { x.fillStyle = sky.top; x.beginPath(); x.arc(mx + 2, 8, 3.4, 0, 7); x.fill(); } }
+      const layers = [
+        { base: THp * 0.38, amp: THp * 0.13, c: 1.3, col: night ? '#1a1f3d' : dusk ? '#7c6a8f' : '#8ea3c4', snow: !night },   // Gran Sasso lontano
+        { base: THp * 0.55, amp: THp * 0.07, c: 4.1, col: night ? '#141a33' : dusk ? '#5d6a58' : '#6f9a5c' },               // colline
+        { base: THp * 0.7, amp: THp * 0.04, c: 7.7, col: night ? '#10152a' : '#5a8a4c' },
+      ];
+      for (const L of layers) for (let px = 0; px < TWp; px++) {
+        const top = Math.round(L.base - ridge(U + px, 0, L.amp, L.c));
+        x.fillStyle = L.col; x.fillRect(px, top, 1, THp - top);
+        if (L.snow && top < L.base - L.amp * 0.9) { x.fillStyle = '#f4f6fb'; x.fillRect(px, top, 1, 2); }
+      }
+      // il borgo: case con i tetti in coppi e il campanile, alberi
+      const houseCol = night ? '#252b52' : '#d9b48f', roofCol = night ? '#171b38' : '#a6533c';
+      for (let hx = -((U) % 11); hx < TWp; hx += 11) {
+        const k = Math.floor((U + hx) / 11), hh = 7 + Math.floor(rnd(k) * 6), hw = 7 + Math.floor(rnd(k + 9) * 4), by = Math.round(THp * 0.8);
+        x.fillStyle = houseCol; x.fillRect(hx, by - hh, hw, hh + THp);
+        x.fillStyle = roofCol; x.fillRect(hx - 1, by - hh - 2, hw + 2, 2);
+        x.fillStyle = night ? (rnd(k + 3) > 0.4 ? '#ffcf6b' : '#1a1f3d') : '#6b4a33'; x.fillRect(hx + 2, by - hh + 3, 1, 2); x.fillRect(hx + hw - 3, by - hh + 3, 1, 2);
+        if (k % 9 === 4) { x.fillStyle = houseCol; x.fillRect(hx + 2, by - hh - 12, 4, 12); x.fillStyle = roofCol; x.fillRect(hx + 1, by - hh - 14, 6, 2); x.fillRect(hx + 3, by - hh - 16, 2, 2); }
+        if (k % 4 === 1) { x.fillStyle = night ? '#0e1a14' : '#3f7a3a'; x.beginPath(); x.arc(hx + 9, by - 5, 3, 0, 7); x.fill(); }
+      }
+      x.fillStyle = night ? '#0b1020' : '#4f7d42'; x.fillRect(0, Math.round(THp * 0.8) + 2, TWp, THp);
       const inner = this.wallRect(d.wall, d.at, d.at + w, z0, z1);
       ctx.save(); ctx.beginPath(); inner.pts.forEach((p, i) => (i ? ctx.lineTo(...p) : ctx.moveTo(...p))); ctx.closePath(); ctx.clip();
       mapFace(ctx, img, inner.p0, inner.pu, inner.pv);
       ctx.restore();
-      // montanti
-      const m1 = this.wallRect(d.wall, d.at + w / 2 - 0.04, d.at + w / 2 + 0.04, z0, z1); poly(ctx, m1.pts, PAL.woodF);
-      const zm = (z0 + z1) / 2; const m2 = this.wallRect(d.wall, d.at, d.at + w, zm - 1, zm + 1); poly(ctx, m2.pts, PAL.woodF);
+      // riflesso sul vetro e montanti
+      ctx.globalAlpha = 0.12; const gl = this.wallRect(d.wall, d.at + w * 0.1, d.at + w * 0.22, z0 + 6, z1 - 4); poly(ctx, gl.pts, '#ffffff'); ctx.globalAlpha = 1;
+      const nM = d.big ? 2 : 1;
+      for (let i = 1; i <= nM; i++) { const m = this.wallRect(d.wall, d.at + (w * i) / (nM + 1) - 0.04, d.at + (w * i) / (nM + 1) + 0.04, z0, z1); poly(ctx, m.pts, PAL.woodF); }
+      const zm = z0 + (z1 - z0) * 0.62; const m2 = this.wallRect(d.wall, d.at, d.at + w, zm - 1, zm + 1); poly(ctx, m2.pts, PAL.woodF);
       const sill = this.wallRect(d.wall, d.at - 0.1, d.at + w + 0.1, z0 - 5, z0 - 2); poly(ctx, sill.pts, PAL.woodT);
-      // vaso di gerani sul davanzale
-      const [px, py] = d.wall === 'R' ? this.iso(d.at + 0.5, 0.2, z0 - 2) : this.iso(0.2, d.at + 0.5, z0 - 2);
-      ctx.fillStyle = PAL.pot; ctx.fillRect(Math.round(px) - 3, Math.round(py) - 4, 7, 4);
-      ctx.fillStyle = PAL.leaf; ctx.fillRect(Math.round(px) - 4, Math.round(py) - 7, 9, 3);
-      ctx.fillStyle = '#e8414e'; for (const o of [-3, 0, 3]) ctx.fillRect(Math.round(px) + o, Math.round(py) - 8, 2, 2);
+      // persiane verdi (sulle finestre piccole) e gerani sul davanzale
+      if (!d.big) for (const [a0, a1] of [[d.at - 0.42, d.at - 0.06], [d.at + w + 0.06, d.at + w + 0.42]]) { const sh = this.wallRect(d.wall, a0, a1, z0 - 1, z1 + 1); poly(ctx, sh.pts, '#3f6b4a'); for (let q = 0; q < 6; q++) { const ln = this.wallRect(d.wall, a0 + 0.04, a1 - 0.04, z0 + 4 + q * ((z1 - z0) / 6), z0 + 5 + q * ((z1 - z0) / 6)); poly(ctx, ln.pts, '#2f5238'); } }
+      for (const f of d.big ? [0.3, w - 0.5] : [0.5]) {
+        const [px, py] = d.wall === 'R' ? this.iso(d.at + f, 0.2, z0 - 2) : this.iso(0.2, d.at + f, z0 - 2);
+        ctx.fillStyle = PAL.pot; ctx.fillRect(Math.round(px) - 3, Math.round(py) - 4, 7, 4);
+        ctx.fillStyle = PAL.leaf; ctx.fillRect(Math.round(px) - 4, Math.round(py) - 7, 9, 3);
+        ctx.fillStyle = '#e8414e'; for (const o of [-3, 0, 3]) ctx.fillRect(Math.round(px) + o, Math.round(py) - 8, 2, 2);
+      }
     }
     if (d.type === 'banner') {
       const w = d.w || 2.6;
@@ -844,21 +925,35 @@ export class Office {
       return;
     }
     if (d.type === 'sofa' || d.type === 'armchair') {
-      // divano / poltrona: schienale verso la parete (rot 0: parete destra, rot 1: parete sinistra)
+      // divano / poltrona. rot = verso dove sta lo SCHIENALE: 0 parete destra (guarda verso chi osserva a sinistra),
+      // 1 parete sinistra (guarda a destra), 2 davanti (guarda la parete destra), 3 davanti a destra (guarda la parete sinistra)
       const { x, y } = d, L = d.type === 'sofa' ? (d.w || 2.4) : 1.05, c = d.color || (d.type === 'sofa' ? '#3f6f78' : '#8a4a3a');
-      const top = shade(c, 0.15), fr = c, sd = shade(c, -0.2);
-      if (!d.rot) {
-        this.box(x, y, 0, L, 0.95, 8, top, fr, sd);
-        this.box(x, y, 8, L, 0.3, 14, top, fr, sd);                       // schienale
-        this.box(x, y + 0.3, 8, 0.22, 0.65, 6, top, fr, sd); this.box(x + L - 0.22, y + 0.3, 8, 0.22, 0.65, 6, top, fr, sd);
-        for (let i = 0; i < Math.round(L / 0.8); i++) this.box(x + 0.25 + i * ((L - 0.5) / Math.round(L / 0.8)), y + 0.32, 8, (L - 0.5) / Math.round(L / 0.8) - 0.05, 0.6, 2, shade(c, 0.25), fr, sd);
-      } else {
-        this.box(x, y, 0, 0.95, L, 8, top, fr, sd);
-        this.box(x, y, 8, 0.3, L, 14, top, fr, sd);
-        this.box(x + 0.3, y, 8, 0.65, 0.22, 6, top, fr, sd); this.box(x + 0.3, y + L - 0.22, 8, 0.65, 0.22, 6, top, fr, sd);
-        for (let i = 0; i < Math.round(L / 0.8); i++) this.box(x + 0.32, y + 0.25 + i * ((L - 0.5) / Math.round(L / 0.8)), 8, 0.6, (L - 0.5) / Math.round(L / 0.8) - 0.05, 2, shade(c, 0.25), fr, sd);
+      const top = shade(c, 0.15), fr = c, sd = shade(c, -0.2), cu = shade(c, 0.25);
+      const rot = d.rot || 0, H = rot % 2 === 0, W = H ? L : 0.95, D = H ? 0.95 : L;
+      const back = [[x, y, L, 0.3], [x, y, 0.3, L], [x, y + 0.65, L, 0.3], [x + 0.65, y, 0.3, L]][rot];
+      const seat = [[x, y + 0.3, L, 0.65], [x + 0.3, y, 0.65, L], [x, y, L, 0.65], [x, y, 0.65, L]][rot];
+      const drawBack = () => this.box(back[0], back[1], 8, back[2], back[3], 14, top, fr, sd);
+      if (rot < 2) drawBack();
+      this.box(x, y, 0, W, D, 8, top, fr, sd);
+      const n = Math.max(1, Math.round(L / 0.8)), step = (L - 0.5) / n;
+      for (let i = 0; i < n; i++) {
+        if (H) this.box(seat[0] + 0.25 + i * step, seat[1] + 0.02, 8, step - 0.05, seat[3] - 0.04, 2, cu, fr, sd);
+        else this.box(seat[0] + 0.02, seat[1] + 0.25 + i * step, 8, seat[2] - 0.04, step - 0.05, 2, cu, fr, sd);
       }
-      if (d.type === 'sofa') { const [sx, sy] = this.iso(x + (d.rot ? 0.5 : L * 0.7), y + (d.rot ? L * 0.7 : 0.5), 12); this.ctx.fillStyle = '#e8c46a'; this.ctx.fillRect(Math.round(sx) - 3, Math.round(sy) - 4, 6, 5); this.ctx.fillStyle = '#c99a3a'; this.ctx.fillRect(Math.round(sx) - 3, Math.round(sy), 6, 1); }
+      if (H) { this.box(x, seat[1], 8, 0.22, seat[3], 6, top, fr, sd); this.box(x + L - 0.22, seat[1], 8, 0.22, seat[3], 6, top, fr, sd); }
+      else { this.box(seat[0], y, 8, seat[2], 0.22, 6, top, fr, sd); this.box(seat[0], y + L - 0.22, 8, seat[2], 0.22, 6, top, fr, sd); }
+      if (rot >= 2) drawBack();
+      if (d.type === 'sofa') { const [sx, sy] = this.iso(H ? x + L * 0.72 : seat[0] + 0.3, H ? seat[1] + 0.3 : y + L * 0.72, 12); this.ctx.fillStyle = '#e8c46a'; this.ctx.fillRect(Math.round(sx) - 3, Math.round(sy) - 4, 6, 5); this.ctx.fillStyle = '#c99a3a'; this.ctx.fillRect(Math.round(sx) - 3, Math.round(sy), 6, 1); }
+      return;
+    }
+    if (d.type === 'chesstable') {
+      // tavolino con la scacchiera e due sgabelli
+      const { x, y } = d;
+      this.wood(x - 0.55, y + 0.25, 0, 0.4, 0.4, 11); this.wood(x + 1.05, y + 0.25, 0, 0.4, 0.4, 11);
+      this.wood(x + 0.35, y + 0.35, 0, 0.2, 0.2, 14);
+      this.box(x, y, 14, 0.9, 0.9, 2, PAL.woodT, PAL.woodF, PAL.woodS);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) poly(this.ctx, [this.iso(x + 0.1 + i * 0.175, y + 0.1 + j * 0.175, 16), this.iso(x + 0.275 + i * 0.175, y + 0.1 + j * 0.175, 16), this.iso(x + 0.275 + i * 0.175, y + 0.275 + j * 0.175, 16), this.iso(x + 0.1 + i * 0.175, y + 0.275 + j * 0.175, 16)], (i + j) % 2 ? '#3b2a20' : '#efe3c8');
+      for (const [px, py, col] of [[0.2, 0.2, '#fbf6ea'], [0.55, 0.2, '#fbf6ea'], [0.35, 0.7, '#22222a'], [0.7, 0.6, '#22222a']]) { const [sx, sy] = this.iso(x + px, y + py, 16); this.ctx.fillStyle = col; this.ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 4, 2, 4); }
       return;
     }
     if (d.type === 'coffeetable') {
@@ -931,7 +1026,7 @@ export class Office {
         if (want === 'idle' && list.length > 1) fr = (tt % 4.5) < 0.18 ? 1 : 0;   // sbatte le palpebre ogni tanto
         const img = list[fr];
         const anchorH = set.__anchor.h || img.height;
-        ctx.drawImage(img, X - Math.floor(img.width / 2), baseY - anchorH + 4 - (img.height - anchorH));
+        this.blit(img, X, baseY - anchorH + 4 - (img.height - anchorH), this.flipFor(st, agent));
         return;
       }
     }
@@ -942,7 +1037,7 @@ export class Office {
         const tt = t + agent.id.length;
         const dy = anim === 'typing' ? Math.floor(tt * 6) % 2 : anim === 'waiting' || anim === 'idle' ? Math.round(Math.sin(tt * 1.5)) : anim === 'writing-notes' ? Math.floor(tt * 1.5) % 2 : 0;
         const dx = anim === 'playing' ? (Math.floor(tt * 8) % 2 ? 1 : -1) : anim === 'error' ? (Math.floor(tt * 12) % 2 ? 1 : -1) : 0;
-        ctx.drawImage(img, X - Math.floor(img.width / 2) + dx, baseY - img.height + 4 + dy);
+        this.blit(img, X + dx, baseY - img.height + 4 + dy, this.flipFor(st, agent));
         if (anim === 'playing') { ctx.fillStyle = '#2a2a33'; ctx.fillRect(X - 7, baseY - 16 + dy, 14, 5); ctx.fillStyle = '#ff4fa3'; ctx.fillRect(X - 5, baseY - 15, 1, 1); ctx.fillStyle = '#3fe0d0'; ctx.fillRect(X + 4, baseY - 15, 1, 1); }
         return;
       }
@@ -953,6 +1048,20 @@ export class Office {
     const pose = celebrate ? 'celebrate' : anim === 'celebrate' ? 'idle' : anim;
     const spr = cachedSprite(agent.avatar?.character || {}, pose, frame, blink);
     ctx.drawImage(spr, X - Math.floor(SPRITE_W / 2), baseY - SPRITE_H);
+  }
+
+  // i personaggi generati guardano verso destra: alle postazioni della parete destra (e dove serve) si specchiano,
+  // così guardano la scrivania. avatar.flip = true la inverte (per un personaggio disegnato girato dall'altra parte).
+  flipFor(st, agent) {
+    const auto = st.face ? st.face === 'left' : st.wall === 'R';
+    return agent.avatar?.flip === true ? !auto : auto;
+  }
+  blit(img, cx, y, flip) {
+    if (!flip) return this.ctx.drawImage(img, cx - Math.floor(img.width / 2), y);
+    const ctx = this.ctx;
+    ctx.save(); ctx.translate(cx, 0); ctx.scale(-1, 1);
+    ctx.drawImage(img, -Math.floor(img.width / 2) - (img.width % 2), y);
+    ctx.restore();
   }
 
   drawBubble(st, agent, t) {

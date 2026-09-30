@@ -7,7 +7,7 @@ import path from 'node:path';
 import { readJSON, writeFileAtomic, ensureDir, now } from './util.js';
 
 export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table'];
-export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade'];
+export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade', 'chesstable'];
 const LOOK_FIELDS = ['skin', 'hair', 'eyes', 'shirt', 'accColor', 'hairStyle', 'outfit', 'facial', 'accessory'];
 
 export class OfficeStore {
@@ -148,7 +148,9 @@ precedente resta salvata (l'utente può annullare con un clic).
   - rug { x, y, w, d } · plant { x, y, size } · tallplant { x, y, size } · floorlamp { x, y } · crates { x, y } ·
     sideboard { x, y } · bench { x, y }
   - angolo relax: coffee { x, y } (bancone con macchinetta del caffè) · watercooler { x, y } · sofa { x, y, w, rot: 0|1, color } ·
-    armchair { x, y, rot, color } · coffeetable { x, y } · arcade { x, y, color }
+    armchair { x, y, rot, color } · coffeetable { x, y } · arcade { x, y, color } · chesstable { x, y } (scacchiera)
+    rot = lato dello schienale: 0 verso la parete destra, 1 verso la sinistra, 2 e 3 verso chi guarda. Divano e poltrone
+    vanno rivolti verso il tavolino, non contro il muro. Chi è libero va a sedersi lì da solo (pause: caffè, telefono, scacchi).
 - Evita sovrapposizioni: lascia almeno mezza casella fra i mobili; niente fuori dalla stanza.
 
 ## agents-look.json — l'aspetto dei personaggi

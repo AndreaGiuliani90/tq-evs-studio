@@ -731,3 +731,25 @@ test('generatore senza credito: messaggio chiaro, "Riprova" anche senza branch, 
   assert.equal(gm.length, 1);
   assert.equal(gm[0].model, 'gemini-3.1-flash-image');
 });
+
+test('Regia che non risponde: niente piano "a indovinare", si chiede e "Riprova" ripianifica; personaggi solo per chi è nominato', async () => {
+  const root = makeFixtureRepo();
+  let n = 0;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') { n++; if (n === 1) return { ok: false, error: 'claude è uscito con codice 143' }; return planJSON([{ key: 'v', agent: 'art', kind: 'avatars', title: 'Sprite dello Stratega', instructions: 'Disegna lo Stratega', dependsOn: [] }]); }
+    return { text: '{}' };
+  });
+  const reg = registryWith(prov);
+  reg.register({ id: 'gemini-image', kind: 'image', model: 'gemini-3.1-flash-image', label: 'g', available: async () => ({ ok: true }), generate: async () => ({ ok: true, png: Buffer.from('X') }) });
+  const s = await studioFor(root, reg);
+  const req = await s.orch.handleUserMessage('Lo Stratega ha ancora la vecchia sprite da aggiornare. Cosetta disegnagli una sprite.');
+  await waitFor(() => req.status === 'NEEDS_USER', 5000, 'domanda');
+  assert.ok(req.planFailed);
+  assert.equal(req.taskIds.length, 0, 'nessun task avviato');
+  assert.match(s.store.data.chat.at(-1).text, /Non sono riuscita a pianificare/);
+  s.orch.retry(req.id);
+  await waitFor(() => req.quotePending, 5000, 'preventivo');
+  assert.equal(req.quote.usd, Math.round(13 * 0.067 * 100) / 100, 'un solo personaggio: lo Stratega');
+  assert.deepEqual(s.orch.avatarTargets('Cosetta, fai nuovi sprite per te e tutti i colleghi').length, s.orch.avatarTargets('tutti').length);
+  assert.deepEqual(s.orch.avatarTargets('ridisegna Tizo e Tizia, Cosetta').map((a) => a.id).sort(), ['dev', 'qa']);
+});

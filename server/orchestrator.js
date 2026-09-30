@@ -95,13 +95,25 @@ export class Orchestrator {
     return out;
   }
 
+  // per chi vanno fatti i personaggi: gli agenti nominati nella richiesta, oppure tutti ("tutti", "la squadra"…)
+  avatarTargets(text, artistId = 'art') {
+    const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director'));
+    const t = String(text || '').toLowerCase();
+    if (/\btutt[ieao]\b|squadra|colleghi|ogni agente|all agents|everyone/.test(t)) return team;
+    const re = (w) => new RegExp(`(^|[^\\p{L}])${w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'u');
+    const named = team.filter((a) => re(a.name).test(t) || re(a.id).test(t) || (a.role && a.role.length > 5 && re(a.role.split(/[\s/]/)[0]).test(t) && a.id !== 'director'));
+    const self = /per te\b|te stess|anche te|la tua|il tuo/.test(t);
+    const out = named.filter((a) => a.id !== artistId || self);
+    return out.length ? out : team;
+  }
+
   imageNeeds(req, plan) {
     const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
     const mode = req.avatarFrames || this.config.avatarFrames || 'full';
     const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
     let nFull = 0, nLight = 0, agent = null, avatars = false, paint = false;
     for (const pt of plan.tasks) {
-      if (pt.kind === 'avatars' && !avatars) { avatars = true; agent ??= this.agents.get(pt.agent); nFull += team * count(mode); nLight += team * count('light'); }
+      if (pt.kind === 'avatars' && !avatars) { avatars = true; agent ??= this.agents.get(pt.agent); const n = this.avatarTargets(`${req.originalText || ''} ${req.text} ${pt.instructions || ''}`, pt.agent).length; nFull += n * count(mode); nLight += n * count('light'); }
       else if (pt.kind === 'art') { agent ??= this.agents.get(pt.agent); nFull += 6; nLight += 6; }
       else if (pt.kind === 'office_paint') { agent ??= this.agents.get(pt.agent); nFull += 1; nLight += 1; paint = true; }
     }
@@ -344,7 +356,7 @@ export class Orchestrator {
       else if (pid === 'anthropic') { metered.push(agent.name); base += this.catalog.text?.anthropic?.models?.[0]?.usdPerTask ?? 0.4; }
       if (pt.kind === 'avatars' && !avatarsSeen) {
         avatarsSeen = true; imgAgent ??= agent;
-        const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
+        const team = this.avatarTargets(`${req.originalText || ''} ${req.text} ${pt.instructions || ''}`, pt.agent).length;
         nFull += team * count(mode); nLight += team * count('light');
         lines.push(`• ${agent.name}: personaggi animati, fino a ${team} agenti × ${count(mode)} fotogrammi = **${team * count(mode)} immagini**${mode !== 'light' ? ` (versione leggera: ${team * count('light')})` : ''}`);
       } else if (pt.kind === 'office_paint') {
@@ -410,11 +422,16 @@ export class Orchestrator {
     const provider = await this.providers.resolve(director.provider);
     let plan = null, raw = null;
     if (provider.id !== 'mock') {
-      const r = await provider.run({ agent: director, system: director.systemInstructions, prompt: directorPlanPrompt({ req, agents, chat, projectBrief, running: Object.values(this.S.requests).filter((x) => x.id !== req.id && ['RUNNING', 'PLANNING'].includes(x.status)) }), images: (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path), addDirs: req.attachments?.length ? [this.uploadsDir] : [], cwd: this.projectRoot, mode: 'plan', model: director.model, timeoutMs: 8 * 60 * 1000, onEvent: (e) => this.onProviderEvent('director', null, e) });
+      const r = await provider.run({ agent: director, system: director.systemInstructions, prompt: directorPlanPrompt({ req, agents, chat, projectBrief, running: Object.values(this.S.requests).filter((x) => x.id !== req.id && ['RUNNING', 'PLANNING'].includes(x.status)) }), images: (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path), addDirs: req.attachments?.length ? [this.uploadsDir] : [], cwd: this.projectRoot, mode: 'plan', model: director.model, maxTurns: this.config.directorMaxTurns ?? 10, timeoutMs: (this.config.directorTimeoutMin ?? 6) * 60 * 1000, onEvent: (e) => this.onProviderEvent('director', null, e) });
       raw = r;
       if (r.ok) plan = extractJSON(r.text) || extractJSON(r.allText);
       if (!plan && r.ok && r.text) plan = { reply: r.text, tasks: [] };
-      if (!r.ok) this.events.emit('studio.warning', { text: `Regia: provider ${provider.id} non ha risposto (${truncate(r.error, 200)}), uso il piano semplice` });
+      // l'AI c'è ma non ha risposto (tempo scaduto, limiti…): meglio chiedere che eseguire un piano a indovinare
+      if (!r.ok && r.code !== 'USE_HEURISTIC') {
+        this.events.emit('studio.warning', { text: `Regia: ${provider.id} non ha risposto (${truncate(r.error, 200)})` });
+        req.planFailed = true;
+        return { reply: `Non sono riuscita a pianificare la richiesta (${truncate(r.error, 160)}). Non ho avviato niente e non hai speso nulla: premi "Riprova" oppure riscrivimi la richiesta, magari divisa in pezzi più piccoli.`, needsUser: true, tasks: [] };
+      }
     }
     if (!plan) plan = this.heuristicPlan(req.text);
     return this.normalizePlan(plan, raw);
@@ -780,11 +797,12 @@ magenta pieno #FF00FF, immagine quadrata, figura centrata con spazio intorno (ne
 Ogni personaggio deve far capire il suo ruolo (oggetti, vestiti) e avere personalità (alla Ron Gilbert). Rispetta la
 richiesta dell'utente${refs.length ? ' e le immagini di riferimento allegate' : ''}.
 Fotogrammi che lo Studio genererà per ognuno: ${frameList.map((f) => `${f.anim}-${f.i + 1}`).join(', ')}.
-${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente salva in questa cartella <id>-<fotogramma>.png (es. dev-idle-1.png, dev-typing-1.png …).\n` : ''}Nel JSON finale metti "avatars": [{"agent": "<id>", "prompt": "descrizione del personaggio in inglese, dettagliata"}], uno per ogni agente da ridisegnare (tutti, se l'utente non dice diversamente), e "style": "descrizione dello stile comune in inglese".` });
+${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente salva in questa cartella <id>-<fotogramma>.png (es. dev-idle-1.png, dev-typing-1.png …).\n` : ''}Nel JSON finale metti "avatars": [{"agent": "<id>", "prompt": "descrizione del personaggio in inglese, dettagliata"}], uno per ogni agente da ridisegnare: SOLO questi → ${[...this.avatarTargets(`${req.originalText || ''} ${req.text} ${t.instructions || ''}`, agent.id)].map((a) => a.id).join(', ')}, e "style": "descrizione dello stile comune in inglese".` });
     const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: dir, mode: 'work', model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
     const j = extractJSON(r.text) || extractJSON(r.allText) || {};
-    const list = (Array.isArray(j.avatars) ? j.avatars : []).filter((x) => this.agents.get(x.agent));
+    const targets = new Set(this.avatarTargets(`${req.originalText || ''} ${req.text} ${t.instructions || ''}`, agent.id).map((a) => a.id));
+    const list = (Array.isArray(j.avatars) ? j.avatars : []).filter((x) => this.agents.get(x.agent) && targets.has(x.agent));
     if (!list.length) return { ok: false, error: 'Cosetta non ha indicato nessun personaggio da ridisegnare (campo "avatars" vuoto)' };
     if (!imgOk && !selfGen) return { ok: false, blocked: true, error: 'Per generare i personaggi serve un generatore di immagini: metti OPENAI_API_KEY o GEMINI_API_KEY nel file .env (o fai lavorare Cosetta con Codex).' };
     this.office?.snapshot(this.agents);   // "Annulla ultimo arredo" torna ai personaggi di prima
@@ -853,7 +871,8 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
     const wish = req.originalText ? `${req.originalText}\n${req.text}` : req.text;
     const prompt = `Repaint the FIRST image (an isometric blockout of an office, pixel-art placeholder) as a finished, high-quality illustration.
 KEEP EXACTLY: the camera angle, the room shape and size, the position of the two walls, every window, desk, chair, shelf, rug, plant, sofa, coffee counter and piece of furniture — same places, same sizes, same count. The picture will be used as a background and animated characters will be placed on the chairs, so the layout must match the blockout precisely.
-Do NOT add people, characters or animals. Do NOT add any text or letters. Keep the plain dark background outside the room.
+Do NOT add people, characters or animals. KEEP the existing wall signs exactly, including the banner that reads "PRO LOCO" (same letters) and the green chalkboard; do not add any other text. Keep the plain dark background outside the room.
+The blockout is ONLY a guide for geometry: restyle it strongly — materials, lighting, shading, detail and atmosphere must follow the requested style (and the style reference images, if any), not the blocky placeholder look. The windows show a continuous landscape of an Italian mountain village (Abruzzo, Gran Sasso mountains, stone houses with terracotta roofs, a bell tower).
 ${refs.length ? 'Match the style, rendering quality, resolution and lighting of the other reference image(s).\n' : ''}What the user wants (may be in Italian): ${clip(wish, 1500)}`;
     this.office.snapshot(this.agents);   // per "Annulla"
     this.agents.activity(agent.id, `ridipingo l'ufficio (${choice.label})`, 'agent.editing');
@@ -1095,6 +1114,11 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
     if (choice) {
       if (!(req.quote?.options || []).some((o) => o.id === choice)) throw new Error(`generatore non disponibile: ${choice}`);
       req.imageChoice = choice;
+    }
+    if (req.planFailed && !req.taskIds.length) {
+      this.setRequest(req, { status: 'PLANNING', planFailed: false, question: null, answeredBy: req.id });
+      this.plan(req).catch((e) => this.fail(req, e));
+      return req;
     }
     this.setRequest(req, { status: 'RUNNING', escalation: null });
     for (const t of this.tasksOf(reqId)) {

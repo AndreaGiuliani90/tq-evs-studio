@@ -31,6 +31,7 @@ async function boot() {
   S.office = new Office($('#office'), $('#office-overlay'), { onSelect: (id) => openDrawer(id), onBoard: () => openModal('costs') });
   S.view = new OfficeView($('#office-wrap'), $('#office-stage'), S.office);
   S.office.view = S.view;
+  setTimeout(() => $('#office-wrap').classList.add('hint-off'), 8000);
   S.office.onFocusChange = (id) => { S.focus = id; renderFocus(); };
   $('#paint-toggle').onclick = () => { S.office.setPaint(S.office.paint, { use: !S.office.painted }); try { localStorage.setItem('studio:paint', S.office.painted ? '1' : '0'); } catch { /* ok */ } loadOffice(); };
   try { if (localStorage.getItem('studio:paint') === '0') S.office.usePaint = false; } catch { /* ok */ }
@@ -178,7 +179,7 @@ function requestActions(req) {
   if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
   const failed = Object.values(S.tasks).some((t) => t.requestId === req.id && ['FAILED', 'CANCELLED'].includes(t.status) && !t.superseded);
-  if (['NEEDS_USER', 'FAILED'].includes(req.status) && !req.quotePending && (req.worktree || failed)) {
+  if (['NEEDS_USER', 'FAILED'].includes(req.status) && !req.quotePending && (req.worktree || failed || req.planFailed)) {
     b.push(`<button class="btn sm primary" data-act="retry" data-req="${req.id}">Riprova</button>`);
     const alt = (req.quote?.options || []).filter((o) => !o.plan && o.id !== req.imageChoice);
     if (alt.length && failed) b.push(`<span class="quote-alt">Riprova con <select data-retry-choice="${req.id}">${alt.map((o) => `<option value="${esc(o.id)}">${esc(o.label)} — ≈ $${Number(o.usd).toFixed(2)}</option>`).join('')}</select> <button class="btn sm" data-act="retry-choice" data-req="${req.id}">Riprova così</button></span>`);
@@ -203,7 +204,7 @@ function msgHTML(m) {
   const a = m.agentId ? S.agents[m.agentId] : null;
   const who = m.role === 'user' ? 'Tu' : a ? a.name : 'Studio';
   const chips = m.kind === 'plan' || m.kind === 'report' || m.kind === 'escalation' ? `<div class="chips" data-req-chips="${esc(m.requestId)}">${taskChips(m.requestId)}</div>` : '';
-  const actions = m.requestId && ['report', 'escalation', 'plan', 'quote'].includes(m.kind) ? `<div class="actions" data-req-actions="${esc(m.requestId)}">${requestActions(S.requests[m.requestId])}</div>` : '';
+  const actions = m.requestId && ['report', 'escalation', 'plan', 'quote', 'question'].includes(m.kind) ? `<div class="actions" data-req-actions="${esc(m.requestId)}">${requestActions(S.requests[m.requestId])}</div>` : '';
   return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}" data-id="${esc(m.id)}">
     ${m.role !== 'user' && a ? `<div class="mav">${avatarHTML(a, { size: 30 })}</div>` : ''}
     <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.requestId ? ' · ' + esc(m.requestId) : ''}</span></div>
@@ -383,6 +384,7 @@ function renderDrawer() {
       </fieldset>
       <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'codex', 'gemini', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
       <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="Claude: sonnet, opus, haiku · Codex/Gemini: vuoto = predefinito"></label>
+      <label class="check"><input type="checkbox" name="av_flip" ${a.avatar?.flip ? 'checked' : ''}> Specchia il personaggio nell'ufficio (se guarda dalla parte sbagliata rispetto alla scrivania)</label>
       <label>Provider immagini (se l'agente genera immagini) <select name="imageProvider">${[['auto', 'auto (il primo configurato)'], ['openai-image', 'GPT Image (qualità dal file .env)'], ['openai-image:medium', 'GPT Image · qualità media (più economica)'], ['gemini-image', 'Nano Banana (modello dal file .env)'], ['gemini-image:gemini-3.1-flash-image', 'Nano Banana 2'], ['gemini-image:gemini-3-pro-image', 'Nano Banana Pro'], ['plan', 'Codex col piano ChatGPT (sperimentale, solo se l\'agente usa Codex)']].map(([v, l]) => `<option value="${v}" ${(a.imageProvider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Tipi di task gestiti (separati da virgola) <input name="kinds" value="${esc((a.kinds || []).join(', '))}"></label>
       <label>Capacità (separate da virgola) <input name="capabilities" value="${esc((a.capabilities || []).join(', '))}"></label>
@@ -401,6 +403,7 @@ function renderDrawer() {
     const avatar = { ...(a.avatar || {}), type: f.get('av_type'), emoji: f.get('av_emoji'), color: f.get('av_color'), style: f.get('av_style'),
       character: { skin: f.get('ch_skin'), hair: f.get('ch_hair'), shirt: f.get('ch_shirt'), accColor: f.get('ch_accColor'), hairStyle: f.get('ch_hairStyle'), accessory: f.get('ch_accessory'), eyes: f.get('ch_eyes'), outfit: f.get('ch_outfit'), facial: f.get('ch_facial') } };
     const anims = parse('av_anims'); if (anims) avatar.animations = anims; else delete avatar.animations;
+    avatar.flip = f.get('av_flip') === 'on';
     if (avatar.sprite) { avatar.sprite = { ...avatar.sprite, frameWidth: Number(f.get('sp_w')), frameHeight: Number(f.get('sp_h')), animations: parse('sp_anims') || avatar.sprite.animations || {} }; }
     const patch = { name: f.get('name'), role: f.get('role'), description: f.get('description'), avatar, provider: f.get('provider'), model: f.get('model'), kinds: list('kinds'), capabilities: list('capabilities'), contextDocs: list('contextDocs'), enabled: f.get('enabled') === 'on', visible: f.get('visible') === 'on', systemInstructions: f.get('systemInstructions') };
     if (f.get('imageProvider')) patch.imageProvider = f.get('imageProvider');
