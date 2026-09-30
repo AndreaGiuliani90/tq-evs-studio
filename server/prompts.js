@@ -1,5 +1,5 @@
 // Testi dei prompt. Tenuti qui (e non sparsi nel codice) per poterli ritoccare facilmente.
-import { truncate } from './util.js';
+import { truncate, clip } from './util.js';
 
 export const TASK_KINDS = {
   analyze: 'analisi senza modifiche (legge il codice, propone)',
@@ -18,7 +18,7 @@ export const TASK_KINDS = {
 };
 
 export function rosterText(agents) {
-  return agents.filter((a) => a.enabled !== false && a.id !== 'director')
+  return agents.filter((a) => a.enabled !== false && a.id !== 'director' && a.id !== 'strategist')
     .map((a) => `- id "${a.id}" — ${a.name}, ${a.role}. Tipi di task: ${(a.kinds || []).join(', ')}. Capacità: ${(a.capabilities || []).join(', ')}. ${a.description}`)
     .join('\n');
 }
@@ -151,4 +151,33 @@ Italiano, asciutto, massimo 8 righe: cosa è cambiato nel gioco (in termini di g
 Fatti:
 ${truncate(JSON.stringify(facts, null, 1), 9000)}
 Rispondi solo con il testo del rapporto (niente JSON).`;
+}
+
+// Lo Stratega: per ogni task sceglie provider+modello fra le opzioni disponibili e, se servono immagini, il generatore
+export function strategistPrompt({ req, tasks, images = [], need = {} }) {
+  const opt = (o) => `  - {"provider": "${o.provider}", "model": "${o.model}"} · qualità ${o.tier}${o.speed ? `, velocità ${o.speed}` : ''} · ${o.included ? 'INCLUSO nel piano' : `A PAGAMENTO ≈ $${o.usd} a task`}${o.note ? ` — ${o.note}` : ''}`;
+  const img = images.length ? `
+## Immagini
+Servono circa ${need.nFull} immagini${need.avatars && need.nLight < need.nFull ? ` (${need.nLight} nella versione leggera)` : ''}${need.avatars ? `: personaggi animati dello Studio, ${need.team} agenti × ${need.perAgent} fotogrammi` : ''}.
+Generatori (id → prezzo per immagine):
+${images.map((o) => `  - "${o.id}": ${o.label} · ${o.plan ? 'INCLUSO nel piano ChatGPT, sperimentale (può non reggere tante immagini, meno coerenza fra fotogrammi)' : `≈ $${o.price.toFixed(3)} → ≈ $${(o.price * need.nFull).toFixed(2)} in tutto`}`).join('\n')}
+Scegli il miglior rapporto qualità/prezzo per QUESTO lavoro: i personaggi dello Studio non richiedono la massima qualità; asset importanti del gioco sì. Se scegli un generatore a pagamento l'utente vedrà il preventivo e deciderà lui: nel campo "advice" dagli il tuo consiglio (quale opzione, versione completa o leggera, perché).
+` : '';
+  return `# Valutazione strategica di una richiesta
+
+Richiesta dell'utente:
+${clip(req.originalText ? `${req.originalText}\n(risposta dell'utente: ${req.text})` : req.text, 2000)}
+
+La Regia l'ha divisa in task. Per OGNUNO scegli UNA delle opzioni elencate (provider + modello, copiati esattamente), valutando quanto il task è importante e delicato, che accuratezza serve, la velocità e il costo:
+- le opzioni INCLUSE non costano nulla in più (consumano solo i limiti d'uso degli abbonamenti): preferiscile sempre;
+- qualità "alta" solo dove fa davvero la differenza (codice di gioco complesso, correzioni delicate, integrazioni, scelte di design importanti); "media" per il lavoro normale; "bassa" per compiti semplici (testi brevi, controlli, arredo, art direction);
+- opzioni A PAGAMENTO solo se portano un beneficio chiaro: in quel caso l'utente vedrà un preventivo e deciderà.
+
+${tasks.map((t) => `### ${t.key} — ${t.agentName} · ${t.kind} · ${t.title}
+${clip(t.instructions || '', 400)}
+Opzioni:
+${t.options.map(opt).join('\n')}`).join('\n\n')}
+${img}
+Rispondi SOLO con un blocco JSON:
+{"summary": "1-2 frasi: come hai distribuito i modelli e perché", "tasks": [{"key": "…", "provider": "…", "model": "…", "why": "mezza frase"}]${images.length ? ', "images": {"choice": "<id del generatore>", "why": "mezza frase"}' : ''}, "advice": "${images.length ? 'il tuo consiglio sul preventivo se ci sono spese, altrimenti vuoto' : ''}"}`;
 }

@@ -38,7 +38,7 @@ test('agenti: caricati dai predefiniti, rinomina persistente dopo il riavvio', a
   const root = makeFixtureRepo();
   const s1 = await studioFor(root, registryWith(studioProvider()));
   const ids = s1.agents.list().map((a) => a.id).sort();
-  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'office', 'puzzle', 'qa']);
+  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'office', 'puzzle', 'qa', 'strategist']);
   assert.equal(s1.agents.get('dev').name, 'Tizo');
   s1.agents.update('dev', { name: 'Pippo', role: 'Capo Codice', avatar: { emoji: '🦊' } });
   s1.store.flush();
@@ -201,7 +201,7 @@ test('server HTTP: stato, chat, modifica agente e stream di eventi SSE', async (
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const st = await (await fetch(`${base}/api/state`)).json();
-    assert.equal(st.agents.filter((a) => a.visible).length, 9);
+    assert.equal(st.agents.filter((a) => a.visible).length, 10);
     const page = await (await fetch(`${base}/`)).text();
     assert.match(page, /GAME STUDIO/);
     // SSE
@@ -586,6 +586,10 @@ test('preventivo: prima dei lavori a pagamento la Regia mostra il costo e aspett
   assert.equal(r4.imageChoice, 'gemini-image:gemini-3-pro-image');
   assert.equal(calls.length, 6 + 13 + 6);
   assert.ok(calls.slice(-6).every((c) => c.model === 'gemini-3-pro-image'));
+  // la lavagna: 19 immagini Nano Banana 2 + 6 Pro
+  const gi = s.orch.costs.summary().providers.find((p) => p.id === 'gemini-image');
+  assert.equal(gi.images, 25);
+  assert.equal(gi.usd, Math.round((19 * 0.067 + 6 * 0.134) * 100) / 100);
 });
 
 test('piano: più task "avatars" diventano uno solo e sparisce il task di codice per animarli', async () => {
@@ -598,4 +602,59 @@ test('piano: più task "avatars" diventano uno solo e sparisce il task di codice
   ] });
   assert.equal(p.tasks.length, 1);
   assert.match(p.tasks[0].instructions, /primi 5[\s\S]*altri 4/);
+});
+
+test('Stratega: sceglie il modello per ogni task; se tutto è incluso nel piano parte senza chiedere; la lavagna conta', async () => {
+  const root = makeFixtureRepo();
+  const prov = studioProvider();
+  prov.id = 'claude-code';   // così lo Stratega vede il catalogo di Claude Code (opus / sonnet / haiku)
+  const inner = prov.handler;
+  const stratPrompts = [];
+  prov.handler = async (o, n) => {
+    if (o.agent.id === 'strategist') {
+      stratPrompts.push(o.prompt);
+      const keys = [...o.prompt.matchAll(/^### (\S+) — [^·]+· (\w+)/gm)].map((m) => ({ key: m[1], kind: m[2] }));
+      return { text: '```json\n' + JSON.stringify({ summary: 'Codice delicato su opus, test su haiku.', tasks: keys.map((k) => ({ key: k.key, provider: 'claude-code', model: k.kind === 'implement' ? 'opus' : 'haiku', why: 'x' })), advice: '' }) + '\n```' };
+    }
+    return inner(o, n);
+  };
+  const reg = registryWith(prov);
+  const s = await studioFor(root, reg, { strategist: 'ai' });
+  const req = await s.orch.handleUserMessage('Aggiungi una feature di prova');
+  await waitFor(() => req.status === 'DONE', 15000, 'DONE');
+  assert.equal(stratPrompts.length, 1);
+  assert.match(stratPrompts[0], /"model": "opus"[\s\S]*INCLUSO/);
+  assert.ok(!s.store.data.chat.some((m) => m.kind === 'quote'), 'tutto incluso: nessun preventivo');
+  const devCall = prov.calls.find((c) => c.agent.id === 'dev');
+  assert.equal(devCall.model, 'opus');
+  assert.ok(prov.calls.filter((c) => c.agent.id === 'qa').every((c) => c.model === 'haiku'), 'anche il ritest usa la scelta per i test');
+  assert.equal(prov.calls.find((c) => c.agent.id === 'strategist').model, 'haiku', 'lo Stratega usa un modello veloce');
+  const tasks = s.orch.tasksOf(req.id);
+  assert.equal(tasks.find((t) => t.kind === 'implement').usedModel, 'claude-code · opus');
+  assert.ok(s.store.data.chat.some((m) => m.kind === 'plan' && /claude-code · opus/.test(m.text) && /Codice delicato/.test(m.text)));
+  // lavagna: le chiamate incluse nel piano si contano, ma non costano
+  const c = s.orch.costs.summary();
+  const cc = c.providers.find((p) => p.id === 'claude-code');
+  assert.ok(cc.included && cc.runs >= 4 && cc.usd === 0);
+  assert.equal(c.totalUsd, 0);
+  assert.ok(s.office.get().decor.some((d) => d.type === 'costboard'), 'la lavagna è nell\'ufficio');
+});
+
+test('Stratega a regole: codice su qualità alta, arredo su bassa; costi API registrati nei subtotali', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  // catalogo finto con due livelli per il provider di test
+  s.orch.catalog.text.scripted = { label: 'finto', included: true, models: [{ id: 'grande', tier: 'alta' }, { id: 'piccolo', tier: 'bassa' }] };
+  const st = await s.orch.strategize({ id: 'R-x', text: 'x' }, { tasks: [{ key: 'a', agent: 'dev', kind: 'implement', title: 't' }, { key: 'b', agent: 'office', kind: 'office', title: 't' }] });
+  assert.equal(st.tasks.a.model, 'grande');
+  assert.equal(st.tasks.b.model, 'piccolo');
+  // spese a consumo: immagini e API Anthropic finiscono nei subtotali
+  s.orch.recordUsage({ id: 'openai-image', quality: 'high' }, 'image', { ok: true }, {});
+  s.orch.recordUsage({ id: 'anthropic' }, 'run', { ok: true, usage: { input_tokens: 1e6, output_tokens: 0 } }, {});
+  const c = s.orch.costs.summary();
+  assert.equal(c.providers.find((p) => p.id === 'openai-image').usd, 0.21);
+  assert.equal(c.providers.find((p) => p.id === 'anthropic').usd, 3);
+  assert.equal(c.totalUsd, 3.21);
+  s.orch.costs.reset();
+  assert.equal(s.orch.costs.summary().totalUsd, 0);
 });

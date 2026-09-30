@@ -67,8 +67,8 @@ function skyFor(date) {
 
 // ── l'ufficio ──────────────────────────────────────────────────────────────────────────────────
 export class Office {
-  constructor(canvas, overlay, { onSelect } = {}) {
-    this.canvas = canvas; this.overlay = overlay; this.onSelect = onSelect;
+  constructor(canvas, overlay, { onSelect, onBoard } = {}) {
+    this.canvas = canvas; this.overlay = overlay; this.onSelect = onSelect; this.onBoard = onBoard;
     canvas.width = LW; canvas.height = LH;
     this.ctx = canvas.getContext('2d');
     this.ctx.imageSmoothingEnabled = false;
@@ -83,6 +83,7 @@ export class Office {
   }
 
   setLayout(layout) { this.layout = layout; this.iso = makeIso(layout.room); this.staticLayer = null; this.placeLabels(); }
+  setCosts(c) { this.costs = c; this.staticLayer = null; this.placeLabels(); }
   setAgents(list) { for (const a of list) this.agents[a.id] = a; this.placeLabels(); }
   updateAgent(a) { this.agents[a.id] = a; this.updateLabel(a); }
 
@@ -143,6 +144,24 @@ export class Office {
       hit.onclick = () => this.onSelect?.(a.id);
       this.overlay.appendChild(hit);
     }
+    this.placeBoardHit();
+  }
+
+  placeBoardHit() {
+    const d = (this.layout?.decor || []).find((x) => x.type === 'costboard');
+    if (!d || !this.overlay || !this.wallRect) return;
+    const r = this.wallRect(d.wall, d.at + (d.w || 2.2) * 0.55, d.at + (d.w || 2.2), 58, 74);
+    const cx = r.pts.reduce((s, p) => s + p[0], 0) / r.pts.length, cy = r.pts.reduce((s, p) => s + p[1], 0) / r.pts.length;
+    const c = this.costs || { totalUsd: 0, providers: [] };
+    const SHORT = { 'openai-image': 'GPT', 'gemini-image': 'Nano', anthropic: 'API' };
+    const paid = (c.providers || []).filter((p) => !p.included && (p.usd > 0 || p.images > 0));
+    const sub = paid.length ? paid.slice(0, 3).map((p) => `${SHORT[p.id] || p.short} ${p.usd.toFixed(2)}`).join(' · ') : 'piano: incluso';
+    const b = document.createElement('button');
+    b.className = 'oboard'; b.title = 'Spese dello Studio: clic per i dettagli';
+    b.innerHTML = `<b>SPESE</b> $${Number(c.totalUsd || 0).toFixed(2)}<small>${escapeHTML(sub)}</small>`;
+    b.style.left = `${(cx / LW) * 100}%`; b.style.top = `${(cy / LH) * 100}%`;
+    b.onclick = () => this.onBoard?.();
+    this.overlay.appendChild(b);
   }
 
   updateLabel(a) {
@@ -401,6 +420,21 @@ export class Office {
       for (const [fx, fy, fw, fh, fc] of flyers) { x.fillStyle = fc; x.fillRect(fx, fy, fw, fh); x.fillStyle = '#c0392b'; x.fillRect(fx + Math.floor(fw / 2), fy, 1, 1); x.fillStyle = '#00000033'; for (let l = fy + 3; l < fy + fh - 1; l += 2) x.fillRect(fx + 1, l, fw - 2 - (l % 3), 1); }
       drawText(x, d.title || 'SAGRA', 5, 6, '#a0302a');
       const r = this.wallRect(d.wall, d.at, d.at + w, 46, 80);
+      mapFace(ctx, img, r.p0, r.pu, r.pv);
+    }
+    if (d.type === 'costboard') {
+      // la lavagna delle spese: totale + subtotali per provider a pagamento; gli abbonamenti = "PIANO"
+      const w = d.w || 2.2, TW = Math.round(w * 22), TH = 46;
+      const [img, x] = tela(TW, TH);
+      x.fillStyle = PAL.woodD; x.fillRect(0, 0, TW, TH);
+      x.fillStyle = '#2f4a3a'; x.fillRect(2, 2, TW - 4, TH - 6);
+      for (let i = 0; i < 30; i++) { x.fillStyle = '#3a5745'; x.fillRect(2 + Math.floor(rnd(i + 3) * (TW - 5)), 2 + Math.floor(rnd(i + 9) * (TH - 7)), 2, 1); }
+      x.fillStyle = PAL.woodT; x.fillRect(1, TH - 4, TW - 2, 2);
+      x.fillStyle = '#f2f2e8'; x.fillRect(5, TH - 5, 3, 1); x.fillStyle = '#e8a0a0'; x.fillRect(TW - 9, TH - 5, 3, 1);
+      // scritte di gesso decorative: le cifre vere sono nel cartellino sopra (leggibile a ogni scala)
+      drawText(x, 'SPESE', 4, 4, '#f3e27a');
+      for (let i = 0; i < 4; i++) { x.fillStyle = '#d8e8dc99'; x.fillRect(4, 13 + i * 7, 8 + Math.floor(rnd(i + 1) * 10), 1); x.fillRect(TW - 16, 13 + i * 7, 10, 1); }
+      const r = this.wallRect(d.wall, d.at, d.at + w, 38, 84);
       mapFace(ctx, img, r.p0, r.pu, r.pv);
     }
     if (d.type === 'map') {

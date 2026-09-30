@@ -7,7 +7,7 @@ import path from 'node:path';
 import { readJSON, writeFileAtomic, ensureDir, now } from './util.js';
 
 export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table'];
-export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench'];
+export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard'];
 const LOOK_FIELDS = ['skin', 'hair', 'eyes', 'shirt', 'accColor', 'hairStyle', 'outfit', 'facial', 'accessory'];
 
 export class OfficeStore {
@@ -22,7 +22,13 @@ export class OfficeStore {
   get() {
     const def = readJSON(this.defFile, {});
     const own = readJSON(this.file, null);
-    return own ? { ...def, ...own, room: { ...def.room, ...(own.room || {}) } } : def;
+    const o = own ? { ...def, ...own, room: { ...def.room, ...(own.room || {}) } } : def;
+    // la lavagna delle spese c'è sempre (anche negli uffici personalizzati prima che esistesse)
+    if (Array.isArray(o.decor) && !o.decor.some((d) => d.type === 'costboard')) {
+      const board = (def.decor || []).find((d) => d.type === 'costboard') || { type: 'costboard', wall: 'L', at: 7.1, w: 2.2 };
+      o.decor = [...o.decor.filter((d) => !(d.type === 'frame' && d.wall === board.wall && d.at >= board.at - 0.3 && d.at < board.at + (board.w || 2.2))), board];
+    }
+    return o;
   }
 
   validate(o) {
@@ -114,7 +120,7 @@ precedente resta salvata (l'utente può annullare con un clic).
   - \`spare: true\` = postazione libera per nuovi agenti.
 - \`decor\` — arredi. A parete ({ type, wall, at, w?, … }) oppure a pavimento ({ type, x, y, … }):
   - window { w } · banner { w, text (MAIUSCOLO, lettere A-Z 0-9) } · noticeboard { w, title } · map { w } · clock ·
-    lantern · bookcase { w, h } · shelf { w, z } · frame { w, z, h, picture: "borgo"|"foto"|"tq" }
+    lantern · costboard { w } (la lavagna delle spese: il contenuto lo scrive lo Studio) · bookcase { w, h } · shelf { w, z } · frame { w, z, h, picture: "borgo"|"foto"|"tq" }
   - rug { x, y, w, d } · plant { x, y, size } · tallplant { x, y, size } · floorlamp { x, y } · crates { x, y } ·
     sideboard { x, y } · bench { x, y }
 - Evita sovrapposizioni: lascia almeno mezza casella fra i mobili; niente fuori dalla stanza.

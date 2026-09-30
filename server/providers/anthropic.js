@@ -79,6 +79,7 @@ export class AnthropicProvider {
     const tools = Object.fromEntries(Object.entries({ ...FILE_TOOLS, ...extraTools }).filter(([, t]) => mode === 'work' || !t.write));
     const messages = [{ role: 'user', content: prompt }];
     const texts = [];
+    const usage = { input_tokens: 0, output_tokens: 0 };
     for (let it = 0; it < maxIterations; it++) {
       let res;
       try {
@@ -88,6 +89,7 @@ export class AnthropicProvider {
           body: JSON.stringify({ model: model || this.model, max_tokens: 8000, system, messages, tools: cwd ? Object.values(tools).map((t) => t.schema) : undefined }),
         });
         res = await r.json();
+        usage.input_tokens += res?.usage?.input_tokens || 0; usage.output_tokens += res?.usage?.output_tokens || 0;
         if (!r.ok) return { ok: false, error: `API ${r.status}: ${res?.error?.message || JSON.stringify(res).slice(0, 300)}`, durationMs: Date.now() - t0 };
       } catch (e) { return { ok: false, error: `rete: ${e.message}`, durationMs: Date.now() - t0 }; }
       messages.push({ role: 'assistant', content: res.content });
@@ -96,7 +98,7 @@ export class AnthropicProvider {
         if (c.type === 'text') { texts.push(c.text); onEvent({ type: 'text', text: c.text }); }
         if (c.type === 'tool_use') uses.push(c);
       }
-      if (res.stop_reason !== 'tool_use' || !uses.length) return { ok: true, text: texts[texts.length - 1] || '', allText: texts.join('\n\n'), durationMs: Date.now() - t0 };
+      if (res.stop_reason !== 'tool_use' || !uses.length) return { ok: true, usage, model: model || this.model, text: texts[texts.length - 1] || '', allText: texts.join('\n\n'), durationMs: Date.now() - t0 };
       const results = [];
       for (const u of uses) {
         onEvent({ type: 'tool', tool: u.name, input: u.input });
@@ -107,6 +109,6 @@ export class AnthropicProvider {
       }
       messages.push({ role: 'user', content: results });
     }
-    return { ok: false, error: 'troppi passaggi (limite iterazioni)', text: texts.join('\n\n'), durationMs: Date.now() - t0 };
+    return { ok: false, usage, error: 'troppi passaggi (limite iterazioni)', text: texts.join('\n\n'), durationMs: Date.now() - t0 };
   }
 }

@@ -11,7 +11,8 @@
   "chatContextMessages": 8,
   "studioTests": true,
   "avatarFrames": "full",
-  "quoteThresholdUsd": 1,
+  "quoteThresholdUsd": 0,
+  "strategist": "ai",
   "_prezzi": "Prezzi indicativi in dollari per immagine 1024x1024 (aggiornali se cambia il listino). Chiavi: openai-image:<qualità> oppure il nome del modello Gemini.",
   "imagePrices": { "openai-image:high": 0.21, "openai-image:medium": 0.053, "openai-image:low": 0.011, "gemini-3.1-flash-image": 0.067, "gemini-3-pro-image": 0.134 }
 }

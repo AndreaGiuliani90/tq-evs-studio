@@ -93,6 +93,7 @@ export function createServer(studio) {
     tasks: Object.values(store.data.tasks).sort((a, b) => a.id.localeCompare(b.id)).slice(-400),
     chat: store.data.chat.slice(-300),
     config: studio.config,
+    costs: orch.costs.summary(),
     lastSeq: events.seq,
     projectRoot,
   });
@@ -163,6 +164,8 @@ export function createServer(studio) {
     }],
     ['PUT', /^\/api\/memory\/([A-Z_]+)$/, async (m, b) => { knowledge.write(m[1], String(b.content ?? '')); return { ok: true }; }],
     ['GET', /^\/api\/git$/, async () => ({ available: await git.available(), status: await git.status(), commits: await git.recentCommits(15) })],
+    ['GET', /^\/api\/costs$/, async () => orch.costs.summary()],
+    ['POST', /^\/api\/costs\/reset$/, async () => orch.costs.reset()],
     ['GET', /^\/api\/office$/, async () => office.get()],
     ['PUT', /^\/api\/office$/, async (m, b) => { const errs = office.validate(b); if (errs.length) throw new Error(errs.join('; ')); office.snapshot(agents); office.save(b); return { ok: true }; }],
     ['POST', /^\/api\/office\/undo$/, async () => office.undo(agents)],

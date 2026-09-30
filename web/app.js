@@ -26,8 +26,8 @@ async function boot() {
   for (const a of st.agents) S.agents[a.id] = a;
   for (const r of st.requests) S.requests[r.id] = r;
   for (const t of st.tasks) S.tasks[t.id] = t;
-  S.chat = st.chat; S.config = st.config; S.lastSeq = st.lastSeq;
-  S.office = new Office($('#office'), $('#office-overlay'), { onSelect: (id) => openDrawer(id) });
+  S.chat = st.chat; S.config = st.config; S.lastSeq = st.lastSeq; S.costs = st.costs;
+  S.office = new Office($('#office'), $('#office-overlay'), { onSelect: (id) => openDrawer(id), onBoard: () => openModal('costs') });
   window.studioOffice = S.office;   // per le prove automatiche e per sperimentare dalla console
   await loadOffice();
   renderAll();
@@ -38,6 +38,7 @@ async function loadOffice() {
   const layout = await api('GET', '/api/office');
   $('#office-name').textContent = layout.name || '';
   S.office.setAgents(Object.values(S.agents));
+  S.office.costs = S.costs;
   S.office.setLayout(layout);
 }
 
@@ -67,6 +68,7 @@ function onEvent(e) {
   if (t === 'chat.message') { S.chat.push(e.message); appendChat(e.message); }
   if (t === 'studio.warning') toast(e.text, true);
   if (t === 'office.updated') loadOffice().catch(() => {});
+  if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
   if (!['agent.status', 'task.updated', 'agent.updated'].includes(t)) { S.log.unshift(e); if (S.log.length > 300) S.log.pop(); renderLog(); }
 }
 
@@ -426,6 +428,19 @@ async function showDiff(reqId) {
 }
 
 async function openModal(which) {
+  if (which === 'costs') {
+    const c = S.costs || { totalUsd: 0, providers: [] };
+    const paid = c.providers.filter((p) => !p.included), inc = c.providers.filter((p) => p.included);
+    const n = (p) => [p.images ? `${p.images} immagini` : '', p.runs ? `${p.runs} lavori` : ''].filter(Boolean).join(' · ');
+    modal(`<div id="costs-box"><h2>Spese dello Studio</h2><p class="muted">Dal ${new Date(c.since).toLocaleDateString('it-IT')}. Solo subtotali: quanto ha speso lo Studio finora.</p>
+      <table class="costs"><tbody>${paid.map((p) => `<tr><td>${esc(p.label)}</td><td class="muted">${n(p)}</td><td class="num">$${p.usd.toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Nessuna spesa a consumo finora.</td></tr>'}
+      <tr class="tot"><td><b>Totale speso</b></td><td></td><td class="num"><b>$${Number(c.totalUsd).toFixed(2)}</b></td></tr>
+      ${inc.map((p) => `<tr class="inc"><td>${esc(p.label)}</td><td class="muted">${n(p)}</td><td class="num">incluso</td></tr>`).join('')}</tbody></table>
+      <p class="muted">Gli importi delle API sono stime dai prezzi di listino (config/studio.default.json → imagePrices); il conto vero è sulle pagine di fatturazione di OpenAI e Google. Gli abbonamenti non costano extra: qui vedi solo quante volte li usiamo.</p>
+      <button class="btn sm danger" id="costs-reset">Azzera la lavagna</button></div>`);
+    $('#costs-reset').onclick = act(async () => { if (confirm('Azzerare i conteggi delle spese?')) { await api('POST', '/api/costs/reset'); } });
+    return;
+  }
   if (which === 'agents') {
     modal(`<h2>Gestione agenti</h2><p class="muted">Nomi, ruoli e avatar sono dati: cambiali quando vuoi. Lo Studio instrada il lavoro per capacità, non per nome.</p>
       <div class="agent-list">${Object.values(S.agents).map((a) => `<div class="agent-row">${avatarHTML(a, { size: 36 })}<div><b>${esc(a.name)}</b> <span class="muted">${esc(a.role)} · ${esc(a.id)}${a.visible === false ? ' · nascosto' : ''}${a.enabled === false ? ' · disattivo' : ''}</span></div><button class="btn sm" data-edit="${esc(a.id)}">Modifica</button></div>`).join('')}</div>
@@ -464,7 +479,8 @@ async function openModal(which) {
         <label>Giri massimi test → correzione → ritest <input name="maxFixLoops" type="number" min="1" max="8" value="${cfg.maxFixLoops}"></label>
         <label>Tempo massimo per task (minuti) <input name="taskTimeoutMin" type="number" min="1" value="${cfg.taskTimeoutMin}"></label>
         <label>Personaggi generati dall'AI: fotogrammi per agente <select name="avatarFrames"><option value="full" ${cfg.avatarFrames !== 'light' ? 'selected' : ''}>completi (13: tutte le animazioni)</option><option value="light" ${cfg.avatarFrames === 'light' ? 'selected' : ''}>leggeri (6: meno costo)</option></select></label>
-        <label>Chiedi un preventivo prima di lavori che costano più di $ <input type="number" name="quoteThresholdUsd" min="0" step="0.5" value="${esc(cfg.quoteThresholdUsd ?? 1)}" style="width:5em"> <span class="muted">(0 = sempre; scrivi "preventivo" nel messaggio per averlo comunque)</span></label>
+        <label>Stratega (sceglie i modelli per ogni task) <select name="strategist"><option value="ai" ${(cfg.strategist ?? 'ai') === 'ai' ? 'selected' : ''}>valuta con l'AI (consigliato)</option><option value="rules" ${cfg.strategist === 'rules' ? 'selected' : ''}>solo regole fisse (più veloce)</option></select></label>
+        <label>Chiedi il preventivo se la spesa extra supera $ <input type="number" name="quoteThresholdUsd" min="0" step="0.5" value="${esc(cfg.quoteThresholdUsd ?? 0)}" style="width:5em"> <span class="muted">(0 = per qualsiasi spesa extra; il lavoro incluso nel piano parte da solo; scrivi "preventivo" per averlo comunque)</span></label>
         <label class="check"><input type="checkbox" name="qaBrowser" ${cfg.qaBrowser ? 'checked' : ''}> il QA prova il gioco nel browser (Playwright)</label>
         <label class="check"><input type="checkbox" name="autoMerge" ${cfg.autoMerge ? 'checked' : ''}> unisci da solo quando i test passano</label>
         <label class="check"><input type="checkbox" name="directorProseReport" ${cfg.directorProseReport ? 'checked' : ''}> rapporto finale scritto dalla Regia</label>
@@ -474,7 +490,7 @@ async function openModal(which) {
       try { const r = await api('POST', `/api/providers/${b.dataset.imgtest}/test`, { prompt: 'pixel art, top-down view, a small Italian village square at night with a stone fountain and warm lanterns, detailed, cozy' }); $('#imgtest-out').insertAdjacentHTML('beforeend', `<a href="${esc(r.url)}" target="_blank"><img src="${esc(r.url)}" title="${esc(b.dataset.imgtest)}"></a>`); }
       finally { b.disabled = false; b.textContent = 'Prova'; }
     });
-    $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on', avatarFrames: f.get('avatarFrames'), quoteThresholdUsd: Number(f.get('quoteThresholdUsd') || 0) }); S.config = c; toast('Impostazioni salvate.'); });
+    $('#cfg').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); const c = await api('PUT', '/api/config', { maxTaskRetries: Number(f.get('maxTaskRetries')), maxFixLoops: Number(f.get('maxFixLoops')), taskTimeoutMin: Number(f.get('taskTimeoutMin')), qaBrowser: f.get('qaBrowser') === 'on', autoMerge: f.get('autoMerge') === 'on', directorProseReport: f.get('directorProseReport') === 'on', avatarFrames: f.get('avatarFrames'), quoteThresholdUsd: Number(f.get('quoteThresholdUsd') || 0), strategist: f.get('strategist') }); S.config = c; toast('Impostazioni salvate.'); });
   }
 }
 

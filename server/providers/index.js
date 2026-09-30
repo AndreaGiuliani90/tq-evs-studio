@@ -29,7 +29,15 @@ export class ProviderRegistry {
     this.autoOrder = ['claude-code', 'anthropic', 'mock'];
   }
 
-  register(p) { this.providers.set(p.id, p); return p; }
+  // ogni chiamata passa da qui: lo Studio conta le spese (onUsage) senza che i provider se ne occupino
+  register(p) {
+    if (!p.__usage) {
+      p.__usage = true;
+      if (typeof p.run === 'function') { const run = p.run.bind(p); p.run = async (o = {}) => { const r = await run(o); try { this.onUsage?.(p, 'run', r, o); } catch { /* il conteggio non deve mai rompere il lavoro */ } return r; }; }
+      if (typeof p.generate === 'function') { const gen = p.generate.bind(p); p.generate = async (o = {}) => { const r = await gen(o); try { if (r?.ok) this.onUsage?.(p, 'image', r, o); } catch { /* idem */ } return r; }; }
+    }
+    this.providers.set(p.id, p); return p;
+  }
 
   // provider immagini: quello scelto per l'agente, oppure "auto" = il primo configurato fra GPT Image e Nano Banana
   async resolveImage(id = 'auto') {

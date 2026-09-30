@@ -189,24 +189,6 @@
       "picture": "borgo"
     },
     {
-      "type": "frame",
-      "wall": "L",
-      "at": 7.3,
-      "w": 0.9,
-      "z": 60,
-      "h": 18,
-      "picture": "foto"
-    },
-    {
-      "type": "frame",
-      "wall": "L",
-      "at": 8.4,
-      "w": 0.8,
-      "z": 58,
-      "h": 16,
-      "picture": "tq"
-    },
-    {
       "type": "tallplant",
       "x": 0.9,
       "y": 0.9,
@@ -216,6 +198,12 @@
       "type": "floorlamp",
       "x": 11.2,
       "y": 12.5
+    },
+    {
+      "type": "costboard",
+      "wall": "L",
+      "at": 7.1,
+      "w": 2.2
     }
   ]
 }

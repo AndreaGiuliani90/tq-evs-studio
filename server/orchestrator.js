@@ -6,8 +6,19 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic } from './util.js';
-import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, TASK_KINDS } from './prompts.js';
+import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic, readJSON } from './util.js';
+import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, TASK_KINDS } from './prompts.js';
+import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
+
+// qualità di partenza per tipo di task (regole dello Stratega quando non c'è un'AI che valuta)
+const KIND_TIER = { implement: 'alta', fix: 'alta', integrate: 'alta', analyze: 'media', test: 'media', narrative: 'media', lore: 'media', puzzle: 'media', level: 'media', art: 'media', audio: 'media', studio_ui: 'media', office: 'bassa', avatars: 'bassa' };
+const TIERS = ['alta', 'media', 'bassa'];
+function pickByTier(options, tier) {
+  const inc = options.filter((o) => o.included);
+  const pool = inc.length ? inc : options;
+  const want = TIERS.indexOf(tier);
+  return [...pool].sort((a, b) => Math.abs(TIERS.indexOf(a.tier) - want) - Math.abs(TIERS.indexOf(b.tier) - want) || TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier))[0];
+}
 
 const TERMINAL = ['DONE', 'FAILED', 'CANCELLED'];
 const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle', 'lore', 'integrate'];
@@ -46,7 +57,100 @@ export class Orchestrator {
     this.qaRunner = qaRunner || ((args, cwd) => run(process.execPath, [this.harness, ...args], { cwd, timeoutMs: 15 * 60 * 1000 }));
     this.gitOk = null;
     this.idleTimers = new Map();
+    this.costs = new CostBook(store, events);
+    this.catalog = { text: { ...(readJSON(path.join(studioDir, 'config', 'models.default.json'), {}).text || {}), ...(readJSON(path.join(dataDir, 'models.json'), {}).text || {}) } };
+    providers.onUsage = (p, kind, r, o) => this.recordUsage(p, kind, r, o);
   }
+
+  // ─── Contabilità: ogni chiamata ai provider finisce nei subtotali della lavagna ─────────────────
+  recordUsage(p, kind, r, o) {
+    if (kind === 'image') return this.costs.add(p.id, { usd: this.imagePriceFor(p.id === 'openai-image' ? `openai-image:${o.quality || p.quality || 'high'}` : (o.model || p.model || '')), images: 1 });
+    if (p.id === 'mock' || ['PROVIDER_UNAVAILABLE', 'USE_HEURISTIC'].includes(r?.code)) return;
+    if (p.id === 'anthropic') {
+      const pr = this.catalog.text?.anthropic?.usdPerMTok || { input: 3, output: 15 };
+      const u = r?.usage || {};
+      return this.costs.add('anthropic', { usd: r?.costUsd ?? (((u.input_tokens || 0) * pr.input + (u.output_tokens || 0) * pr.output) / 1e6), runs: 1 });
+    }
+    this.costs.add(p.id, { runs: 1 });
+  }
+
+  // ─── Stratega: per ogni task sceglie provider e modello (qualità / velocità / costo) ───────────
+  // Opzioni di testo per un agente: se l'utente gli ha fissato un provider si sceglie solo il modello,
+  // altrimenti fra tutti i provider disponibili del catalogo.
+  async textOptions(agent) {
+    const out = [];
+    const locked = agent.provider && agent.provider !== 'auto';
+    for (const id of locked ? [agent.provider] : Object.keys(this.catalog.text)) {
+      const p = this.providers.get(id);
+      if (!p || !(await p.available()).ok) continue;
+      const c = this.catalog.text[id];
+      if (!c) { out.push({ provider: id, model: agent.model || '', tier: 'media', included: INCLUDED_PROVIDERS.includes(id), usd: 0, label: id }); continue; }
+      for (const m of c.models || []) out.push({ provider: id, model: m.id || '', tier: m.tier || 'media', speed: m.speed || '', note: m.note || '', included: !!c.included, usd: c.included ? 0 : (m.usdPerTask ?? 0.4), label: `${c.label}${m.id ? ` · ${m.id}` : ''}` });
+    }
+    if (!out.length) {
+      const p = await this.providers.resolve(agent.provider);
+      out.push({ provider: p.id, model: agent.model || '', tier: 'media', included: p.id !== 'anthropic', usd: p.id === 'anthropic' ? 0.4 : 0, label: p.label || p.id });
+    }
+    return out;
+  }
+
+  imageNeeds(req, plan) {
+    const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
+    const mode = req.avatarFrames || this.config.avatarFrames || 'full';
+    const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
+    let nFull = 0, nLight = 0, agent = null, avatars = false;
+    for (const pt of plan.tasks) {
+      if (pt.kind === 'avatars' && !avatars) { avatars = true; agent ??= this.agents.get(pt.agent); nFull += team * count(mode); nLight += team * count('light'); }
+      else if (pt.kind === 'art') { agent ??= this.agents.get(pt.agent); nFull += 6; nLight += 6; }
+    }
+    return { nFull, nLight, agent, avatars, team, mode, perAgent: count(mode), perAgentLight: count('light') };
+  }
+
+  async strategize(req, plan) {
+    const perTask = [];
+    for (const pt of plan.tasks) { const a = this.agents.get(pt.agent); if (a) perTask.push({ pt, agent: a, options: await this.textOptions(a) }); }
+    const need = this.imageNeeds(req, plan);
+    const imgOptions = need.agent ? await this.imageOptions(need.agent) : [];
+    // regole di base (valgono anche come riserva se l'AI non risponde)
+    const rules = { by: 'regole', tasks: {}, byKind: {}, images: null, summary: '', advice: '' };
+    for (const { pt, options } of perTask) { const tier = KIND_TIER[pt.kind] || 'media'; const o = pickByTier(options, tier); rules.tasks[pt.key] = { tier: o.tier, provider: o.provider, model: o.model, why: '' }; }
+    if (imgOptions.length) {
+      const pref = need.agent.imageProvider && need.agent.imageProvider !== 'auto' ? (await this.imageFor(need.agent, {}))?.id : null;
+      rules.images = { choice: pref || (imgOptions.find((o) => o.id === 'gemini-image:gemini-3.1-flash-image') || imgOptions.find((o) => !o.plan) || imgOptions[0]).id, why: '' };
+    }
+    let out = rules;
+    const strat = this.agents.get('strategist');
+    if ((this.config.strategist ?? 'ai') === 'ai' && strat && strat.enabled !== false) {
+      const sopts = await this.textOptions(strat);
+      const fast = pickByTier(sopts, 'bassa');
+      const provider = this.providers.get(fast.provider)?.run ? this.providers.get(fast.provider) : await this.providers.resolve(strat.provider);
+      if (provider.id !== 'mock') {
+        this.agents.setStatus('strategist', 'THINKING', { task: { id: req.id, title: `Valuto: ${clip(req.originalText || req.text, 60)}` }, text: 'scelgo i modelli e controllo i costi', semantic: 'agent.thinking' });
+        const r = await provider.run({ agent: strat, system: strat.systemInstructions, prompt: strategistPrompt({ req, tasks: perTask.map(({ pt, agent, options }) => ({ ...pt, agentName: agent.name, options })), images: imgOptions, need }), cwd: this.projectRoot, mode: 'plan', model: strat.model || fast.model, timeoutMs: 4 * 60 * 1000, onEvent: (e) => this.onProviderEvent('strategist', null, e) }).catch((e) => ({ ok: false, error: String(e) }));
+        const j = r.ok ? (extractJSON(r.text) || extractJSON(r.allText)) : null;
+        if (j) out = this.validateStrategy(j, perTask, imgOptions, rules);
+        else if (!r.ok) this.events.emit('studio.warning', { text: `Stratega: ${truncate(r.error, 200)} — uso le regole di base` });
+        this.agents.setStatus('strategist', 'IDLE', { task: null, text: out.by === 'stratega' ? 'valutazione fatta' : 'regole di base' });
+      }
+    }
+    for (const { pt } of perTask) out.byKind[pt.kind] ??= out.tasks[pt.key];
+    return out;
+  }
+
+  validateStrategy(j, perTask, imgOptions, rules) {
+    const out = { by: 'stratega', tasks: {}, byKind: {}, images: rules.images, summary: clip(String(j.summary || ''), 400), advice: clip(String(j.advice || ''), 600) };
+    const byKey = Object.fromEntries((Array.isArray(j.tasks) ? j.tasks : []).map((x) => [String(x.key), x]));
+    for (const { pt, options } of perTask) {
+      const x = byKey[pt.key];
+      const o = x && options.find((y) => y.provider === x.provider && (y.model || '') === (x.model || ''));
+      out.tasks[pt.key] = o ? { tier: o.tier, provider: o.provider, model: o.model, why: clip(String(x.why || ''), 160) } : rules.tasks[pt.key];
+    }
+    const ic = j.images?.choice;
+    if (ic && imgOptions.some((o) => o.id === ic)) out.images = { choice: ic, why: clip(String(j.images.why || ''), 200) };
+    return out;
+  }
+
+  modelLabel(s) { return s ? `${s.provider}${s.model ? ` · ${s.model}` : ''}` : ''; }
 
   get S() { return this.store.data; }
   get uploadsDir() { return path.join(this.dataDir, 'uploads'); }
@@ -136,6 +240,11 @@ export class Orchestrator {
       this.agents.setStatus('director', 'THINKING', { task: { id: req.id, title: `Pianifico: ${clip(req.text, 60)}` }, text: 'analizzo la richiesta', semantic: 'agent.thinking' });
       const plan = await this.directorPlan(req, director);
       req.plan = plan;
+      if (plan.tasks.length && !req.strategy) {
+        req.strategy = await this.strategize(req, plan).catch((e) => ({ by: 'errore', tasks: {}, byKind: {}, error: String(e?.message || e) }));
+        if (req.strategy.images?.choice && !req.imageChoice) req.imageChoice = req.strategy.images.choice;
+        this.store.save();
+      }
       if (plan.tasks.length && !req.quoteApproved) {
         const q = await this.quote(req, plan);
         req.quote = q;
@@ -172,10 +281,11 @@ export class Orchestrator {
         created.push({ pt, id });
       }
       for (const { pt, id } of created) {
-        this.createTask({ id, requestId: req.id, agentId: pt.agent, kind: pt.kind, title: pt.title, instructions: pt.instructions, dependsOn: (pt.dependsOn || []).map((k) => keyToId[k]).filter(Boolean) });
+        this.createTask({ id, requestId: req.id, agentId: pt.agent, kind: pt.kind, title: pt.title, instructions: pt.instructions, dependsOn: (pt.dependsOn || []).map((k) => keyToId[k]).filter(Boolean), strategy: req.strategy?.tasks?.[pt.key] || null });
       }
-      const lines = this.tasksOf(req.id).map((t) => `• ${this.agentName(t.agentId)} — ${t.title}${t.dependsOn.length ? ` (dopo ${t.dependsOn.map((d) => this.agentName(this.S.tasks[d]?.agentId)).join(', ')})` : ''}`);
-      this.chat('director', `${plan.reply || 'Ci penso io.'}\n\n${lines.join('\n')}`, { agentId: 'director', requestId: req.id, kind: 'plan', taskIds: req.taskIds });
+      const lines = this.tasksOf(req.id).map((t) => `• ${this.agentName(t.agentId)} — ${t.title}${t.strategy ? ` · _${this.modelLabel(t.strategy)}_` : ''}${t.dependsOn.length ? ` (dopo ${t.dependsOn.map((d) => this.agentName(this.S.tasks[d]?.agentId)).join(', ')})` : ''}`);
+      const sline = req.strategy?.summary && !req.quote?.ask ? `\n\n**${this.agentName('strategist')}:** ${req.strategy.summary}` : '';
+      this.chat('director', `${plan.reply || 'Ci penso io.'}\n\n${lines.join('\n')}${sline}`, { agentId: 'director', requestId: req.id, kind: 'plan', taskIds: req.taskIds });
       if (req.baseDirty) this.chat('system', 'Nota: nella cartella del gioco ci sono modifiche non salvate in un commit. Lo Studio lavora sull\'ultimo commit in una copia separata e non tocca i tuoi file.', { requestId: req.id });
       this.setRequest(req, { status: 'RUNNING' });
       this.agents.setStatus('director', 'WAITING', { task: { id: req.id, title: `Coordino ${req.id}` }, text: `${req.taskIds.length} task delegati`, semantic: 'agent.waiting' });
@@ -223,9 +333,10 @@ export class Orchestrator {
     const mode = req.avatarFrames || this.config.avatarFrames || 'full';
     for (const pt of plan.tasks) {
       const agent = this.agents.get(pt.agent); if (!agent) continue;
-      const prov = await this.providers.resolve(agent.provider);
-      if (INCLUDED[prov.id]) included.add(INCLUDED[prov.id]);
-      else if (prov.id === 'anthropic') { metered.push(agent.name); base += 0.3; }
+      const st = req.strategy?.tasks?.[pt.key];
+      const pid = st?.provider || (await this.providers.resolve(agent.provider)).id;
+      if (INCLUDED[pid]) included.add(INCLUDED[pid]);
+      else if (pid === 'anthropic') { metered.push(agent.name); base += this.catalog.text?.anthropic?.models?.[0]?.usdPerTask ?? 0.4; }
       if (pt.kind === 'avatars' && !avatarsSeen) {
         avatarsSeen = true; imgAgent ??= agent;
         const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
@@ -247,12 +358,16 @@ export class Orchestrator {
     const cur = options.find((o) => o.current);
     const usd = cur ? cur.usd : Math.round(base * 100) / 100, usdLight = cur ? cur.usdLight : null;
     const threshold = this.config.quoteThresholdUsd ?? 1;
-    const ask = explicit || usd >= threshold;
+    const ask = explicit || usd > threshold;
     const parts = ['**Preventivo (stima indicativa)**'];
+    const sName = this.agentName('strategist');
+    if (req.strategy?.summary) parts.push(`**${sName}:** ${req.strategy.summary}`);
     if (lines.length) parts.push(lines.join('\n'));
     if (options.length) parts.push(`Generatore di immagini:\n${options.map((o) => `${o.current ? '▶' : '•'} ${o.label}: ${o.plan ? '**incluso nel piano** (usa i limiti d\'uso; da provare: non è detto che regga tante immagini)' : `≈ $${o.price.toFixed(3)}/immagine → **≈ $${o.usd.toFixed(2)}**${o.usdLight != null ? ` · leggera ≈ $${o.usdLight.toFixed(2)}` : ''}`}${o.current ? ' ← scelto' : ''}`).join('\n')}`);
     if (included.size) parts.push(`• Lavoro degli agenti con ${[...included].join(', ')}: **incluso nel piano**, consuma solo i limiti d'uso.`);
-    if (metered.length) parts.push(`• ${metered.join(', ')} con chiave API Anthropic: a consumo (≈ $0.30 stimati per task).`);
+    if (metered.length) parts.push(`• ${metered.join(', ')} con chiave API Anthropic: a consumo (≈ $${(this.catalog.text?.anthropic?.models?.[0]?.usdPerTask ?? 0.4).toFixed(2)} stimati per task).`);
+    const advice = [req.strategy?.images?.why, req.strategy?.advice].filter(Boolean).join(' ');
+    if (advice) parts.push(`**Consiglio dello ${sName}:** ${advice}`);
     parts.push(`**Totale stimato: ≈ $${usd.toFixed(2)}**${usdLight != null ? ` (versione leggera: ≈ $${usdLight.toFixed(2)})` : ''}. Le immagini via API si pagano a parte rispetto agli abbonamenti; i prezzi reali dipendono dal listino del momento.`);
     parts.push(`Procedo? Rispondi **sì**${usdLight != null ? ', **leggera**' : ''} oppure **no**${options.length > 1 ? ', o scegli un altro generatore (es. «leggera con Nano Banana»)' : ''}. Puoi usare anche i pulsanti.`);
     return { usd, usdLight, options, ask, explicit, text: parts.join('\n\n') };
@@ -332,7 +447,7 @@ export class Orchestrator {
     for (const [i, t] of tasks.entries()) {
       let kind = TASK_KINDS[t.kind] ? t.kind : 'implement';
       let agent = this.agents.get(t.agent);
-      if (!agent || agent.enabled === false || agent.id === 'director') agent = this.agents.forKind(kind);
+      if (!agent || agent.enabled === false || agent.id === 'director' || agent.id === 'strategist') agent = this.agents.forKind(kind);
       if (!agent) continue;
       if (!(agent.kinds || []).includes(kind) && agent.kinds?.length) {
         // agente giusto ma tipo sbagliato: si tiene l'agente, si usa il suo primo tipo
@@ -381,7 +496,7 @@ export class Orchestrator {
     const t = {
       id: def.id || this.store.nextId('task', 'T'), requestId: def.requestId, agentId: def.agentId, kind: def.kind, title: def.title,
       instructions: def.instructions || '', dependsOn: def.dependsOn || [], status: 'PENDING', attempt: 0, loop: def.loop || 0,
-      parentTaskId: def.parentTaskId || null, writes: WRITE_KINDS.includes(def.kind) && this.agents.get(def.agentId)?.writes !== false,
+      parentTaskId: def.parentTaskId || null, strategy: def.strategy || null, writes: WRITE_KINDS.includes(def.kind) && this.agents.get(def.agentId)?.writes !== false,
       createdAt: now(), log: [], result: null,
     };
     this.S.tasks[t.id] = t;
@@ -449,15 +564,27 @@ export class Orchestrator {
   }
 
   startTask(t, req) {
-    const agent = this.agents.get(t.agentId);
+    const base = this.agents.get(t.agentId);
+    // modello scelto dallo Stratega (i task nati dopo, come correzioni e nuovi test, usano la scelta per quel tipo)
+    const s = t.strategy || req?.strategy?.byKind?.[t.kind] || null;
+    const agent = s ? { ...base, provider: s.provider || base.provider, model: s.model ?? base.model } : base;
     const ctrl = new AbortController();
-    this.setTask(t, { status: 'RUNNING', startedAt: now(), attempt: t.attempt + 1 }, `avviato (tentativo ${t.attempt + 1})`);
+    this.setTask(t, { status: 'RUNNING', startedAt: now(), attempt: t.attempt + 1, usedModel: s ? this.modelLabel(s) : null }, `avviato (tentativo ${t.attempt + 1})${s ? ` · ${this.modelLabel(s)}` : ''}`);
     clearTimeout(this.idleTimers.get(agent.id));
     const status = t.kind === 'test' ? 'TESTING' : t.kind === 'analyze' ? 'THINKING' : 'WORKING';
     this.agents.setStatus(agent.id, status, { task: t, text: `inizio: ${t.title}`, semantic: 'agent.started_task' });
-    const p = this.executeTask(t, req, agent, ctrl.signal)
-      .then((res) => this.onTaskResult(t, req, agent, res))
-      .catch((e) => this.onTaskResult(t, req, agent, { ok: false, error: String(e?.stack || e) }))
+    const BADMODEL = /(unknown|invalid|not found|unsupported|does not exist|not available|non (valido|disponibile)).{0,40}model|model.{0,40}(not found|does not exist|invalid|unknown|unsupported|not available|non (valido|disponibile))/i;
+    const exec = async () => {
+      const res = await this.executeTask(t, req, agent, ctrl.signal);
+      if (!res.ok && s?.model && agent !== base && BADMODEL.test(String(res.error || '')) && !ctrl.signal.aborted) {
+        this.setTask(t, { usedModel: null }, `il modello ${s.model} non è disponibile: riprovo con quello predefinito dell'agente`);
+        return this.executeTask(t, req, base, ctrl.signal);
+      }
+      return res;
+    };
+    const p = exec()
+      .then((res) => this.onTaskResult(t, req, base, res))
+      .catch((e) => this.onTaskResult(t, req, base, { ok: false, error: String(e?.stack || e) }))
       .finally(() => { this.running.delete(t.id); this.schedule(); });
     this.running.set(t.id, { abort: ctrl, promise: p });
   }

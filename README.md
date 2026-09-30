@@ -147,6 +147,20 @@ perplesso, si dispera, aspetta, sbatte le palpebre): 13 immagini per agente, opp
 
 Laboratorio dei personaggi (tutte le pose): http://localhost:4173/sprite-lab.html?all=1
 
+### Lo Stratega e la lavagna delle spese
+
+Ogni richiesta, prima di partire, passa dallo **Stratega**: valuta quanto conta ogni task e sceglie il modello
+giusto (qualità alta solo dove serve: codice delicato, correzioni, integrazioni; media per il lavoro normale; leggera
+per compiti semplici) e il generatore di immagini. Se tutto è **incluso nei tuoi abbonamenti** il lavoro parte da solo;
+se c'è una **spesa extra** ti mostra il preventivo con il suo consiglio e aspetta il tuo ok. Nel messaggio della Regia
+vedi il modello scelto per ogni task. Il catalogo dei modelli è in `config/models.default.json` (se un nome di
+modello non funziona sul tuo account lo correggi lì; nel frattempo lo Studio ripiega sul modello predefinito).
+In Impostazioni puoi farlo lavorare "a regole fisse" (più veloce, senza AI).
+
+Sulla parete dell'ufficio c'è la **lavagna delle spese**: totale speso finora e subtotali per servizio (GPT Image,
+Nano Banana, API Anthropic). Cliccala per il dettaglio; gli abbonamenti risultano "inclusi" con il numero di lavori.
+Gli importi sono stime dai prezzi di listino: il conto vero è nelle pagine di fatturazione di OpenAI e Google.
+
 ### Preventivo prima di spendere
 
 Le immagini via API (GPT Image, Nano Banana) si pagano a consumo, **a parte** rispetto agli abbonamenti. Il lavoro

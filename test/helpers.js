@@ -60,7 +60,7 @@ export function fakeQaRunner(args) {
 }
 
 export async function studioFor(root, providers, extra = {}, more = {}) {
-  return createStudio({ projectRoot: root, dataDir: path.join(root, '.studio-data'), studioRepo: more.studioRepo ?? false, providers, qaRunner: fakeQaRunner, configOverrides: { directorProseReport: false, ...extra } });
+  return createStudio({ projectRoot: root, dataDir: path.join(root, '.studio-data'), studioRepo: more.studioRepo ?? false, providers, qaRunner: fakeQaRunner, configOverrides: { directorProseReport: false, strategist: 'rules', ...extra } });
 }
 
 export async function waitFor(fn, ms = 8000, label = 'condizione') {

@@ -221,3 +221,12 @@ pre.diff .add { color: var(--green); } pre.diff .del { color: var(--red); } pre.
 .av-gen { background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--av-color) 45%, #1b1230), #140c24); }
 .av-gen canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
 .quote-alt { flex-basis: 100%; margin-top: 6px; font-size: 13px; } .quote-alt select { max-width: 100%; }
+.oboard { position: absolute; transform: translate(-50%, -50%) rotate(-3deg); background: #2f4a3af2; color: #eef5ea; border: 2px solid #6b4a2a; border-radius: 2px; padding: 2px 6px 3px; font: 600 11px/1.25 ui-monospace, Menlo, monospace; cursor: pointer; box-shadow: 0 2px 0 #0006; white-space: nowrap; z-index: 2; }
+.oboard b { color: #f3e27a; letter-spacing: .5px; }
+.oboard small { display: block; font-size: 9px; color: #bfd8c4; font-weight: 500; }
+.oboard:hover { background: #3a5a47; }
+table.costs { width: 100%; border-collapse: collapse; margin: 8px 0; }
+table.costs td { padding: 5px 6px; border-bottom: 1px solid #ffffff14; }
+table.costs td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.costs tr.tot td { border-top: 2px solid #ffffff33; }
+table.costs tr.inc td { opacity: .75; }
