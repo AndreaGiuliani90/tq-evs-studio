@@ -384,7 +384,7 @@ function renderDrawer() {
       </fieldset>
       <label>Provider testo/codice <select name="provider">${['auto', 'claude-code', 'codex', 'gemini', 'anthropic', 'mock'].map((p) => `<option ${a.provider === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
       <label>Modello (vuoto = predefinito) <input name="model" value="${esc(a.model || '')}" placeholder="Claude: sonnet, opus, haiku · Codex/Gemini: vuoto = predefinito"></label>
-      <label class="check"><input type="checkbox" name="av_flip" ${a.avatar?.flip ? 'checked' : ''}> Specchia il personaggio nell'ufficio (se guarda dalla parte sbagliata rispetto alla scrivania)</label>
+      <label class="check"><input type="checkbox" name="av_flip" ${a.avatar?.flip ? 'checked' : ''}> Specchia il personaggio nell'ufficio (solo se, dopo la correzione automatica, guarda ancora dalla parte sbagliata)</label>
       <label>Provider immagini (se l'agente genera immagini) <select name="imageProvider">${[['auto', 'auto (il primo configurato)'], ['openai-image', 'GPT Image (qualità dal file .env)'], ['openai-image:medium', 'GPT Image · qualità media (più economica)'], ['gemini-image', 'Nano Banana (modello dal file .env)'], ['gemini-image:gemini-3.1-flash-image', 'Nano Banana 2'], ['gemini-image:gemini-3-pro-image', 'Nano Banana Pro'], ['plan', 'Codex col piano ChatGPT (sperimentale, solo se l\'agente usa Codex)']].map(([v, l]) => `<option value="${v}" ${(a.imageProvider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Tipi di task gestiti (separati da virgola) <input name="kinds" value="${esc((a.kinds || []).join(', '))}"></label>
       <label>Capacità (separate da virgola) <input name="capabilities" value="${esc((a.capabilities || []).join(', '))}"></label>
@@ -392,7 +392,8 @@ function renderDrawer() {
       <label class="check"><input type="checkbox" name="enabled" ${a.enabled !== false ? 'checked' : ''}> attivo</label>
       <label class="check"><input type="checkbox" name="visible" ${a.visible !== false ? 'checked' : ''}> visibile nello studio</label>
       <label>Istruzioni di sistema <textarea name="systemInstructions" rows="8">${esc(a.systemInstructions)}</textarea></label>
-      <div class="row"><button class="btn primary" type="submit">Salva</button><button class="btn" type="button" id="agent-reset">Ripristina predefinito</button></div>
+      <div class="row"><button class="btn primary" type="submit">Salva</button><button class="btn" type="button" id="agent-reset">Ripristina predefinito</button>${['director', 'strategist'].includes(a.id) || a.enabled === false ? '' : '<button class="btn danger" type="button" id="agent-dismiss">Licenzia…</button>'}</div>
+      <div id="dismiss-box" class="hidden"></div>
     </form>`;
   paintPortraits(d);
   $('#agent-form').onsubmit = act(async (ev) => {
@@ -416,6 +417,18 @@ function renderDrawer() {
     document.activeElement?.blur();
     toast('Agente salvato.');
   });
+  const dz = $('#agent-dismiss');
+  if (dz) dz.onclick = () => {
+    const others = Object.values(S.agents).filter((x) => x.id !== a.id && x.enabled !== false && x.id !== 'director');
+    const opts = (withNone) => `${withNone ? '<option value="">nessuno (il personaggio sparisce)</option>' : ''}${others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)} — ${esc(x.role)}</option>`).join('')}`;
+    const box = $('#dismiss-box'); box.classList.remove('hidden');
+    box.innerHTML = `<h3>Licenziare ${esc(a.name)}?</h3><p class="muted">I suoi compiti (${esc((a.kinds || []).join(', '))}) passano a un collega. Il suo aspetto può andare a un altro agente. Si può riassumere quando vuoi (Agenti → Modifica → attivo).</p>
+      <label>I compiti passano a <select id="dz-to">${opts(false)}</select></label>
+      <label>Il suo aspetto va a <select id="dz-look">${opts(true)}</select></label>
+      <div class="row"><button class="btn danger" type="button" id="dz-ok">Licenzia ${esc(a.name)}</button><button class="btn" type="button" id="dz-no">Annulla</button></div>`;
+    $('#dz-no').onclick = () => box.classList.add('hidden');
+    $('#dz-ok').onclick = act(async () => { await api('POST', `/api/agents/${a.id}/dismiss`, { to: $('#dz-to').value, lookTo: $('#dz-look').value || null }); toast(`${a.name} ha lasciato lo Studio.`); closeDrawer(); });
+  };
   $('#agent-reset').onclick = act(async () => { if (confirm('Ripristinare nome, ruolo, avatar e istruzioni predefiniti?')) { await api('POST', `/api/agents/${a.id}/reset`); toast('Ripristinato.'); } });
 }
 

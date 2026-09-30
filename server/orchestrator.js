@@ -791,8 +791,8 @@ export class Orchestrator {
       extra: `## Nuovi personaggi animati per la squadra dello Studio
 Devi disegnare (art direction) i personaggi degli agenti in squadra.json, che siedono nell'ufficio isometrico della Pro Loco.
 Ogni personaggio è animato fotogramma per fotogramma: lo Studio genera prima il ritratto base, poi ogni fotogramma come
-variante dello STESSO personaggio (stessa inquadratura, stessa scala). Formato: mezzo busto (dal petto in su), tre quarti
-verso chi guarda, pixel art pulita e dettagliata con contorno scuro e ombre a pochi toni, STESSO STILE per tutti, fondo
+variante dello STESSO personaggio (stessa inquadratura, stessa scala). Formato: mezzo busto (dal petto in su), seduto alla scrivania, tre quarti
+rivolto verso la SINISTRA di chi guarda (lo Studio lo specchia dove serve), pixel art pulita e dettagliata con contorno scuro e ombre a pochi toni, STESSO STILE per tutti, fondo
 magenta pieno #FF00FF, immagine quadrata, figura centrata con spazio intorno (nei fotogrammi alza le braccia).
 Ogni personaggio deve far capire il suo ruolo (oggetti, vestiti) e avere personalità (alla Ron Gilbert). Rispetta la
 richiesta dell'utente${refs.length ? ' e le immagini di riferimento allegate' : ''}.
@@ -809,7 +809,7 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
     const done = [], failed = [];
     let styleRef = null;
     const style = j.style ? `${j.style}. ` : '';
-    const fixed = 'Bust portrait from the chest up, three-quarter view facing the viewer, centered with empty space around, solid flat magenta (#FF00FF) background, no text, no frame.';
+    const fixed = 'Bust portrait from the chest up, seated at a desk, three-quarter view: body and face turned toward the viewer\'s LEFT (the desk edge runs diagonally down to the right), centered with empty space around, solid flat magenta (#FF00FF) background, no text, no frame.';
     for (const item of list) {
       if (signal?.aborted) break;
       const outDir = ensureDir(path.join(this.dataDir, 'avatars', `${item.agent}-${Date.now()}`));
@@ -845,7 +845,7 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
       }
       for (const a of Object.keys(frames)) frames[a] = frames[a].filter(Boolean);
       const a = this.agents.get(item.agent);
-      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'frames', frames, fps: AVATAR_FPS, image: frames.idle[0], chroma: '#ff00ff', generated: { prompt: item.prompt, style: j.style || '', provider: imgOk ? choice.id : provider.id, task: t.id, at: now() } } });
+      this.agents.update(item.agent, { avatar: { ...(a.avatar || {}), type: 'frames', frames, fps: AVATAR_FPS, image: frames.idle[0], chroma: '#ff00ff', faces: 'left', flip: false, generated: { prompt: item.prompt, style: j.style || '', provider: imgOk ? choice.id : provider.id, task: t.id, at: now() } } });
       done.push(`${this.agentName(item.agent)} (${Object.values(frames).flat().length} fotogrammi)`);
     }
     if (!done.length) return { ok: false, error: `nessun personaggio generato: ${failed.join(' · ')}` };

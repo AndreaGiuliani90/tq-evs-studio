@@ -126,6 +126,19 @@ export function createServer(studio) {
     ['POST', /^\/api\/agents$/, async (m, b) => agents.public(agents.create(b))],
     ['PUT', /^\/api\/agents\/([\w-]+)$/, async (m, b) => agents.public(agents.update(m[1], b))],
     ['POST', /^\/api\/agents\/([\w-]+)\/reset$/, async (m) => agents.public(agents.resetToDefault(m[1]))],
+    // licenziare un agente: i suoi compiti passano a un collega, il suo aspetto (se si vuole) a un altro; si può riassumere
+    ['POST', /^\/api\/agents\/([\w-]+)\/dismiss$/, async (m, b) => {
+      const a = agents.get(m[1]), to = agents.get(b?.to);
+      if (!a || ['director', 'strategist'].includes(a.id)) throw new Error('questo agente non si può licenziare');
+      if (!to || to.id === a.id || to.enabled === false) throw new Error('scegli a chi passare i compiti');
+      if (Object.values(store.data.tasks).some((t) => t.agentId === a.id && ['PENDING', 'RUNNING'].includes(t.status))) throw new Error(`${a.name} ha dei task in corso: aspetta che finiscano o fermali`);
+      agents.update(to.id, { kinds: [...new Set([...(to.kinds || []), ...(a.kinds || [])])], capabilities: [...new Set([...(to.capabilities || []), ...(a.capabilities || [])])] });
+      const heir = b?.lookTo && agents.get(b.lookTo);
+      if (heir && heir.id !== a.id) agents.update(heir.id, { avatar: { ...structuredClone(a.avatar || {}), userEdited: true } });
+      agents.update(a.id, { enabled: false, dismissed: { at: new Date().toISOString(), to: to.id, lookTo: heir?.id || null } });
+      orch.chat('system', `${a.name} ha lasciato lo Studio: i suoi compiti ora li fa ${to.name}${heir ? `, e ${heir.name} ha preso il suo aspetto` : ''}. Si può riassumere dalla Gestione agenti.`);
+      return { ok: true };
+    }],
     ['POST', /^\/api\/agents\/([\w-]+)\/avatar$/, async (m, b) => {
       // b.dataUrl = "data:image/png;base64,..." → salvato in data/avatars e collegato all'avatar
       const mm = String(b.dataUrl || '').match(/^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,(.+)$/);

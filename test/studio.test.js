@@ -753,3 +753,21 @@ test('Regia che non risponde: niente piano "a indovinare", si chiede e "Riprova"
   assert.deepEqual(s.orch.avatarTargets('Cosetta, fai nuovi sprite per te e tutti i colleghi').length, s.orch.avatarTargets('tutti').length);
   assert.deepEqual(s.orch.avatarTargets('ridisegna Tizo e Tizia, Cosetta').map((a) => a.id).sort(), ['dev', 'qa']);
 });
+
+test('licenziare un agente: i compiti passano a un collega, l\'aspetto a un altro, e il lavoro viene instradato bene', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
+  const srv = createServer(s);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const look = structuredClone(s.agents.get('office').avatar);
+  const r = await fetch(`${base}/api/agents/office/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'art', lookTo: 'strategist' }) });
+  assert.equal(r.status, 200);
+  assert.equal(s.agents.get('office').enabled, false);
+  assert.ok(s.agents.get('art').kinds.includes('office') && s.agents.get('art').kinds.includes('studio_ui'));
+  assert.deepEqual(s.agents.get('strategist').avatar.character, look.character);
+  assert.equal(s.agents.forKind('office').id, 'art');
+  const bad = await fetch(`${base}/api/agents/director/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to: 'art' }) });
+  assert.notEqual(bad.status, 200);
+  srv.close();
+});

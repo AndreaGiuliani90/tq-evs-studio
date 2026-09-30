@@ -1050,11 +1050,13 @@ export class Office {
     ctx.drawImage(spr, X - Math.floor(SPRITE_W / 2), baseY - SPRITE_H);
   }
 
-  // i personaggi generati guardano verso destra: alle postazioni della parete destra (e dove serve) si specchiano,
-  // così guardano la scrivania. avatar.flip = true la inverte (per un personaggio disegnato girato dall'altra parte).
+  // da che parte guarda il personaggio: le immagini generate guardano verso SINISTRA (scrivania che scende a destra,
+  // come alla parete destra); alla parete sinistra (e dove serve) si specchiano. avatar.faces dice verso dove guarda
+  // l'immagine ('left' predefinito), avatar.flip = true inverte la scelta per un personaggio disegnato al contrario.
   flipFor(st, agent) {
-    const auto = st.face ? st.face === 'left' : st.wall === 'R';
-    return agent.avatar?.flip === true ? !auto : auto;
+    const need = st.face || (st.wall === 'L' ? 'right' : 'left');
+    const flip = need !== (agent.avatar?.faces || 'left');
+    return agent.avatar?.flip === true ? !flip : flip;
   }
   blit(img, cx, y, flip) {
     if (!flip) return this.ctx.drawImage(img, cx - Math.floor(img.width / 2), y);

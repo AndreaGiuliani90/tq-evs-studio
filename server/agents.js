@@ -6,7 +6,7 @@ import { now } from './util.js';
 export const STATUSES = ['IDLE', 'THINKING', 'WORKING', 'WAITING', 'TESTING', 'BLOCKED', 'DONE', 'ERROR'];
 
 // campi che l'utente può modificare dall'interfaccia
-export const EDITABLE = ['name', 'role', 'description', 'systemInstructions', 'capabilities', 'kinds', 'enabled', 'visible', 'provider', 'model', 'imageProvider', 'contextDocs', 'avatar', 'writes'];
+export const EDITABLE = ['name', 'role', 'description', 'systemInstructions', 'capabilities', 'kinds', 'enabled', 'visible', 'provider', 'model', 'imageProvider', 'contextDocs', 'avatar', 'writes', 'dismissed'];
 
 // Stati → animazione dell'avatar (default; ogni avatar può sovrascriverli in avatar.animations)
 export const DEFAULT_ANIMATIONS = {
