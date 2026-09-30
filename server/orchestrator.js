@@ -946,7 +946,9 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
   onTaskResult(t, req, agent, res) {
     if (t.status === 'CANCELLED') { this.agents.setStatus(agent.id, 'IDLE', { task: null, text: 'task annullato' }); return; }
     if (!res.ok) {
-      const canRetry = !res.blocked && t.attempt <= (this.config.maxTaskRetries ?? 1);
+      // credito o limiti d'uso esauriti: ritentare subito non serve (e non si ritenta a vuoto)
+      const noCredit = /API (402|429)|no credits|credit balance|usage limit|quota|billing|insufficient_quota/i.test(res.error || '');
+      const canRetry = !res.blocked && !noCredit && t.attempt <= (this.config.maxTaskRetries ?? 1);
       if (canRetry) {
         this.setTask(t, { status: 'PENDING', lastError: truncate(res.error, 2000) }, `errore, riprovo: ${truncate(res.error, 300)}`);
         this.agents.setStatus(agent.id, 'ERROR', { task: t, text: `errore, riprovo: ${truncate(res.error, 160)}`, semantic: 'agent.failed' });
