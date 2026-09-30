@@ -16,6 +16,8 @@ export class OfficeStore {
     this.file = path.join(dataDir, 'office.json');
     this.historyDir = path.join(dataDir, 'office-history');
     this.wsRoot = path.join(dataDir, 'office-workspace');
+    this.paintFile = path.join(dataDir, 'office-paint.json');
+    this.paintDir = path.join(dataDir, 'office-paint');
     this.events = events;
     this.migrate();
   }
@@ -58,11 +60,15 @@ export class OfficeStore {
     return errs;
   }
 
+  // sfondo dipinto dell'ufficio (ridipintura di Cosetta): immagine + dove sta la stanza nell'immagine + impronta della pianta
+  paint() { return readJSON(this.paintFile, null); }
+  setPaint(p) { if (p) writeFileAtomic(this.paintFile, JSON.stringify(p, null, 2)); else if (fs.existsSync(this.paintFile)) fs.renameSync(this.paintFile, `${this.paintFile}.tolto`); this.events?.emit('office.updated', {}); }
+
   snapshot(agents) {
     ensureDir(this.historyDir);
     const f = path.join(this.historyDir, `${Date.now()}.json`);
     const avatars = Object.fromEntries(agents.list().map((a) => [a.id, a.avatar]));
-    writeFileAtomic(f, JSON.stringify({ at: now(), office: this.get(), avatars }, null, 2));
+    writeFileAtomic(f, JSON.stringify({ at: now(), office: this.get(), avatars, paint: this.paint() }, null, 2));
     return f;
   }
 
@@ -81,6 +87,7 @@ export class OfficeStore {
     const snap = readJSON(last, null);
     if (!snap) throw new Error('copia di sicurezza illeggibile');
     this.save(snap.office);
+    if ('paint' in snap) { if (snap.paint) writeFileAtomic(this.paintFile, JSON.stringify(snap.paint, null, 2)); else if (fs.existsSync(this.paintFile)) fs.renameSync(this.paintFile, `${this.paintFile}.tolto`); }
     for (const [id, av] of Object.entries(snap.avatars || {})) if (agents.get(id)) agents.update(id, { avatar: { ...av, userEdited: av?.userEdited ?? false } });
     fs.renameSync(last, `${last}.annullata`);
     return { restoredFrom: snap.at };

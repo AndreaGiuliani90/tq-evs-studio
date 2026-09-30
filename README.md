@@ -132,6 +132,17 @@ Per personalizzarlo copialo in `data/office.json` e modificalo: lo Studio usa qu
 `rug`, `plant`, `crates`, `sideboard`, `bench`, `costboard`, `coffee`, `watercooler`, `sofa`, `armchair`,
 `coffeetable`, `arcade`. Il disegno è in `web/office.js`, lo zoom in `web/office-view.js`.
 
+### Ufficio ridipinto (sfondo illustrato)
+
+Per avere l'ufficio con la resa di un'illustrazione vera (non disegnato in codice) chiedi a Cosetta di ridipingerlo,
+allegando un'immagine di riferimento con 📎, per esempio *«Cosetta, ridipingi l'ufficio esattamente in questo stile,
+risoluzione e luce»*. Lo Studio fotografa la **maquette** della pianta attuale (stanza e mobili, senza personaggi),
+il generatore di immagini la ridipinge tenendo la stessa geometria e il dipinto diventa lo **sfondo**: sopra restano
+vivi i personaggi (seduti dietro le scrivanie dipinte), le etichette, la lavagna, le luci del giorno e lo zoom.
+Costa **una sola immagine** (lo Stratega mostra il preventivo) e **nessun token** di AI di testo.
+Il pulsante 🎨 nell'ufficio passa dal dipinto al disegno in codice; **↶ Annulla ultimo arredo** torna allo sfondo di
+prima. Se Arredo sposta i mobili, lo Studio lo segnala: il dipinto va rifatto.
+
 ### Il Responsabile dell'ufficio
 
 Chiedi in chat, per esempio *«metti una pianta grande vicino alla finestra e dai a Tizia i capelli corti»*:

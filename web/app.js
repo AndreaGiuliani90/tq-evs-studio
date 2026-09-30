@@ -32,6 +32,8 @@ async function boot() {
   S.view = new OfficeView($('#office-wrap'), $('#office-stage'), S.office);
   S.office.view = S.view;
   S.office.onFocusChange = (id) => { S.focus = id; renderFocus(); };
+  $('#paint-toggle').onclick = () => { S.office.setPaint(S.office.paint, { use: !S.office.painted }); try { localStorage.setItem('studio:paint', S.office.painted ? '1' : '0'); } catch { /* ok */ } loadOffice(); };
+  try { if (localStorage.getItem('studio:paint') === '0') S.office.usePaint = false; } catch { /* ok */ }
   for (const b of document.querySelectorAll('[data-zoom]')) b.onclick = () => { const z = b.dataset.zoom; if (z === 'fit') S.view.fit(true); else S.view.zoomBy(z === 'in' ? 1.5 : 1 / 1.5); };
   window.studioOffice = S.office;   // per le prove automatiche e per sperimentare dalla console
   await loadOffice();
@@ -45,6 +47,12 @@ async function loadOffice() {
   S.office.setAgents(Object.values(S.agents));
   S.office.costs = S.costs;
   S.office.setLayout(layout);
+  S.office.setPaint(layout.paint);
+  const pb = $('#paint-toggle'), note = $('#paint-note');
+  pb.hidden = !layout.paint;
+  pb.classList.toggle('on', !!S.office.painted);
+  pb.title = S.office.painted ? 'Sfondo dipinto (clic: torna al disegno in codice)' : 'Disegno in codice (clic: sfondo dipinto)';
+  note.hidden = !(layout.paint && !S.office.paintMatches);
 }
 
 function connect() {

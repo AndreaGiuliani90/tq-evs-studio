@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><title>Maquette dell'ufficio</title></head>
+<body style="margin:0;background:#0a0d22">
+<div><canvas id="c"></canvas><div id="o"></div></div>
+<script type="module">
+// Pagina di servizio: disegna la maquette dell'ufficio (senza personaggi) per la ridipintura di Cosetta.
+import { Office } from './office.js';
+const scale = Number(new URLSearchParams(location.search).get('scale') || 2);
+try {
+  const layout = await (await fetch('/api/office')).json();
+  const o = new Office(document.getElementById('c'), document.getElementById('o'));
+  clearInterval(o.timer);
+  o.setLayout(layout);
+  window.__shot = o.blockout(scale);
+} catch (e) { window.__shot = { error: String(e?.stack || e) }; }
+</script>
+</body></html>

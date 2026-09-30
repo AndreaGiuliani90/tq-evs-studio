@@ -12,6 +12,7 @@
 import { drawText, textWidth, shade } from './pixel.js';
 import { cachedSprite, SPRITE_W, SPRITE_H } from './sprites.js';
 import { processedAvatar, processedFrames } from './avatars.js';
+import { layoutHash } from './layout-hash.js';
 
 // risoluzione logica: dipende dalla stanza (setLayout), poi si ingrandisce a pixel pieni e si zooma
 let LW = 448, LH = 356;
@@ -100,8 +101,9 @@ export class Office {
   updateAgent(a) { this.agents[a.id] = a; this.updateLabel(a); }
 
   // chi sta dove: le postazioni con agent = id; gli agenti senza postazione prendono le "spare"
-  stations() {
+  stations({ all = false } = {}) {
     if (!this.layout) return [];
+    if (all) return this.layout.stations.map((st) => ({ ...st, agentId: st.agent || null }));
     const out = [];
     const used = new Set();
     for (const st of this.layout.stations) {
@@ -228,31 +230,16 @@ export class Office {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, LW, LH);
 
-    // strato statico (pavimento, pareti) ridisegnato solo quando cambia l'ora del cielo
+    // strato statico (pavimento, pareti) ridisegnato solo quando cambia l'ora del cielo; con lo sfondo dipinto
+    // (un'immagine sotto la tela) qui si disegnano solo i personaggi e la luce
     const key = `${sky.top}|${date.getMinutes()}`;
-    if (!this.staticLayer || this.staticKey !== key) { this.staticLayer = this.drawStatic(sky, date); this.staticKey = key; }
-    ctx.drawImage(this.staticLayer, 0, 0);
-
-    // oggetti a pavimento e personaggi, ordinati per profondità
-    const items = [];
-    for (const d of this.layout.decor) if (!d.wall && d.type !== 'rug') items.push({ k: d.x + d.y + (d.type === 'crates' ? 1 : 0.5), draw: () => this.drawDecor(d, t) });
-    for (const st of this.stations()) {
-      const a = this.agents[st.agentId];
-      const [cx, cy] = this.seatOf(st);
-      if (st.kind === 'table') {
-        items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
-        items.push({ k: st.x + st.y + 1.9, draw: () => this.drawTable(st, a, t) });
-        continue;
-      }
-      const L = this.local(st);
-      const [bx, by] = L.xy(1.4, 0.3);
-      items.push({ k: bx + by, draw: () => this.drawChair(st, a) });
-      items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
-      const [dx, dy] = L.xy(1.4, 1.9);
-      items.push({ k: dx + dy, draw: () => this.drawStation(st, a, t) });
+    if (!this.painted) {
+      if (!this.staticLayer || this.staticKey !== key) { this.staticLayer = this.drawStatic(sky, date); this.staticKey = key; }
+      ctx.drawImage(this.staticLayer, 0, 0);
     }
-    items.sort((p, q) => p.k - q.k);
-    for (const it of items) it.draw();
+
+    // oggetti a pavimento e personaggi, ordinati per profondità (con lo sfondo dipinto: solo i personaggi)
+    for (const it of this.sceneItems(t, { furniture: !this.painted, characters: true })) it.draw();
 
     // particelle
     for (const p of this.particles) {
@@ -267,6 +254,89 @@ export class Office {
 
     // fumetti sopra la testa (dopo la luce: restano leggibili)
     for (const st of this.stations()) this.drawBubble(st, this.agents[st.agentId], t);
+  }
+
+  sceneItems(t, { furniture = true, characters = true } = {}) {
+    const items = [];
+    const NOBODY = { id: '_', name: '', runtime: { status: 'IDLE' }, avatar: {} };
+    if (furniture) for (const d of this.layout.decor) if (!d.wall && d.type !== 'rug') items.push({ k: d.x + d.y + (d.type === 'crates' ? 1 : 0.5), draw: () => this.drawDecor(d, t) });
+    for (const st of this.stations({ all: !characters })) {
+      const a = this.agents[st.agentId] || NOBODY;
+      const [cx, cy] = this.seatOf(st);
+      if (st.kind === 'table') {
+        if (characters) items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
+        if (furniture) items.push({ k: st.x + st.y + 1.9, draw: () => this.drawTable(st, a, t) });
+        continue;
+      }
+      const L = this.local(st);
+      const [bx, by] = L.xy(1.4, 0.3);
+      if (furniture) items.push({ k: bx + by, draw: () => this.drawChair(st, a) });
+      if (characters) items.push({ k: cx + cy, draw: () => (this.painted ? this.behindDesk(st, () => this.drawCharacter(st, a, t)) : this.drawCharacter(st, a, t)) });
+      const [dx, dy] = L.xy(1.4, 1.9);
+      if (furniture) items.push({ k: dx + dy, draw: () => this.drawStation(st, a, t) });
+    }
+    return items.sort((p, q) => p.k - q.k);
+  }
+
+  // con lo sfondo dipinto la scrivania è nel dipinto: il personaggio si ritaglia dove la scrivania (e i monitor) gli
+  // stanno davanti, così resta "seduto dietro" come nel disegno in codice
+  behindDesk(st, draw) {
+    const L = this.local(st), D0 = 1.15, DL = 1.2;
+    const hull = (a0, a1, b0, b1, z0, z1) => {
+      const pts = [];
+      for (const a of [a0, a1]) for (const b of [b0, b1]) for (const z of [z0, z1]) pts.push(this.iso(...L.xy(a, b), z));
+      pts.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+      const cross = (o, p, q) => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+      const lo = [], up = [];
+      for (const p of pts) { while (lo.length >= 2 && cross(lo.at(-2), lo.at(-1), p) <= 0) lo.pop(); lo.push(p); }
+      for (const p of [...pts].reverse()) { while (up.length >= 2 && cross(up.at(-2), up.at(-1), p) <= 0) up.pop(); up.push(p); }
+      return [...lo.slice(0, -1), ...up.slice(0, -1)];
+    };
+    const ctx = this.ctx;
+    ctx.save();
+    for (const h of [hull(0.05, 2.95, D0 - 0.05, D0 + DL + 0.05, 0, 27), hull(0.4, 2.6, D0 + 0.05, D0 + 0.55, 27, 43)]) {
+      ctx.beginPath(); ctx.rect(0, 0, LW, LH);
+      h.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath();
+      ctx.clip('evenodd');
+    }
+    try { draw(); } finally { ctx.restore(); }
+  }
+
+  // MAQUETTE per la ridipintura: stanza e mobili di giorno, senza personaggi né etichette, ingrandita e messa in un
+  // riquadro 3:2 (il formato dei generatori di immagini). Restituisce anche dove sta la stanza nel riquadro.
+  blockout(scale = 2) {
+    const keep = this.ctx;
+    const [off, ox] = tela(LW, LH);
+    this.ctx = ox;
+    const date = new Date(); date.setHours(12, 0, 0, 0);
+    try {
+      ox.drawImage(this.drawStatic(skyFor(date), date), 0, 0);
+      for (const it of this.sceneItems(0, { furniture: true, characters: false })) it.draw();
+    } finally { this.ctx = keep; }
+    const W0 = LW * scale, H0 = LH * scale;
+    const W = Math.max(W0, Math.round(H0 * 1.5)), H = Math.max(H0, Math.round(W / 1.5));
+    const [out, x] = tela(W, H);
+    x.fillStyle = '#0a0d22'; x.fillRect(0, 0, W, H);
+    const px = Math.round((W - W0) / 2), py = Math.round((H - H0) / 2);
+    x.drawImage(off, px, py, W0, H0);
+    return { dataURL: out.toDataURL('image/png'), W, H, ox: px, oy: py, scale, hash: layoutHash(this.layout) };
+  }
+
+  // sfondo dipinto (da Cosetta): un'immagine sotto la tela, allineata con la maquette da cui è nato
+  setPaint(paint, { use } = {}) {
+    this.paint = paint || null;
+    const stage = this.canvas.parentElement;
+    let img = stage?.querySelector('img.office-paint');
+    this.paintMatches = !!(paint && paint.hash === layoutHash(this.layout));
+    if (use !== undefined) this.usePaint = use;
+    this.painted = !!(this.paint && this.paintMatches && this.usePaint !== false);
+    if (!this.painted) { if (img) img.hidden = true; this.staticLayer = null; return; }
+    if (!img && stage) { img = document.createElement('img'); img.className = 'office-paint'; img.alt = ''; stage.insertBefore(img, this.canvas); }
+    if (!img) return;
+    img.hidden = false;
+    if (img.getAttribute('src') !== paint.url) img.src = paint.url;
+    const k = 1 / (paint.scale || 2);
+    Object.assign(img.style, { left: `${-paint.ox * k}px`, top: `${-paint.oy * k}px`, width: `${paint.W * k}px`, height: `${paint.H * k}px` });
   }
 
   drawStatic(sky, date) {
@@ -911,7 +981,7 @@ export class Office {
     const d = this.darkX, iso = this.iso;
     d.globalCompositeOperation = 'source-over';
     d.clearRect(0, 0, LW, LH);
-    d.fillStyle = `rgba(10,14,40,${sky.dark})`; d.fillRect(0, 0, LW, LH);
+    d.fillStyle = `rgba(10,14,40,${this.painted ? sky.dark * 0.6 : sky.dark})`; d.fillRect(0, 0, LW, LH);
     d.globalCompositeOperation = 'destination-out';
     const hole = (x, y, r, a = 1) => { const g = d.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(1, 'rgba(0,0,0,0)'); d.fillStyle = g; d.fillRect(x - r, y - r, r * 2, r * 2); };
     const glows = [];

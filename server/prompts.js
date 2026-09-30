@@ -14,6 +14,7 @@ export const TASK_KINDS = {
   puzzle: 'enigmi e indagini: indizi, prerequisiti, soluzioni',
   office: "arredo e aspetto dell'ufficio dello Studio (mobili, luci, colori, aspetto dei personaggi): non tocca il gioco",
   studio_ui: 'modifiche al programma GAME STUDIO stesso (interfaccia, grafica, animazioni): non tocca il gioco',
+  office_paint: "ridipingere l'ufficio dello Studio come illustrazione (sfondo dipinto a partire dalla pianta attuale, con l'AI immagini, stile dato dall'utente o dalle immagini allegate): lo fa l'Art (Cosetta) in UN solo task; non tocca il gioco né la pianta",
   avatars: "nuovi personaggi (sprite/avatar) per gli agenti dello Studio, generati con l'AI immagini e già animati fotogramma per fotogramma: lo fa l'Art (Cosetta) in UN solo task per tutta la squadra (non dividerlo in lotti); l'ufficio li anima già da solo, non serve altro lavoro; non tocca il gioco",
 };
 
@@ -158,7 +159,7 @@ export function strategistPrompt({ req, tasks, images = [], need = {} }) {
   const opt = (o) => `  - {"provider": "${o.provider}", "model": "${o.model}"} · qualità ${o.tier}${o.speed ? `, velocità ${o.speed}` : ''} · ${o.included ? 'INCLUSO nel piano' : `A PAGAMENTO ≈ $${o.usd} a task`}${o.note ? ` — ${o.note}` : ''}`;
   const img = images.length ? `
 ## Immagini
-Servono circa ${need.nFull} immagini${need.avatars && need.nLight < need.nFull ? ` (${need.nLight} nella versione leggera)` : ''}${need.avatars ? `: personaggi animati dello Studio, ${need.team} agenti × ${need.perAgent} fotogrammi` : ''}.
+${need.paint ? 'C\'è la ridipintura dell\'ufficio: UNA immagine grande che l\'utente vedrà sempre come sfondo, e l\'utente tiene molto alla qualità: scegli un generatore di alta qualità.\n' : ''}Servono circa ${need.nFull} immagini${need.avatars && need.nLight < need.nFull ? ` (${need.nLight} nella versione leggera)` : ''}${need.avatars ? `: personaggi animati dello Studio, ${need.team} agenti × ${need.perAgent} fotogrammi` : ''}.
 Generatori (id → prezzo per immagine):
 ${images.map((o) => `  - "${o.id}": ${o.label} · ${o.plan ? 'INCLUSO nel piano ChatGPT, sperimentale (può non reggere tante immagini, meno coerenza fra fotogrammi)' : `≈ $${o.price.toFixed(3)} → ≈ $${(o.price * need.nFull).toFixed(2)} in tutto`}`).join('\n')}
 Scegli il miglior rapporto qualità/prezzo per QUESTO lavoro: i personaggi dello Studio non richiedono la massima qualità; asset importanti del gioco sì. Se scegli un generatore a pagamento l'utente vedrà il preventivo e deciderà lui: nel campo "advice" dagli il tuo consiglio (quale opzione, versione completa o leggera, perché).

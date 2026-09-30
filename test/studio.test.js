@@ -677,3 +677,35 @@ test('ufficio: la pianta grande sostituisce quella vecchia personalizzata, che r
   const s2 = await studioFor(root, registryWith(new ScriptedProvider('scripted', async () => ({ text: '{}' }))));
   assert.equal(s2.office.get().room.w, 15);
 });
+
+test('ridipintura dell\'ufficio: preventivo, maquette + stile al generatore, sfondo applicato e annullabile, zero token di testo', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'p', agent: 'art', kind: 'office_paint', title: 'Ridipingere l\'ufficio', dependsOn: [] }]);
+    return { text: '{}' };
+  });
+  const reg = registryWith(prov);
+  const calls = [];
+  reg.register({ id: 'openai-image', kind: 'image', quality: 'high', label: 'finto', available: async () => ({ ok: true }), generate: async (o) => { calls.push(o); return { ok: true, png: Buffer.from('DIPINTO') }; } });
+  const s = await studioFor(root, reg);
+  s.orch.snapshotter = async ({ out }) => { fs.writeFileSync(out, 'MAQUETTE'); return { file: out, W: 1518, H: 1012, ox: 31, oy: 0, scale: 2 }; };
+  const req = await s.orch.handleUserMessage('Cosetta, ridipingi l\'ufficio in questo stile: illustrazione isometrica dipinta, luce calda');
+  await waitFor(() => req.quotePending, 5000, 'preventivo');
+  assert.equal(req.quote.usd, 0.21, 'una sola immagine in alta qualità');
+  assert.match(s.store.data.chat.at(-1).text, /ridipintura dell'ufficio, \*\*1 immagine\*\*/);
+  await s.orch.answerQuote(req.id, 'approve');
+  await waitFor(() => req.status === 'DONE', 8000, 'DONE');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].prompt, /KEEP EXACTLY[\s\S]*luce calda/);
+  assert.ok(calls[0].references[0].endsWith('.png') && fs.readFileSync(calls[0].references[0], 'utf8') === 'MAQUETTE', 'la maquette è il primo riferimento');
+  assert.equal(calls[0].size, '1536x1024');
+  assert.equal(prov.calls.filter((c) => c.agent.id === 'art').length, 0, 'nessuna chiamata all\'AI di testo per Cosetta');
+  const paint = s.office.paint();
+  assert.match(paint.url, /^\/office-paint\/ufficio-\d+\.png$/);
+  assert.equal(paint.ox, 31);
+  const { layoutHash } = await import('../web/layout-hash.js');
+  assert.equal(paint.hash, layoutHash(s.office.get()));
+  assert.equal(s.orch.costs.summary().providers.find((p) => p.id === 'openai-image').usd, 0.21);
+  s.office.undo(s.agents);
+  assert.equal(s.office.paint(), null, 'annulla: torna senza sfondo dipinto');
+});

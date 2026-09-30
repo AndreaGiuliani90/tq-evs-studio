@@ -9,9 +9,10 @@ import path from 'node:path';
 import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic, readJSON } from './util.js';
 import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, TASK_KINDS } from './prompts.js';
 import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
+import { layoutHash } from '../web/layout-hash.js';
 
 // qualità di partenza per tipo di task (regole dello Stratega quando non c'è un'AI che valuta)
-const KIND_TIER = { implement: 'alta', fix: 'alta', integrate: 'alta', analyze: 'media', test: 'media', narrative: 'media', lore: 'media', puzzle: 'media', level: 'media', art: 'media', audio: 'media', studio_ui: 'media', office: 'bassa', avatars: 'bassa' };
+const KIND_TIER = { implement: 'alta', fix: 'alta', integrate: 'alta', analyze: 'media', test: 'media', narrative: 'media', lore: 'media', puzzle: 'media', level: 'media', art: 'media', audio: 'media', studio_ui: 'media', office: 'bassa', avatars: 'bassa', office_paint: 'bassa' };
 const TIERS = ['alta', 'media', 'bassa'];
 function pickByTier(options, tier) {
   const inc = options.filter((o) => o.included);
@@ -25,7 +26,7 @@ const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', '
 // tipi che cambiano il gioco: dopo di loro serve un test del QA (lore tocca solo i documenti)
 const GAME_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle'];
 // tipi che non toccano il repository del gioco: l'arredo dell'ufficio (dati) e il codice dello Studio (repository suo)
-const STUDIO_KINDS = ['office', 'studio_ui', 'avatars'];
+const STUDIO_KINDS = ['office', 'studio_ui', 'avatars', 'office_paint'];
 
 // Fotogrammi dei personaggi animati (avatar generati): animazione → descrizione di ogni fotogramma per il generatore
 const AVATAR_FRAMES = {
@@ -98,12 +99,13 @@ export class Orchestrator {
     const count = (k) => Object.values(AVATAR_FRAMES[k]).flat().length;
     const mode = req.avatarFrames || this.config.avatarFrames || 'full';
     const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
-    let nFull = 0, nLight = 0, agent = null, avatars = false;
+    let nFull = 0, nLight = 0, agent = null, avatars = false, paint = false;
     for (const pt of plan.tasks) {
       if (pt.kind === 'avatars' && !avatars) { avatars = true; agent ??= this.agents.get(pt.agent); nFull += team * count(mode); nLight += team * count('light'); }
       else if (pt.kind === 'art') { agent ??= this.agents.get(pt.agent); nFull += 6; nLight += 6; }
+      else if (pt.kind === 'office_paint') { agent ??= this.agents.get(pt.agent); nFull += 1; nLight += 1; paint = true; }
     }
-    return { nFull, nLight, agent, avatars, team, mode, perAgent: count(mode), perAgentLight: count('light') };
+    return { nFull, nLight, agent, avatars, paint, team, mode, perAgent: count(mode), perAgentLight: count('light') };
   }
 
   async strategize(req, plan) {
@@ -116,7 +118,10 @@ export class Orchestrator {
     for (const { pt, options } of perTask) { const tier = KIND_TIER[pt.kind] || 'media'; const o = pickByTier(options, tier); rules.tasks[pt.key] = { tier: o.tier, provider: o.provider, model: o.model, why: '' }; }
     if (imgOptions.length) {
       const pref = need.agent.imageProvider && need.agent.imageProvider !== 'auto' ? (await this.imageFor(need.agent, {}))?.id : null;
-      rules.images = { choice: pref || (imgOptions.find((o) => o.id === 'gemini-image:gemini-3.1-flash-image') || imgOptions.find((o) => !o.plan) || imgOptions[0]).id, why: '' };
+      // lo sfondo dell'ufficio si vede sempre ed è una sola immagine: qualità alta; per i lotti grandi conta il prezzo
+      const want = need.paint && !need.avatars ? ['openai-image:high', 'gemini-image:gemini-3-pro-image', 'gemini-image:gemini-3.1-flash-image'] : ['gemini-image:gemini-3.1-flash-image'];
+      const best = want.map((id) => imgOptions.find((o) => o.id === id)).find(Boolean);
+      rules.images = { choice: pref || (best || imgOptions.find((o) => !o.plan) || imgOptions[0]).id, why: '' };
     }
     let out = rules;
     const strat = this.agents.get('strategist');
@@ -342,6 +347,9 @@ export class Orchestrator {
         const team = this.agents.list().filter((a) => a.enabled !== false && (a.visible !== false || a.id === 'director')).length;
         nFull += team * count(mode); nLight += team * count('light');
         lines.push(`• ${agent.name}: personaggi animati, fino a ${team} agenti × ${count(mode)} fotogrammi = **${team * count(mode)} immagini**${mode !== 'light' ? ` (versione leggera: ${team * count('light')})` : ''}`);
+      } else if (pt.kind === 'office_paint') {
+        imgAgent ??= agent; nFull += 1; nLight += 1;
+        lines.push(`• ${agent.name}: ridipintura dell'ufficio, **1 immagine** grande (niente lavoro dell'AI di testo: la maquette la fa lo Studio)`);
       } else if (pt.kind === 'art') {
         imgAgent ??= agent; nFull += 6; nLight += 6;
         lines.push(`• ${agent.name}: immagini per il gioco, al massimo 6`);
@@ -425,6 +433,8 @@ export class Orchestrator {
     const audio = has(/suono|musica|audio|effetto sonoro|sfx|volume/) && this.agents.forKind('audio');
     const puzzle = has(/enigma|indagine|indizi|rompicapo|puzzle/) && this.agents.forKind('puzzle');
     const lore = has(/bibbia|canone|coerenz|lore/) && this.agents.forKind('lore');
+    const paintJob = has(/ridiping|dipingi|dipinto|illustraz|stile|resa grafica|qualit/) && has(/ufficio|studio|sede|stanza/) && !has(/personagg|sprite|avatar/) && this.agents.forKind('office_paint');
+    if (paintJob) return { reply: `Ci pensa ${paintJob.name}.`, tasks: [{ key: 'p', agent: paintJob.id, kind: 'office_paint', title: 'Ridipingere l\'ufficio', instructions: text, dependsOn: [] }] };
     const avatarsJob = has(/sprite|avatar|personagg/) && has(/colleg|agenti|studio|squadra|ufficio|tutti/) && this.agents.forKind('avatars');
     if (avatarsJob) return { reply: `Ci pensa ${avatarsJob.name}.`, tasks: [{ key: 'v', agent: avatarsJob.id, kind: 'avatars', title: 'Nuovi personaggi per la squadra', instructions: text, dependsOn: [] }] };
     const office = has(/ufficio|arred|decor|scrivani|postazion|aspetto de|avatar|personagg.*studio/) && this.agents.forKind('office');
@@ -621,6 +631,7 @@ export class Orchestrator {
     if (t.kind === 'test') return this.runQA(t, req, agent, signal);
     if (t.kind === 'office') return this.runOffice(t, req, agent, signal);
     if (t.kind === 'avatars') return this.runAvatars(t, req, agent, signal);
+    if (t.kind === 'office_paint') return this.runOfficePaint(t, req, agent, signal);
     if (t.kind === 'studio_ui') return this.runStudioUI(t, req, agent, signal);
     if (t.kind === 'integrate') {
       const mr = await this.git.git(['merge', '--no-ff', '--no-commit', req.baseBranch], req.worktree, { allowFail: true });
@@ -821,6 +832,42 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
     }
     if (!done.length) return { ok: false, error: `nessun personaggio generato: ${failed.join(' · ')}` };
     return { ok: true, result: { summary: `Nuovi personaggi animati: ${done.join(', ')}.${failed.length ? ` Problemi: ${failed.join(' · ')}` : ''}`, notes: 'Se non ti piacciono: "↶ Annulla ultimo arredo" nell\'ufficio riporta i personaggi di prima.', output: truncate(r.text, 3000), avatars: list.map((x) => x.agent), provider: provider.id } };
+  }
+
+  // ─── Ridipintura dell'ufficio (Cosetta) ──────────────────────────────────────────────────────────
+  // Niente AI di testo (zero token): lo Studio fotografa la maquette della pianta attuale, il generatore di immagini la
+  // ridipinge nello stile chiesto (testo della richiesta + immagini allegate) e il dipinto diventa lo sfondo.
+  // Personaggi, schermi e luci restano vivi sopra. "↶ Annulla ultimo arredo" torna allo sfondo di prima.
+  async runOfficePaint(t, req, agent, signal) {
+    if (!this.office) return { ok: false, error: 'ufficio non disponibile' };
+    const choice = await this.imageFor(agent, req);
+    if (!choice || choice.plan) return { ok: false, blocked: true, error: 'Per ridipingere l\'ufficio serve un generatore di immagini via API (GPT Image o Nano Banana): mettine la chiave nel file .env.' };
+    const dir = ensureDir(path.join(this.dataDir, 'office-paint'));
+    const stamp = Date.now();
+    this.agents.activity(agent.id, 'fotografo la maquette dell\'ufficio', 'agent.editing');
+    let shot;
+    try { shot = await (this.snapshotter || this.defaultSnapshotter.bind(this))({ layout: this.office.get(), out: path.join(dir, `maquette-${stamp}.png`) }); }
+    catch (e) { return { ok: false, error: `maquette dell'ufficio non riuscita: ${e.message}` }; }
+    if (signal?.aborted) return { ok: false, error: 'annullato' };
+    const refs = (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path);
+    const wish = req.originalText ? `${req.originalText}\n${req.text}` : req.text;
+    const prompt = `Repaint the FIRST image (an isometric blockout of an office, pixel-art placeholder) as a finished, high-quality illustration.
+KEEP EXACTLY: the camera angle, the room shape and size, the position of the two walls, every window, desk, chair, shelf, rug, plant, sofa, coffee counter and piece of furniture — same places, same sizes, same count. The picture will be used as a background and animated characters will be placed on the chairs, so the layout must match the blockout precisely.
+Do NOT add people, characters or animals. Do NOT add any text or letters. Keep the plain dark background outside the room.
+${refs.length ? 'Match the style, rendering quality, resolution and lighting of the other reference image(s).\n' : ''}What the user wants (may be in Italian): ${clip(wish, 1500)}`;
+    this.office.snapshot(this.agents);   // per "Annulla"
+    this.agents.activity(agent.id, `ridipingo l'ufficio (${choice.label})`, 'agent.editing');
+    const g = await choice.prov.generate({ ...choice.opts, prompt, size: '1536x1024', references: [shot.file, ...refs] });
+    if (!g.ok) return { ok: false, error: `generatore immagini: ${g.error}` };
+    const name = `ufficio-${stamp}.png`;
+    fs.writeFileSync(path.join(dir, name), g.png);
+    this.office.setPaint({ url: `/office-paint/${name}`, maquette: `/office-paint/${path.basename(shot.file)}`, W: shot.W, H: shot.H, ox: shot.ox, oy: shot.oy, scale: shot.scale, hash: layoutHash(this.office.get()), provider: choice.id, at: now(), task: t.id });
+    return { ok: true, result: { summary: `Ufficio ridipinto con ${choice.label}: ora è lo sfondo della sede (personaggi e luci restano animati sopra).`, notes: 'Se non ti piace: "↶ Annulla ultimo arredo" torna a prima; il pulsante 🎨 nell\'ufficio passa dal dipinto al disegno in codice. Se Arredo sposta i mobili, il dipinto va rifatto.', provider: choice.id } };
+  }
+
+  async defaultSnapshotter({ layout, out }) {
+    const { officeSnapshot } = await import(path.join(this.studioDir, 'qa', 'office-snapshot.mjs'));
+    return officeSnapshot({ webDir: path.join(this.studioDir, 'web'), layout, out });
   }
 
   // ─── Codice dello Studio (interfaccia, grafica): repository dello Studio, branch separato ────────

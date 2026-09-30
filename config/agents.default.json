@@ -199,7 +199,8 @@
       ],
       "kinds": [
         "art",
-        "avatars"
+        "avatars",
+        "office_paint"
       ],
       "provider": "auto",
       "imageProvider": "auto",

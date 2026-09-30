@@ -166,7 +166,8 @@ export function createServer(studio) {
     ['GET', /^\/api\/git$/, async () => ({ available: await git.available(), status: await git.status(), commits: await git.recentCommits(15) })],
     ['GET', /^\/api\/costs$/, async () => orch.costs.summary()],
     ['POST', /^\/api\/costs\/reset$/, async () => orch.costs.reset()],
-    ['GET', /^\/api\/office$/, async () => office.get()],
+    ['GET', /^\/api\/office$/, async () => ({ ...office.get(), paint: office.paint() })],
+    ['DELETE', /^\/api\/office\/paint$/, async () => { office.snapshot(agents); office.setPaint(null); return { ok: true }; }],
     ['PUT', /^\/api\/office$/, async (m, b) => { const errs = office.validate(b); if (errs.length) throw new Error(errs.join('; ')); office.snapshot(agents); office.save(b); return { ok: true }; }],
     ['POST', /^\/api\/office\/undo$/, async () => office.undo(agents)],
     ['GET', /^\/api\/providers$/, async () => providers.status()],
@@ -219,6 +220,7 @@ export function createServer(studio) {
       }
       if (p.startsWith('/artifacts/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'artifacts'));
       if (p.startsWith('/avatars/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'avatars'));
+      if (p.startsWith('/office-paint/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'office-paint'));
       if (p.startsWith('/uploads/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'uploads'));
       return sendFile(res, path.join(web, p === '/' ? 'index.html' : p), web);
     } catch (e) {
