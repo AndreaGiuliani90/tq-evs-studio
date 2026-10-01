@@ -2,29 +2,87 @@
   "_nota": "Catalogo dei modelli che lo Stratega può scegliere. tier: alta | media | bassa (qualità). included: true = compreso nell'abbonamento (nessun costo extra, consuma solo i limiti d'uso). usdPerTask: stima del costo di un task per i provider a consumo. Se un nome di modello non funziona sul tuo account, correggilo qui (o metti \"\" per il modello predefinito del provider).",
   "text": {
     "claude-code": {
-      "label": "Claude Code (abbonamento Claude)", "included": true,
+      "label": "Claude Code (abbonamento Claude)",
+      "included": true,
       "models": [
-        { "id": "opus", "tier": "alta", "speed": "lenta", "note": "il più capace: codice difficile, decisioni importanti; consuma di più i limiti del piano" },
-        { "id": "sonnet", "tier": "media", "speed": "media", "note": "equilibrato: la maggior parte del lavoro" },
-        { "id": "haiku", "tier": "bassa", "speed": "veloce", "note": "compiti semplici e ripetitivi, controlli rapidi" }
+        {
+          "id": "opus",
+          "tier": "alta",
+          "speed": "lenta",
+          "note": "il più capace dopo Fable: codice difficile, correzioni delicate, decisioni importanti; consuma di più i limiti del piano"
+        },
+        {
+          "id": "fable",
+          "tier": "alta",
+          "speed": "lenta",
+          "note": "il modello di punta più recente (classe Mythos): ragionamento lungo e lavori agentici molto complessi; consuma MOLTO i limiti del piano: solo per i task eccezionalmente difficili (architettura, bug ostinati dopo più tentativi)"
+        },
+        {
+          "id": "sonnet",
+          "tier": "media",
+          "speed": "media",
+          "note": "equilibrato: la maggior parte del lavoro"
+        },
+        {
+          "id": "haiku",
+          "tier": "bassa",
+          "speed": "veloce",
+          "note": "compiti semplici e ripetitivi, controlli rapidi"
+        }
       ]
     },
     "codex": {
-      "label": "Codex (abbonamento ChatGPT)", "included": true,
+      "label": "Codex (abbonamento ChatGPT)",
+      "included": true,
       "models": [
-        { "id": "gpt-6-astra", "tier": "alta", "speed": "lenta", "note": "il più capace di OpenAI; genera anche immagini" },
-        { "id": "gpt-6-sol", "tier": "media", "speed": "media", "note": "equilibrato" },
-        { "id": "gpt-6-luna", "tier": "bassa", "speed": "veloce", "note": "leggero e rapido" }
+        {
+          "id": "gpt-6-astra",
+          "tier": "alta",
+          "speed": "lenta",
+          "note": "il più capace di OpenAI; genera anche immagini"
+        },
+        {
+          "id": "gpt-6-sol",
+          "tier": "media",
+          "speed": "media",
+          "note": "equilibrato"
+        },
+        {
+          "id": "gpt-6-luna",
+          "tier": "bassa",
+          "speed": "veloce",
+          "note": "leggero e rapido"
+        }
       ]
     },
     "gemini": {
-      "label": "Gemini CLI (account Google)", "included": true,
-      "models": [ { "id": "", "tier": "media", "speed": "media", "note": "modello predefinito di Gemini CLI" } ]
+      "label": "Gemini CLI (account Google)",
+      "included": true,
+      "models": [
+        {
+          "id": "",
+          "tier": "media",
+          "speed": "media",
+          "note": "modello predefinito di Gemini CLI"
+        }
+      ]
     },
     "anthropic": {
-      "label": "API Anthropic (a consumo)", "included": false,
-      "models": [ { "id": "", "tier": "alta", "speed": "media", "usdPerTask": 0.4, "note": "modello di ANTHROPIC_MODEL; si paga per token" } ],
-      "usdPerMTok": { "input": 3, "output": 15 }
+      "label": "API Anthropic (a consumo)",
+      "included": false,
+      "models": [
+        {
+          "id": "",
+          "tier": "alta",
+          "speed": "media",
+          "usdPerTask": 0.4,
+          "note": "modello di ANTHROPIC_MODEL; si paga per token"
+        }
+      ],
+      "usdPerMTok": {
+        "input": 3,
+        "output": 15
+      }
     }
   }
 }

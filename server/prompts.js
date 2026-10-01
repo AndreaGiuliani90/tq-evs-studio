@@ -179,6 +179,7 @@ La Regia l'ha divisa in task. Per OGNUNO scegli UNA delle opzioni elencate (prov
 - le opzioni INCLUSE non costano nulla in più (consumano solo i limiti d'uso degli abbonamenti): preferiscile sempre;
 - qualità "alta" solo dove fa davvero la differenza (codice di gioco complesso, correzioni delicate, integrazioni, scelte di design importanti); "media" per il lavoro normale; "bassa" per compiti semplici (testi brevi, controlli, arredo, art direction);
 - opzioni A PAGAMENTO solo se portano un beneficio chiaro: in quel caso l'utente vedrà un preventivo e deciderà.
+- fra le opzioni di qualità alta, "fable" è la più potente ma consuma molto i limiti dell'abbonamento: sceglila solo per task eccezionalmente difficili o quando un lavoro è già fallito con opus; altrimenti opus per il lavoro delicato, sonnet per il normale, haiku per il semplice.
 
 ${tasks.map((t) => `### ${t.key} — ${t.agentName} · ${t.kind} · ${t.title}
 ${clip(t.instructions || '', 400)}

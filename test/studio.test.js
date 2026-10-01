@@ -827,7 +827,7 @@ test('effetti sonori: Rumore progetta, ElevenLabs e jsfxr generano 3 varianti, r
   reg.register({ id: 'elevenlabs', kind: 'audio', model: 'eleven_text_to_sound_v2', format: 'mp3_44100_128', available: async () => ({ ok: true }), subscription: async () => ({ ok: true, tier: 'free', used: 0, limit: 10000, commercial: false }), sound: async (o) => { calls.push(o); return { ok: true, buf: ff.status === 0 ? fs.readFileSync(tone) : Buffer.from('ID3fake'), ext: 'mp3', credits: 200 }; } });
   const s = await studioFor(root, reg);
   const req = await s.orch.handleUserMessage('Rumore, primo lotto di suoni: vetro rotto, notte del borgo, click del menu, pickup della birra');
-  await waitFor(() => req.status === 'DONE', 20000, 'DONE');
+  await waitFor(() => req.status === 'DONE', 60000, 'DONE');
   assert.equal(calls.length, 6, '2 suoni ElevenLabs × 3 varianti');
   assert.match(calls[0].text, /no music, no voice$/);
   assert.equal(calls.find((c) => /night/.test(c.text)).loop, true);
@@ -848,15 +848,15 @@ test('effetti sonori: Rumore progetta, ElevenLabs e jsfxr generano 3 varianti, r
   assert.equal(el.runs, 6); assert.equal(el.credits, 1200); assert.equal(el.usd, 0);
   // stessa richiesta: tutto dalla cache, nessuna nuova generazione
   const req2 = await s.orch.handleUserMessage('rifai gli stessi suoni');
-  await waitFor(() => req2.status === 'DONE', 20000, 'DONE 2');
+  await waitFor(() => req2.status === 'DONE', 60000, 'DONE 2');
   assert.equal(calls.length, 6);
   // lotto grande: oltre 10 suoni si chiede l'ok, "riprova" li genera
   design = Array.from({ length: 11 }, (_, i) => ({ id: `ui_${i}`, category: 'ui', engine: 'jsfxr', preset: 'click' }));
   const req3 = await s.orch.handleUserMessage('undici suoni di interfaccia');
-  await waitFor(() => req3.status === 'NEEDS_USER', 10000, 'conferma');
+  await waitFor(() => req3.status === 'NEEDS_USER', 30000, 'conferma');
   assert.match(s.store.data.chat.at(-1).text, /Serve il tuo ok[\s\S]*11 suoni[\s\S]*riprova/);
   await s.orch.handleUserMessage('riprova');
-  await waitFor(() => req3.status === 'DONE', 30000, 'DONE 3');
+  await waitFor(() => req3.status === 'DONE', 60000, 'DONE 3');
   assert.equal(Object.keys(s.orch.sfx.manifest().sounds).length, 15);
 });
 

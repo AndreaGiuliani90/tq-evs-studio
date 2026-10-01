@@ -652,7 +652,10 @@ export class Orchestrator {
   startTask(t, req) {
     const base = this.agents.get(t.agentId);
     // modello scelto dallo Stratega (i task nati dopo, come correzioni e nuovi test, usano la scelta per quel tipo)
-    const s = t.strategy || req?.strategy?.byKind?.[t.kind] || null;
+    let s = t.strategy || req?.strategy?.byKind?.[t.kind] || null;
+    // secondo tentativo dopo un errore, o giro di correzione dopo un test fallito: si sale di un gradino (sonnet → opus → fable)
+    const LADDER = { haiku: 'sonnet', sonnet: 'opus', opus: 'fable' };
+    if (s && s.provider === 'claude-code' && LADDER[s.model] && (t.attempt >= 1 || (t.kind === 'fix' && (t.loop || 0) >= 2))) s = { ...s, model: LADDER[s.model], why: 'sale di livello dopo un tentativo non riuscito' };
     const agent = s ? { ...base, provider: s.provider || base.provider, model: s.model ?? base.model } : base;
     const ctrl = new AbortController();
     this.setTask(t, { status: 'RUNNING', startedAt: now(), attempt: t.attempt + 1, usedModel: s ? this.modelLabel(s) : null }, `avviato (tentativo ${t.attempt + 1})${s ? ` · ${this.modelLabel(s)}` : ''}`);
