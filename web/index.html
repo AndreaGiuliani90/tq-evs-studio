@@ -33,7 +33,7 @@
           <button class="btn sm" data-zoom="fit" title="Tutta la stanza (0 o Esc)">⤢</button>
           <button class="btn sm" id="paint-toggle" hidden>🎨</button>
         </div>
-        <div class="office-note" id="paint-note" hidden>Lo sfondo dipinto non corrisponde più alla pianta (Arredo ha spostato i mobili): chiedi a Cosetta di ridipingere l'ufficio.</div>
+        <div class="office-note" id="paint-note" hidden>Lo sfondo dipinto non corrisponde più alla pianta (i mobili sono cambiati): chiedi a Cosetta di ridipingere l'ufficio, oppure premi 🎨 per vederlo comunque.</div>
         <div class="office-hint muted">Rotellina o pizzico per lo zoom · trascina per muoverti · clic su un personaggio per avvicinarti</div>
         <div class="office-focus hidden" id="office-focus"></div>
         <div class="office-name" id="office-name"></div>
@@ -50,6 +50,7 @@
 
     <section class="right">
       <div class="chat-head"><span id="director-avatar"></span><div><b id="director-name">Regia</b><div class="muted" id="director-status">—</div></div></div>
+      <div class="pending-bar" id="pending-bar" hidden></div>
       <div class="chat" id="chat"></div>
       <form class="composer" id="composer">
         <div class="att-preview hidden" id="att-preview"></div>

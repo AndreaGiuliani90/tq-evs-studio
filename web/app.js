@@ -79,8 +79,8 @@ function onEvent(e) {
     if (S.focus === e.agentId) renderFocus();
   }
   if (t === 'task.created' || t === 'task.updated') { S.tasks[e.task.id] = e.task; renderTasks(); refreshChips(e.task.requestId); if (S.drawer) renderDrawer(); }
-  if (t === 'request.created' || t === 'request.updated') { S.requests[e.request.id] = e.request; renderTasks(); refreshChips(e.request.id); refreshActions(e.request.id); }
-  if (t === 'chat.message') { S.chat.push(e.message); appendChat(e.message); }
+  if (t === 'request.created' || t === 'request.updated') { S.requests[e.request.id] = e.request; renderTasks(); refreshChips(e.request.id); refreshActions(e.request.id); refreshStale(e.request.id); renderDecisions(); }
+  if (t === 'chat.message') { S.chat.push(e.message); appendChat(e.message); if (e.message.requestId) refreshStale(e.message.requestId); }
   if (t === 'studio.warning') toast(e.text, true);
   if (t === 'office.updated') loadOffice().catch(() => {});
   if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
@@ -200,14 +200,45 @@ function reportHTML(rep) {
   </details>`;
 }
 
+// i messaggi che chiedevano qualcosa (domanda, preventivo, errore) restano in chat: se la richiesta nel frattempo si è
+// chiusa o è ripartita, si vede subito che non sono più attuali
+const REQ_DONE = { CANCELLED: 'annullata', DONE: 'completata', ANSWERED: 'risposta data', FAILED: 'fallita', RUNNING: 'ripartita', PLANNING: 'ripartita' };
+function staleTag(m) {
+  if (!m.requestId || !['escalation', 'quote', 'question'].includes(m.kind)) return '';
+  const r = S.requests[m.requestId]; if (!r) return '';
+  if (r.status === 'NEEDS_USER') {
+    const last = [...S.chat].reverse().find((x) => x.requestId === m.requestId && ['escalation', 'quote', 'question'].includes(x.kind));
+    return last && last.id !== m.id ? 'superato' : '';
+  }
+  return `non più attuale · ${REQ_DONE[r.status] || r.status.toLowerCase()}`;
+}
+function refreshStale(reqId) {
+  for (const el of document.querySelectorAll(`[data-msg-req="${CSS.escape(reqId)}"]`)) {
+    const m = S.chat.find((x) => x.id === el.dataset.id); if (!m) continue;
+    const st = staleTag(m);
+    el.classList.toggle('stale', !!st);
+    let tag = el.querySelector('.stale-tag');
+    if (st && !tag) { tag = document.createElement('span'); tag.className = 'stale-tag'; el.querySelector('.mhead')?.append(' ', tag); }
+    if (tag) { if (st) tag.textContent = st; else tag.remove(); }
+  }
+}
+// barra in cima alla chat: SOLO le decisioni che ti aspettano adesso
+function renderDecisions() {
+  const box = $('#pending-bar'); if (!box) return;
+  const open = Object.values(S.requests).filter((r) => r.status === 'NEEDS_USER').sort((a, b) => a.id.localeCompare(b.id));
+  box.hidden = !open.length;
+  box.innerHTML = open.length ? `<b>${open.length === 1 ? 'Una decisione ti aspetta' : `${open.length} decisioni ti aspettano`}:</b> ${open.map((r) => `<button class="btn sm" data-goto="${esc(r.id)}">${esc(r.id)} · ${esc(r.quotePending ? 'preventivo' : r.escalation ? 'problema' : 'domanda')}</button>`).join(' ')}` : '';
+}
+
 function msgHTML(m) {
   const a = m.agentId ? S.agents[m.agentId] : null;
   const who = m.role === 'user' ? 'Tu' : a ? a.name : 'Studio';
   const chips = m.kind === 'plan' || m.kind === 'report' || m.kind === 'escalation' ? `<div class="chips" data-req-chips="${esc(m.requestId)}">${taskChips(m.requestId)}</div>` : '';
   const actions = m.requestId && ['report', 'escalation', 'plan', 'quote', 'question'].includes(m.kind) ? `<div class="actions" data-req-actions="${esc(m.requestId)}">${requestActions(S.requests[m.requestId])}</div>` : '';
-  return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}" data-id="${esc(m.id)}">
+  const st = staleTag(m);
+  return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}${st ? ' stale' : ''}" data-id="${esc(m.id)}" ${m.requestId ? `data-msg-req="${esc(m.requestId)}"` : ''}>
     ${m.role !== 'user' && a ? `<div class="mav">${avatarHTML(a, { size: 30 })}</div>` : ''}
-    <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.requestId ? ' · ' + esc(m.requestId) : ''}</span></div>
+    <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.requestId ? ' · ' + esc(m.requestId) : ''}</span>${st ? ` <span class="stale-tag">${esc(st)}</span>` : ''}</div>
     <div class="mtext">${md(m.text)}</div>${m.attachments?.length ? `<div class="msg-att">${m.attachments.map((a) => /^image\//.test(a.type) ? `<a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="${esc(a.name)}"></a>` : `<a class="file" href="${esc(a.url)}" target="_blank">📄 ${esc(a.name)}</a>`).join('')}</div>` : ''}${chips}${m.kind === 'report' ? reportHTML(m.report) : ''}${m.kind === 'question' ? '<div class="muted qhint">↳ Rispondi qui sotto (anche a voce): la richiesta riparte da dove era.</div>' : ''}${actions}</div></div>`;
 }
 
@@ -216,6 +247,7 @@ function renderChat() {
   c.innerHTML = S.chat.length ? S.chat.map(msgHTML).join('') : `<div class="empty">Scrivi alla Regia cosa vuoi cambiare nel gioco. Smista lei il lavoro alla squadra.<br><br><button class="btn sm" data-example>Prova: «Analizza il gioco e proponi un piccolo miglioramento da implementare come test. Implementalo e testalo.»</button></div>`;
   paintPortraits(c);
   c.scrollTop = c.scrollHeight;
+  renderDecisions();
 }
 function appendChat(m) {
   const c = $('#chat');
@@ -298,6 +330,8 @@ $('#msg').onkeydown = (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.pre
 
 // azioni sui pulsanti (delegate)
 document.addEventListener('click', act(async (ev) => {
+  const go = ev.target.closest('[data-goto]');
+  if (go) { const msgs = [...document.querySelectorAll(`[data-msg-req="${CSS.escape(go.dataset.goto)}"]`)]; const m = msgs.filter((x) => !x.classList.contains('stale')).pop() || msgs.pop(); if (m) { m.scrollIntoView({ behavior: 'smooth', block: 'center' }); m.classList.add('flash'); setTimeout(() => m.classList.remove('flash'), 1600); } return; }
   const el = ev.target.closest('[data-act],[data-task],[data-open],[data-example],[data-tab]');
   if (!el) return;
   if (el.dataset.example !== undefined) { $('#msg').value = 'Analizza il gioco attuale e dimmi un piccolo miglioramento che valga la pena implementare come test. Implementalo e testalo.'; $('#msg').focus(); return; }

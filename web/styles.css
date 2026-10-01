@@ -250,3 +250,10 @@ img.office-paint { position: absolute; z-index: 0; pointer-events: none; user-se
 #office-stage { overflow: visible; }
 #paint-toggle.on { background: #ff4fa3; color: #fff; opacity: 1; }
 .office-note { position: absolute; left: 12px; right: 60px; bottom: 34px; background: #3a2a0ccc; border: 1px solid #e0b050; color: #ffe7b0; border-radius: 8px; padding: 6px 10px; font-size: 12px; z-index: 3; }
+.msg.stale .mbody { opacity: .55; }
+.msg.stale .mbody:hover { opacity: .9; }
+.msg.stale.k-escalation .mbody, .msg.stale.k-quote .mbody, .msg.stale.k-question .mbody { border-color: var(--line); }
+.stale-tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: #ffffff14; color: var(--muted, #aaa); font-weight: 600; }
+.pending-bar { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; background: #3a2a0c; border: 1px solid #e0b050; color: #ffe7b0; font-size: 13px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pending-bar[hidden] { display: none; }
+.msg.flash .mbody { box-shadow: 0 0 0 2px #e0b050; transition: box-shadow .3s; }

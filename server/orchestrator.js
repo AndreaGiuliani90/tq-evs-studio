@@ -181,6 +181,13 @@ export class Orchestrator {
   // ─── avvio / ripresa dopo un riavvio ───────────────────────────────────────────────────────────
   async init() {
     this.gitOk = await this.git.available();
+    for (const a of this.agents.list()) {
+      const r = a.runtime || {};
+      if (!['ERROR', 'BLOCKED'].includes(r.status)) continue;
+      const t = r.currentTaskId && this.S.tasks[r.currentTaskId];
+      const req = this.S.requests[t?.requestId || r.currentTaskId];
+      if (!req || !['NEEDS_USER', 'RUNNING', 'PLANNING'].includes(req.status)) this.agents.setStatus(a.id, 'IDLE', { task: null });
+    }
     for (const t of Object.values(this.S.tasks)) {
       if (t.status === 'RUNNING') { t.status = 'PENDING'; t.log.push({ ts: now(), text: 'ripreso dopo un riavvio dello Studio' }); }
     }
@@ -240,6 +247,18 @@ export class Orchestrator {
     Object.assign(req, patch, { updatedAt: now() });
     this.store.save();
     this.events.emit('request.updated', { request: req });
+    if (['CANCELLED', 'DONE', 'ANSWERED'].includes(req.status) || (req.status === 'RUNNING' && patch.status)) this.clearStaleStatus(req);
+  }
+
+  // un ERRORE o un BLOCCO che riguarda una richiesta ormai chiusa (o ripartita) non deve restare appeso agli agenti
+  clearStaleStatus(req) {
+    const ids = new Set([req.id, ...(req.taskIds || [])]);
+    for (const a of this.agents.list()) {
+      const r = a.runtime || {};
+      if (!['ERROR', 'BLOCKED'].includes(r.status)) continue;
+      const t = r.currentTaskId && this.S.tasks[r.currentTaskId];
+      if (ids.has(r.currentTaskId) || (t && t.requestId === req.id) || (!r.currentTaskId && req.status !== 'RUNNING')) this.agents.setStatus(a.id, 'IDLE', { task: null, text: req.status === 'RUNNING' ? 'si riparte' : 'richiesta chiusa' });
+    }
   }
 
   fail(req, e) {
