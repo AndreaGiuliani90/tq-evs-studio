@@ -72,13 +72,6 @@
       "spare": true
     },
     {
-      "agent": "strategist",
-      "wall": "R",
-      "at": 11.2,
-      "b0": 7.2,
-      "kind": "pc"
-    },
-    {
       "agent": "director",
       "kind": "table",
       "x": 15.2,
@@ -99,6 +92,12 @@
       "b0": 15.6,
       "kind": "pc",
       "spare": true
+    },
+    {
+      "agent": "strategist",
+      "kind": "wartable",
+      "x": 8.4,
+      "y": 5.4
     }
   ],
   "decor": [
@@ -309,6 +308,6 @@
       "title": "SAGRA"
     }
   ],
-  "layoutVersion": 2,
+  "layoutVersion": 3,
   "_pianta": "Sede grande (24×20): parete destra = programmazione, test, livelli, suono e l'angolo relax in fondo; parete sinistra = testi, arte, bibbia, enigmi e la lavagna delle spese; al centro l'isola (Arredo, Stratega) e il tavolo della Regia."
 }

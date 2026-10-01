@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readJSON, writeFileAtomic, ensureDir, now } from './util.js';
 
-export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table'];
+export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table', 'wartable'];
 export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade', 'chesstable', 'glasswall'];
 const LOOK_FIELDS = ['skin', 'hair', 'eyes', 'shirt', 'accColor', 'hairStyle', 'outfit', 'facial', 'accessory'];
 
@@ -54,7 +54,7 @@ export class OfficeStore {
     if (!Array.isArray(o.decor)) errs.push('decor deve essere un elenco');
     for (const s of o.stations || []) {
       if (!STATION_KINDS.includes(s.kind)) errs.push(`postazione di tipo sconosciuto: ${s.kind}`);
-      if (s.kind === 'table' ? !(Number.isFinite(s.x) && Number.isFinite(s.y)) : !(['R', 'L'].includes(s.wall) && Number.isFinite(s.at))) errs.push(`postazione ${s.agent || '?'}: coordinate mancanti`);
+      if (['table', 'wartable'].includes(s.kind) ? !(Number.isFinite(s.x) && Number.isFinite(s.y)) : !(['R', 'L'].includes(s.wall) && Number.isFinite(s.at))) errs.push(`postazione ${s.agent || '?'}: coordinate mancanti`);
     }
     for (const d of o.decor || []) if (!DECOR_TYPES.includes(d.type)) errs.push(`arredo di tipo sconosciuto: ${d.type}`);
     return errs;
@@ -139,7 +139,7 @@ precedente resta salvata (l'utente può annullare con un clic).
 - \`stations\` — le postazioni degli agenti (una per agente, campo \`agent\` = id):
   - a parete: { agent, wall: "R"|"L", at: posizione lungo la parete, b0: distanza dalla parete (0 = contro il muro),
     kind }. Una postazione occupa circa 3 caselle lungo la parete e 2,5 di profondità.
-  - tavolo: { agent, kind: "table", x, y } (la Regia).
+  - tavolo: { agent, kind: "table", x, y } (la Regia) · tavolo da guerra: { agent, kind: "wartable", x, y } (lo Stratega).
   - kind: ${STATION_KINDS.join(', ')}
   - \`spare: true\` = postazione libera per nuovi agenti.
 - \`decor\` — arredi. A parete ({ type, wall, at, w?, … }) oppure a pavimento ({ type, x, y, … }):

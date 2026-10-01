@@ -17,7 +17,8 @@ import { layoutHash } from './layout-hash.js';
 // risoluzione logica: dipende dalla stanza (setLayout), poi si ingrandisce a pixel pieni e si zooma
 let LW = 448, LH = 356;
 export function logicalSize(room) { return [(room.w + room.d) * 16 + 24, room.wallH + (room.w + room.d) * 8 + 30]; }
-const TW = 16, TH = 8;             // mezza casella isometrica
+const TW = 16, TH = 8;
+const FREE = ['table', 'wartable'];   // postazioni a centro stanza (x, y) invece che a parete             // mezza casella isometrica
 
 const PAL = {
   plaster: '#ead8c0', plasterL: '#d5bfa4', stone: '#8d7d6c', stoneL: '#7a6b5c', mortar: '#6d5f51',
@@ -130,7 +131,7 @@ export class Office {
 
   seatOf(st) {
     if (st.spot) return [st.x, st.y];
-    if (st.kind === 'table') return [st.x + 1.2, st.y + 0.35];
+    if (FREE.includes(st.kind)) return [st.x + 1.2, st.y + 0.35];
     const L = this.local(st);
     return L.xy(1.4, 0.75);
   }
@@ -271,7 +272,7 @@ export class Office {
     const [sx, sy] = this.iso(x, y, 30);
     const now = performance.now();
     if (type === 'agent.editing') {
-      const kb = st.kind === 'table' ? [sx, sy] : this.iso(...this.local(st).xy(1.3, 1.0), 28);
+      const kb = FREE.includes(st.kind) ? [sx, sy] : this.iso(...this.local(st).xy(1.3, 1.0), 28);
       for (let i = 0; i < 4; i++) this.particles.push({ x: kb[0] + (Math.random() - 0.5) * 8, y: kb[1], vx: (Math.random() - 0.5) * 0.6, vy: -0.6 - Math.random() * 0.6, life: 14, color: ['#7ff9e4', '#ff7ac4', '#ffe38a'][i % 3], size: 1 });
     } else if (type === 'agent.completed') {
       this.fx[agentId] = { kind: 'done', until: now + 2500 };
@@ -332,9 +333,9 @@ export class Office {
       const [cx, cy] = this.seatOf(st);
       const away = characters && this.spotOf(st.agentId);
       if (away) items.push({ k: away.x + away.y + 0.3, draw: () => { this.drawCharacter(away, a, t); this.drawProp(away, t); } });
-      if (st.kind === 'table') {
+      if (FREE.includes(st.kind)) {
         if (characters && !away) items.push({ k: cx + cy, draw: () => this.drawCharacter(st, a, t) });
-        if (furniture) items.push({ k: st.x + st.y + 1.9, draw: () => this.drawTable(st, a, t) });
+        if (furniture) items.push({ k: st.x + st.y + 1.9, draw: () => (st.kind === 'wartable' ? this.drawWarTable(st, a, t) : this.drawTable(st, a, t)) });
         continue;
       }
       const L = this.local(st);
@@ -920,6 +921,49 @@ export class Office {
     this.box(x, y, 14, w, d, 30, shade(col, 0.15), col, shade(col, -0.2));
   }
 
+  // il tavolo da guerra dello Stratega: plastico del borgo (prati, fiume, colline, strade) con le statuine dei due
+  // eserciti, le bandierine e la bacchetta; quando lo Stratega lavora sposta le pedine
+  drawWarTable(st, agent, t) {
+    const { x, y } = st, W = 3.4, D = 2.3;
+    const ctx = this.ctx, iso = this.iso;
+    // gambe robuste e piano con la cornice
+    for (const [lx, ly] of [[0.1, 0.1], [W - 0.3, 0.1], [0.1, D - 0.3], [W - 0.3, D - 0.3]]) this.wood(x + lx, y + 0.9 + ly, 0, 0.2, 0.2, 18);
+    this.box(x - 0.08, y + 0.82, 18, W + 0.16, D + 0.16, 3, PAL.woodT, PAL.woodF, PAL.woodS);
+    const top = (u, v, z = 21) => iso(x + u, y + 0.9 + v, z);
+    // il plastico: prato, colline, fiume, strada
+    poly(ctx, [top(0, 0), top(W, 0), top(W, D), top(0, D)], '#5f8f4e');
+    for (let i = 0; i < 18; i++) { const [px, py] = top(rnd(i + 11) * W, rnd(i + 23) * D); ctx.fillStyle = i % 2 ? '#6f9f58' : '#527f43'; ctx.fillRect(Math.round(px), Math.round(py), 2, 1); }
+    ctx.strokeStyle = '#5aa0d8'; ctx.lineWidth = 2; ctx.beginPath();
+    for (let k = 0; k <= 12; k++) { const u = (k / 12) * W, v = D * 0.5 + Math.sin(k * 0.9) * 0.35; const [px, py] = top(u, v); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+    ctx.stroke(); ctx.lineWidth = 1;
+    ctx.strokeStyle = '#c9a77a'; ctx.beginPath(); { const [ax, ay] = top(W * 0.55, 0.05), [bx, by] = top(W * 0.45, D - 0.05); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); } ctx.stroke();
+    for (const [u, v, r] of [[0.5, 0.35, 0.28], [2.2, 1.45, 0.32], [1.9, 0.3, 0.22]]) { const [px, py] = top(u, v, 23); ctx.fillStyle = '#7a8f52'; ctx.beginPath(); ctx.ellipse(px, py, r * 16, r * 7, 0, 0, 7); ctx.fill(); ctx.fillStyle = '#93a865'; ctx.beginPath(); ctx.ellipse(px - 1, py - 1, r * 10, r * 4, 0, 0, 7); ctx.fill(); }
+    // il borgo sul plastico: casette e campanile
+    for (let i = 0; i < 5; i++) { const [px, py] = top(1.25 + i * 0.13, 0.95 + (i % 2) * 0.12, 21); ctx.fillStyle = '#e0c49e'; ctx.fillRect(Math.round(px) - 1, Math.round(py) - 3, 3, 3); ctx.fillStyle = '#b0563c'; ctx.fillRect(Math.round(px) - 1, Math.round(py) - 4, 3, 1); }
+    { const [px, py] = top(1.55, 0.9, 21); ctx.fillStyle = '#e0c49e'; ctx.fillRect(Math.round(px), Math.round(py) - 7, 2, 7); ctx.fillStyle = '#b0563c'; ctx.fillRect(Math.round(px), Math.round(py) - 8, 2, 1); }
+    // le statuine: due eserciti (rosso e blu), con un soldato più grande e la bandierina
+    const busy = ['WORKING', 'THINKING', 'TESTING'].includes(agent?.runtime?.status);
+    const moveK = busy ? (t * 0.25) % 1 : 0.35;
+    const pieces = [];
+    for (let i = 0; i < 6; i++) pieces.push({ u: 0.25 + (i % 3) * 0.18, v: 0.2 + Math.floor(i / 3) * 0.2, c: '#c0392b', d: '#7d251c' });
+    for (let i = 0; i < 6; i++) pieces.push({ u: W - 0.3 - (i % 3) * 0.18, v: D - 0.25 - Math.floor(i / 3) * 0.2, c: '#2f5fa8', d: '#1d3b6b' });
+    pieces.push({ u: 0.6 + moveK * 1.2, v: 0.55 + Math.sin(moveK * 3.14) * 0.3, c: '#c0392b', d: '#7d251c', moving: true });
+    pieces.sort((a, b) => a.u + a.v - (b.u + b.v));
+    for (const p of pieces) {
+      const [px, py] = top(p.u, p.v, 21);
+      ctx.fillStyle = '#00000040'; ctx.fillRect(Math.round(px) - 1, Math.round(py), 3, 1);
+      ctx.fillStyle = p.d; ctx.fillRect(Math.round(px) - 2, Math.round(py) - 4, 4, 4);
+      ctx.fillStyle = p.c; ctx.fillRect(Math.round(px) - 2, Math.round(py) - 6, 3, 4);
+      ctx.fillStyle = '#e8c9a0'; ctx.fillRect(Math.round(px) - 1, Math.round(py) - 8, 2, 2);
+      if (p.moving) { ctx.fillStyle = '#5a3a22'; ctx.fillRect(Math.round(px) + 1, Math.round(py) - 9, 1, 5); ctx.fillStyle = '#ffd166'; ctx.fillRect(Math.round(px) + 2, Math.round(py) - 9, 3, 2); }
+    }
+    for (const [u, v, c] of [[0.3, 0.15, '#c0392b'], [W - 0.25, D - 0.2, '#2f5fa8'], [1.5, 1.0, '#ffd166']]) { const [px, py] = top(u, v, 21); ctx.fillStyle = '#3a2a20'; ctx.fillRect(Math.round(px), Math.round(py) - 8, 1, 8); ctx.fillStyle = c; ctx.fillRect(Math.round(px) + 1, Math.round(py) - 8, 3, 2); }
+    // la bacchetta dello stratega appoggiata sul bordo
+    { const [ax, ay] = top(W - 0.1, 0.1, 22), [bx, by] = top(W - 0.9, 0.35, 22); ctx.strokeStyle = '#3a2a20'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.fillStyle = '#c9a227'; ctx.fillRect(Math.round(ax) - 1, Math.round(ay) - 1, 2, 2); }
+    // il fronte del tavolo chiuso (nasconde le gambe del personaggio)
+    this.box(x, y + 0.9 + D - 0.05, 2, W, 0.05, 16, PAL.woodF, PAL.woodF, PAL.woodS);
+  }
+
   drawTable(st, agent, t) {
     const { x, y } = st;
     this.wood(x, y + 0.9, 0, 2.4, 0.9, 22);   // fronte chiuso: il tavolo della presidenza
@@ -1170,7 +1214,7 @@ export class Office {
     if (!agent) return;
     const status = agent.runtime?.status || 'IDLE';
     const anim = (agent.animations || {})[status] || 'idle';
-    const icon = { 'writing-notes': 'dots', waiting: 'hourglass', question: '?', error: '!', celebrate: 'check' }[anim] || (st.kind === 'table' && status === 'THINKING' ? 'dots' : null);
+    const icon = { 'writing-notes': 'dots', waiting: 'hourglass', question: '?', error: '!', celebrate: 'check' }[anim] || (FREE.includes(st.kind) && status === 'THINKING' ? 'dots' : null);
     if (!icon) return;
     const ctx = this.ctx;
     const [cx, cy] = this.seatOf(st);
@@ -1197,7 +1241,7 @@ export class Office {
     const hole = (x, y, r, a = 1) => { const g = d.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(1, 'rgba(0,0,0,0)'); d.fillStyle = g; d.fillRect(x - r, y - r, r * 2, r * 2); };
     const glows = [];
     for (const st of this.stations()) {
-      if (st.kind === 'table') { const [x, y] = iso(st.x + 1.2, st.y + 0.9, 30); hole(x, y, 46, 0.8); glows.push([x, y, 40, '255,196,110', 0.1]); continue; }
+      if (FREE.includes(st.kind)) { const [x, y] = iso(st.x + 1.2, st.y + 0.9, 30); hole(x, y, 46, 0.8); glows.push([x, y, 40, '255,196,110', 0.1]); continue; }
       const L = this.local(st);
       const [lx, ly] = iso(...L.xy(2.67, 1.45), 42); hole(lx, ly + 8, 46, 0.95); glows.push([lx, ly + 8, 42, '255,200,120', 0.15]);
       const status = this.agents[st.agentId]?.runtime?.status;
