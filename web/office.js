@@ -316,6 +316,7 @@ export class Office {
     this.particles = this.particles.filter((p) => p.life > 0);
 
     this.drawLight(sky, t);
+    this.drawDaylight(sky, t, date);
 
     // fumetti sopra la testa (dopo la luce: restano leggibili)
     for (const st of this.stations()) this.drawBubble(this.spotOf(st.agentId) || st, this.agents[st.agentId], t);
@@ -571,18 +572,7 @@ export class Office {
     const top = this.wallRect(wall, a0 - 0.08, a1 + 0.08, z1, z1 + 3); poly(ctx, top.pts, frame);
     const sill = this.wallRect(wall, a0 - 0.12, a1 + 0.12, z0 - 4, z0); poly(ctx, sill.pts, PAL.woodT);
     const sillF = this.wallRect(wall, a0 - 0.12, a1 + 0.12, z0 - 6, z0 - 4); poly(ctx, sillF.pts, PAL.woodS);
-    // luce che entra: i riquadri dei vetri proiettati sul pavimento (calda di giorno, arancio al tramonto, fredda la notte)
-    const col = sky.night > 0.7 ? 'rgba(150,170,255,' : sky.night > 0 ? 'rgba(255,170,90,' : 'rgba(255,236,170,';
-    const alpha = sky.night > 0.7 ? 0.07 : sky.night > 0 ? 0.16 : 0.13;
-    const h = date.getHours() + date.getMinutes() / 60, lean = h < 13 ? 1.2 : -1.2, depth = sky.night > 0 && sky.night <= 0.7 ? 7 : 5;
-    const iso = this.iso;
-    for (let i = 0; i < n; i++) {
-      const b0 = a0 + ((a1 - a0) * i) / n + 0.1, b1 = a0 + ((a1 - a0) * (i + 1)) / n - 0.1;
-      const q = wall === 'L' ? [iso(0, b0), iso(0, b1), iso(depth, b1 + lean), iso(depth, b0 + lean)] : [iso(b0, 0), iso(b1, 0), iso(b1 + lean, depth), iso(b0 + lean, depth)];
-      const gr = ctx.createLinearGradient(q[0][0], q[0][1], q[3][0], q[3][1]);
-      gr.addColorStop(0, `${col}${alpha})`); gr.addColorStop(1, `${col}0)`);
-      poly(ctx, q, gr);
-    }
+    // la luce che entra dalla vetrata è animata: drawDaylight()
   }
 
   drawWallDecor(ctx, d, sky, date) {
@@ -1229,6 +1219,93 @@ export class Office {
     ctx.globalCompositeOperation = 'lighter';
     for (const [x, y, r, c, a] of glows) { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(${c},${a})`); g.addColorStop(1, `rgba(${c},0)`); ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2); }
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ── LUCE DEL GIORNO (effetto, non oggetti): fasci volumetrici dalla vetrata, pulviscolo che brilla nei fasci,
+  // ombre di foglie che ondeggiano sul pavimento, una gradazione calda e una vignettatura morbida. Solo di giorno e al
+  // tramonto (più caldo e radente); di notte resta la luce delle lampade.
+  drawDaylight(sky, t, date) {
+    const gw = (this.layout.decor || []).find((d) => d.type === 'glasswall');
+    if (!gw || sky.night > 0.7) return;
+    const ctx = this.ctx, iso = this.iso, H = this.layout.room.wallH;
+    const dusk = sky.night > 0;
+    const h = date.getHours() + date.getMinutes() / 60;
+    const wall = gw.wall || 'L';
+    const a0 = gw.from ?? 0.3, a1 = gw.to ?? ((wall === 'L' ? this.layout.room.d : this.layout.room.w) - 0.3);
+    const n = Math.max(1, Math.round((a1 - a0) / (gw.pane || 2.4)));
+    const z0 = 30, z1 = H - 10;
+    // il sole: di mattina i fasci scendono verso il fondo, nel pomeriggio verso chi guarda; al tramonto sono lunghi e radenti
+    const lean = (h < 13 ? 1 : -1) * (dusk ? 3.2 : 1.6 + Math.abs(h - 13) * 0.25);
+    const depth = dusk ? 10.5 : 6.5;
+    const warm = dusk ? '255,150,70' : '255,226,160';
+    const P = (x, y, z) => (wall === 'L' ? iso(x, y, z) : iso(y, x, z));
+    const breath = 0.85 + Math.sin(t * 0.35) * 0.1 + Math.sin(t * 0.13 + 1) * 0.05;
+    // tutti gli effetti restano dentro la stanza (pareti + pavimento), mai sullo sfondo scuro
+    const { w: RW, d: RD } = this.layout.room;
+    ctx.save();
+    ctx.beginPath(); [iso(0, RD, 0), iso(RW, RD, 0), iso(RW, 0, 0), iso(RW, 0, H), iso(0, 0, H), iso(0, RD, H)].forEach((p, i) => (i ? ctx.lineTo(...p) : ctx.moveTo(...p))); ctx.closePath(); ctx.clip();
+    // 1) fasci di luce: dal bordo alto di ogni vetro al riquadro sul pavimento
+    const beams = [];
+    for (let i = 0; i < n; i++) {
+      const b0 = a0 + ((a1 - a0) * i) / n + 0.12, b1 = a0 + ((a1 - a0) * (i + 1)) / n - 0.12;
+      const q = { top0: P(0, b0, z1 - 4), top1: P(0, b1, z1 - 4), bot0: P(0, b0, z0), bot1: P(0, b1, z0), far0: P(depth, b0 + lean, 0), far1: P(depth, b1 + lean, 0), near0: P(0.15, b0 + lean * 0.02, 0), near1: P(0.15, b1 + lean * 0.02, 0) };
+      beams.push(q);
+      const flick = breath * (0.9 + 0.1 * Math.sin(t * 0.6 + i * 1.7));
+      const g = ctx.createLinearGradient(q.top0[0], q.top0[1], q.far0[0], q.far0[1]);
+      g.addColorStop(0, `rgba(${warm},${(dusk ? 0.34 : 0.3) * flick})`); g.addColorStop(0.5, `rgba(${warm},${(dusk ? 0.16 : 0.13) * flick})`); g.addColorStop(1, `rgba(${warm},0)`);
+      ctx.save(); ctx.globalCompositeOperation = 'screen';
+      poly(ctx, [q.top0, q.top1, q.far1, q.far0], g);
+      // riquadro di luce più netto sul pavimento
+      const f = ctx.createLinearGradient(q.near0[0], q.near0[1], q.far0[0], q.far0[1]);
+      f.addColorStop(0, `rgba(${warm},${(dusk ? 0.34 : 0.3) * flick})`); f.addColorStop(1, `rgba(${warm},0.03)`);
+      poly(ctx, [q.near0, q.near1, q.far1, q.far0], f);
+      ctx.restore();
+    }
+    // 2) ombre di foglie (un albero fuori dalla vetrata) che ondeggiano dentro i riquadri di luce
+    ctx.save(); ctx.globalCompositeOperation = 'multiply';
+    for (let k = 0; k < 46; k++) {
+      const bi = k % n, q = beams[bi];
+      const u = rnd(k * 3.1 + 7), v = rnd(k * 5.3 + 1);
+      if (rnd(k * 9.7) > (bi % 3 === 1 ? 0.95 : 0.45)) continue;   // non su tutti i vetri: l'albero copre solo una parte
+      const sway = Math.sin(t * 0.9 + k * 0.7) * 0.06 + Math.sin(t * 2.3 + k) * 0.02;
+      const lerp = (p0, p1, x) => [p0[0] + (p1[0] - p0[0]) * x, p0[1] + (p1[1] - p0[1]) * x];
+      const a = lerp(q.near0, q.near1, Math.min(1, Math.max(0, u + sway))), b = lerp(q.far0, q.far1, Math.min(1, Math.max(0, u + sway)));
+      const [x, y] = lerp(a, b, 0.15 + v * 0.75);
+      const r = 2.5 + rnd(k * 2.2) * 4.5;
+      ctx.fillStyle = `rgba(150,110,80,${dusk ? 0.22 : 0.18})`;
+      ctx.beginPath(); ctx.ellipse(x, y, r * 1.6, r * 0.8, 0, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+    // 3) pulviscolo: granelli che fluttuano lenti dentro i fasci e brillano quando passano nella luce
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    const N = 90;
+    for (let k = 0; k < N; k++) {
+      const q = beams[k % n];
+      const u = (rnd(k * 1.3) + Math.sin(t * 0.07 + k) * 0.08 + 1) % 1;              // lungo il vetro
+      const v = (rnd(k * 2.9) + t * (0.004 + rnd(k) * 0.006)) % 1;                   // dall'alto verso il pavimento, piano piano
+      const lerp = (p0, p1, x) => [p0[0] + (p1[0] - p0[0]) * x, p0[1] + (p1[1] - p0[1]) * x];
+      const top = lerp(q.top0, q.top1, u), far = lerp(q.far0, q.far1, u);
+      const [x, y] = lerp(top, far, v);
+      const wob = Math.sin(t * (0.8 + rnd(k + 5)) + k * 2) * 1.6;
+      const tw = Math.max(0, Math.sin(t * (1.2 + rnd(k + 9) * 2.4) + k * 3.3));
+      const alpha = (0.25 + 0.75 * tw) * (1 - v) * breath * (dusk ? 0.9 : 0.75);
+      if (alpha < 0.05) continue;
+      ctx.fillStyle = `rgba(${dusk ? '255,200,140' : '255,246,215'},${alpha.toFixed(2)})`;
+      ctx.fillRect(Math.round(x + wob), Math.round(y), tw > 0.9 ? 2 : 1, 1);
+    }
+    ctx.restore();
+    // 4) gradazione calda e vignettatura morbida (atmosfera, non oggetti)
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.fillStyle = dusk ? 'rgba(255,140,60,0.28)' : 'rgba(255,214,150,0.18)';
+    ctx.fillRect(0, 0, LW, LH);
+    ctx.globalCompositeOperation = 'multiply';
+    const [cx, cy] = P(depth * 0.45, (a0 + a1) / 2, 0);
+    const vg = ctx.createRadialGradient(cx, cy, Math.min(LW, LH) * 0.25, LW / 2, LH / 2, Math.max(LW, LH) * 0.75);
+    vg.addColorStop(0, 'rgba(255,255,255,0)'); vg.addColorStop(1, dusk ? 'rgba(130,80,70,0.4)' : 'rgba(170,140,130,0.28)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
+    ctx.restore();
+    ctx.restore();   // fine del ritaglio sulla stanza
   }
 
   destroy() { clearInterval(this.timer); }
