@@ -781,3 +781,26 @@ test('licenziare un agente: i compiti passano a un collega, l\'aspetto a un altr
   assert.equal(s2.agents.get('strategist').avatar.type, 'frames');
   assert.match(s2.store.data.chat.at(-1).text, /Arredo ha lasciato lo Studio/);
 });
+
+test('"riprova" e "ferma" scritti in chat agiscono sulla richiesta che aspetta una decisione', async () => {
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => (o.agent.id === 'director' ? planJSON([{ key: 'p', agent: 'art', kind: 'office_paint', title: 'Ridipingi', dependsOn: [] }]) : { text: '{}' }));
+  const reg = registryWith(prov);
+  let fail = true;
+  reg.register({ id: 'openai-image', kind: 'image', quality: 'high', label: 'o', available: async () => ({ ok: true }), generate: async () => (fail ? { ok: false, error: 'API 429: You have no credits remaining.' } : { ok: true, png: Buffer.from('X') }) });
+  const s = await studioFor(root, reg, { quoteThresholdUsd: 1e6 });
+  s.orch.snapshotter = async ({ out }) => { fs.writeFileSync(out, 'M'); return { file: out, W: 3, H: 2, ox: 0, oy: 0, scale: 2 }; };
+  const req = await s.orch.handleUserMessage('ridipingi l\'ufficio');
+  await waitFor(() => req.status === 'NEEDS_USER', 8000, 'escalation');
+  assert.equal(s.agents.get('art').runtime.status !== 'IDLE', true);
+  fail = false;
+  const r2 = await s.orch.handleUserMessage('riprova');
+  assert.equal(r2.id, req.id, 'non crea una richiesta nuova');
+  await waitFor(() => req.status === 'DONE', 8000, 'DONE');
+  fail = true;
+  const req2 = await s.orch.handleUserMessage('ridipingi di nuovo l\'ufficio');
+  await waitFor(() => req2.status === 'NEEDS_USER', 8000, 'escalation 2');
+  await s.orch.handleUserMessage('Ferma.');
+  assert.equal(req2.status, 'CANCELLED');
+  assert.equal(s.agents.get('art').runtime.status, 'IDLE', 'niente ERRORE appeso dopo la chiusura');
+});

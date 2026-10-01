@@ -257,3 +257,9 @@ img.office-paint { position: absolute; z-index: 0; pointer-events: none; user-se
 .pending-bar { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; background: #3a2a0c; border: 1px solid #e0b050; color: #ffe7b0; font-size: 13px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .pending-bar[hidden] { display: none; }
 .msg.flash .mbody { box-shadow: 0 0 0 2px #e0b050; transition: box-shadow .3s; }
+
+/* l'ufficio zoomato non deve mai "coprire" il resto della pagina (alcuni browser non ritagliano i clic insieme alla vista) */
+.office-wrap { clip-path: inset(0 round 14px); isolation: isolate; contain: paint; }
+.office-stage, #office, img.office-paint { pointer-events: none; }
+.office-overlay button, .office-overlay .oboard-hit { pointer-events: auto; }
+.right { position: relative; z-index: 5; }

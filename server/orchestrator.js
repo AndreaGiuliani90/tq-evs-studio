@@ -221,6 +221,11 @@ export class Orchestrator {
     this.chat('user', text, attachments.length ? { attachments } : {});
     // se la Regia aveva fatto una domanda, questo messaggio è la risposta: la richiesta originale continua qui
     const asked = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
+    // "riprova" / "ferma" detti in chat valgono come i pulsanti sulla richiesta che aspetta una decisione
+    const waiting = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && !r.quotePending && (r.escalation || r.planFailed));
+    const cmd = text.toLowerCase().trim().replace(/[.!]+$/, '');
+    if (waiting.length && /^(riprova|riprovaci|ritenta|vai di nuovo)$/.test(cmd)) { const r = waiting.sort((x, y) => y.id.localeCompare(x.id))[0]; this.chat('director', `Riprovo ${r.id}.`, { agentId: 'director', requestId: r.id }); return this.retry(r.id); }
+    if (waiting.length && /^(ferma|fermala|annulla|lascia stare|lascia perdere|stop)$/.test(cmd)) { const r = waiting.sort((x, y) => y.id.localeCompare(x.id))[0]; this.chat('director', `Fermo ${r.id}: nessun altro tentativo.`, { agentId: 'director', requestId: r.id }); return this.cancel(r.id); }
     if (asked?.quotePending) {
       const t = text.toLowerCase().trim();
       const opts = asked.quote?.options || [];
