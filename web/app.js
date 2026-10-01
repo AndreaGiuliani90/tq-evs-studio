@@ -13,12 +13,19 @@ const STATUS_IT = { IDLE: 'libero', THINKING: 'pensa', WORKING: 'lavora', WAITIN
 const REQ_IT = { PLANNING: 'in pianificazione', RUNNING: 'in corso', DONE: 'completata', ANSWERED: 'risposta', NEEDS_USER: 'serve una tua decisione', FAILED: 'fallita', CANCELLED: 'annullata' };
 
 async function api(method, url, body) {
-  const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  let r;
+  try { r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); }
+  catch (e) { report(`fetch ${method} ${url}: ${e.message}`); throw new Error(`lo Studio non ha ricevuto la richiesta (${e.message}). È acceso?`); }
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `errore ${r.status}`);
+  if (!r.ok) { report(`${method} ${url} → ${r.status} ${j.error || ''}`); throw new Error(j.error || `errore ${r.status}`); }
   return j;
 }
-function toast(text, bad) { const t = $('#toast'); t.textContent = text; t.className = `toast${bad ? ' bad' : ''}`; clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 4500); }
+// diario degli errori del browser: va nel log dello Studio (data/client-errors.log) con una semplice GET,
+// così si capisce cosa è successo anche quando le chiamate normali non arrivano
+function report(msg) { try { new Image().src = `/api/client-log?m=${encodeURIComponent(String(msg).slice(0, 600))}&t=${Date.now()}`; } catch { /* niente */ } }
+window.addEventListener('error', (e) => report(`errore JS: ${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => report(`promessa: ${e.reason?.message || e.reason}`));
+function toast(text, bad) { const t = $('#toast'); t.textContent = bad ? `${text}  ✕` : text; t.className = `toast${bad ? ' bad' : ''}`; t.onclick = () => t.classList.add('hidden'); clearTimeout(toast.t); if (!bad) toast.t = setTimeout(() => t.classList.add('hidden'), 4500); }
 const act = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
 // ─── avvio ───────────────────────────────────────────────────────────────────────────────────────
@@ -323,8 +330,10 @@ $('#composer').onsubmit = act(async (ev) => {
   if (S.pending.some((a) => a.uploading)) { toast('Aspetta che finiscano i caricamenti…'); return; }
   if (!text && !S.pending.length) return;
   const attachments = S.pending.map(({ id, name, type }) => ({ id, name, type }));
+  const keep = { text, pending: S.pending };
   $('#msg').value = ''; S.pending = []; renderPending();
-  await api('POST', '/api/chat', { text, attachments });
+  try { await api('POST', '/api/chat', { text, attachments }); }
+  catch (e) { if (!$('#msg').value) $('#msg').value = keep.text; S.pending = keep.pending; renderPending(); throw new Error(`Messaggio NON inviato (è ancora nella casella): ${e.message}`); }
 });
 $('#msg').onkeydown = (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#composer').requestSubmit(); } };
 

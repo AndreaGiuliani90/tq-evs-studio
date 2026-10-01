@@ -187,6 +187,7 @@ export function createServer(studio) {
     ['PUT', /^\/api\/memory\/([A-Z_]+)$/, async (m, b) => { knowledge.write(m[1], String(b.content ?? '')); return { ok: true }; }],
     ['GET', /^\/api\/git$/, async () => ({ available: await git.available(), status: await git.status(), commits: await git.recentCommits(15) })],
     ['GET', /^\/api\/costs$/, async () => orch.costs.summary()],
+    ['GET', /^\/api\/client-log$/, async (m, b, q) => { try { fs.appendFileSync(path.join(dataDir, 'client-errors.log'), `${new Date().toISOString()} ${String(q?.get?.('m') || '').slice(0, 800).replace(/\n/g, ' ')}\n`); } catch { /* niente */ } return { ok: true }; }],
     ['GET', /^\/api\/sfx$/, async () => orch.sfx.manifest()],
     ['POST', /^\/api\/costs\/reset$/, async () => orch.costs.reset()],
     ['GET', /^\/api\/office$/, async () => ({ ...office.get(), paint: office.paint() })],
@@ -228,7 +229,7 @@ export function createServer(studio) {
           const m = p.match(re);
           if (m && req.method === method) {
             const b = ['POST', 'PUT'].includes(method) ? await body(req, p === '/api/uploads' ? 60 * 1024 * 1024 : undefined) : {};
-            return json(res, 200, await fn(m, b));
+            return json(res, 200, await fn(m, b, url.searchParams));
           }
         }
         return json(res, 404, { error: 'rotta sconosciuta' });

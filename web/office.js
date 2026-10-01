@@ -207,7 +207,7 @@ export class Office {
 
   updateIdle() {
     const now = performance.now(), fast = /[?&]pausa=veloce/.test(location.search);
-    const WAIT = fast ? 2500 : 75000, SLOT = fast ? 12000 : 180000;
+    const WAIT = fast ? 2500 : 180000, SLOT = fast ? 12000 : 240000, MAX_AWAY = 3;
     this.idleSince ??= {}; this.away ??= {};
     const hash = (str) => { let h = 7; for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
     const slot = Math.floor(Date.now() / SLOT);
@@ -223,8 +223,8 @@ export class Office {
     const spots = this.relaxSpots(), next = {};
     const chess = spots.filter((p) => p.act === 'chess'), other = spots.filter((p) => p.act !== 'chess');
     let i = 0;
-    if (chess.length >= 2 && idle.length >= 2 && hash(`scacchi${slot}`) % 2 === 0) { next[idle[i++]] = chess[0]; next[idle[i++]] = chess[1]; }
-    for (const p of other) { if (i >= idle.length) break; next[idle[i++]] = p; }
+    if (chess.length >= 2 && idle.length >= 2 && MAX_AWAY >= 2 && hash(`scacchi${slot}`) % 2 === 0) { next[idle[i++]] = chess[0]; next[idle[i++]] = chess[1]; }
+    for (const p of other) { if (i >= Math.min(idle.length, MAX_AWAY)) break; next[idle[i++]] = p; }
     const key = JSON.stringify(Object.entries(next).map(([k, v]) => [k, v.group]).sort());
     if (key !== this.awayKey) { this.away = next; this.awayKey = key; this.placeLabels(); }
   }
