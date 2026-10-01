@@ -98,6 +98,7 @@ export class Office {
     this.onResize?.();
   }
   setCosts(c) { this.costs = c; this.staticLayer = null; this.placeLabels(); }
+  setBoards({ backlog, team } = {}) { if (backlog) this.backlog = backlog; if (team) this.team = team; this.staticLayer = null; this.placeLabels(); }
   setAgents(list) { for (const a of list) this.agents[a.id] = a; this.placeLabels(); }
   updateAgent(a) { this.agents[a.id] = a; this.updateLabel(a); }
 
@@ -167,27 +168,40 @@ export class Office {
   // lavagna delle spese: sopra c'è solo un'area sensibile grande quanto la lavagna; il cartellino con le cifre
   // compare passandoci sopra col cursore (o al primo tocco); il clic apre il dettaglio
   placeBoardHit() {
-    const d = (this.layout?.decor || []).find((x) => x.type === 'costboard');
-    if (!d || !this.overlay || !this.wallRect) return;
-    const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + (d.w || 2.8), z0, z0 + 60);
-    const xs = r.pts.map((p) => p[0]), ys = r.pts.map((p) => p[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    const c = this.costs || { totalUsd: 0, providers: [] };
-    const SHORT = { 'openai-image': 'GPT', 'gemini-image': 'Nano', anthropic: 'API' };
-    const paid = (c.providers || []).filter((p) => !p.included && (p.usd > 0 || p.images > 0));
-    const sub = paid.length ? paid.slice(0, 3).map((p) => `${SHORT[p.id] || p.short} ${p.usd.toFixed(2)}`).join(' · ') : 'piano: incluso';
-    const b = document.createElement('button');
-    b.className = 'oboard-hit'; b.title = 'Spese dello Studio';
-    Object.assign(b.style, { left: `${(x0 / LW) * 100}%`, top: `${(y0 / LH) * 100}%`, width: `${((x1 - x0) / LW) * 100}%`, height: `${((y1 - y0) / LH) * 100}%` });
-    b.innerHTML = `<span class="oboard"><b>SPESE</b> $${Number(c.totalUsd || 0).toFixed(2)}<small>${escapeHTML(sub)}</small><small class="muted">clic per il dettaglio</small></span>`;
-    b.onclick = (e) => {
-      if (this.view?.wasDrag) return;
-      // sui touch il primo tocco mostra il cartellino, il secondo apre il dettaglio
-      if (matchMedia('(hover: none)').matches && !b.classList.contains('open')) { b.classList.add('open'); e.preventDefault(); return; }
-      this.onBoard?.();
-    };
-    b.onblur = () => b.classList.remove('open');
-    this.overlay.appendChild(b);
+    if (!this.overlay || !this.wallRect) return;
+    for (const d of (this.layout?.decor || []).filter((x) => ['costboard', 'todoboard', 'perfboard'].includes(x.type))) {
+      const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + (d.w || 2.8), z0, z0 + 60);
+      const xs = r.pts.map((p) => p[0]), ys = r.pts.map((p) => p[1]);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      let head = '', sub = '', title = '';
+      if (d.type === 'costboard') {
+        const c = this.costs || { totalUsd: 0, providers: [] };
+        const SHORT = { 'openai-image': 'GPT', 'gemini-image': 'Nano', anthropic: 'API' };
+        const paid = (c.providers || []).filter((p) => !p.included && (p.usd > 0 || p.images > 0));
+        head = `<b>SPESE</b> $${Number(c.totalUsd || 0).toFixed(2)}`; title = 'Spese dello Studio';
+        sub = paid.length ? paid.slice(0, 3).map((p) => `${SHORT[p.id] || p.short} ${p.usd.toFixed(2)}`).join(' · ') : 'piano: incluso';
+      } else if (d.type === 'todoboard') {
+        const b = this.backlog || { open: [], counts: {} };
+        head = `<b>DA FARE</b> ${b.open.length}`; title = 'Attività concordate';
+        sub = b.open.length ? b.open.slice(0, 3).map((i) => `${i.status === 'in corso' ? '▶ ' : ''}${i.id} ${i.title}`).map((t) => escapeHTML(t.length > 34 ? t.slice(0, 33) + '…' : t)).join('<br>') : 'niente in lista';
+      } else {
+        const tm = this.team || { rows: [] };
+        const nm = (id) => tm.rows.find((r) => r.id === id)?.name || '—';
+        head = '<b>SQUADRA</b>'; title = 'Performance della squadra';
+        sub = `più attivo: ${escapeHTML(nm(tm.most))}<br>più affidabile: ${escapeHTML(nm(tm.best))}`;
+      }
+      const b = document.createElement('button');
+      b.className = 'oboard-hit'; b.title = title;
+      Object.assign(b.style, { left: `${(x0 / LW) * 100}%`, top: `${(y0 / LH) * 100}%`, width: `${((x1 - x0) / LW) * 100}%`, height: `${((y1 - y0) / LH) * 100}%` });
+      b.innerHTML = `<span class="oboard oboard-${d.type}">${head}<small>${d.type === 'costboard' ? escapeHTML(sub) : sub}</small><small class="muted">clic per il dettaglio</small></span>`;
+      b.onclick = (e) => {
+        if (this.view?.wasDrag) return;
+        if (matchMedia('(hover: none)').matches && !b.classList.contains('open')) { b.classList.add('open'); e.preventDefault(); return; }
+        this.onBoard?.(d.type);
+      };
+      b.onblur = () => b.classList.remove('open');
+      this.overlay.appendChild(b);
+    }
   }
 
   // ── pause: chi è libero da un po' va nell'angolo relax (caffè, telefono sul divano, scacchi) ─────────
@@ -710,6 +724,46 @@ export class Office {
       // scritte di gesso decorative: le cifre vere sono nel cartellino sopra (leggibile a ogni scala)
       drawText(x, 'SPESE', 4, 4, '#f3e27a');
       for (let i = 0; i < 4; i++) { x.fillStyle = '#d8e8dc99'; x.fillRect(4, 13 + i * 7, 8 + Math.floor(rnd(i + 1) * 10), 1); x.fillRect(TW - 16, 13 + i * 7, 10, 1); }
+      const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + w, z0, z0 + 60);
+      mapFace(ctx, img, r.p0, r.pu, r.pv);
+    }
+    if (d.type === 'todoboard') {
+      // lavagna DA FARE: sughero con i post-it (uno per attività aperta; quelli in corso con la puntina rossa)
+      const w = d.w || 2.6, TW = Math.round(w * 22), TH = 60;
+      const [img, x] = tela(TW, TH);
+      x.fillStyle = PAL.woodD; x.fillRect(0, 0, TW, TH); x.fillStyle = PAL.cork; x.fillRect(2, 2, TW - 4, TH - 4);
+      for (let i = 0; i < 50; i++) { x.fillStyle = '#a57744'; x.fillRect(2 + Math.floor(rnd(i + 7) * (TW - 5)), 2 + Math.floor(rnd(i + 13) * (TH - 5)), 1, 1); }
+      x.fillStyle = '#fff4d6'; x.fillRect(4, 3, 28, 7); drawText(x, 'DA FARE', 5, 4, '#a0302a');
+      const items = this.backlog?.open || [];
+      const cols = ['#fff27a', '#ffd6e0', '#d6f0ff', '#e3ffd6', '#ffe3b3'];
+      items.slice(0, 12).forEach((it, i) => {
+        const cx = 4 + (i % 4) * Math.floor((TW - 8) / 4), cy = 13 + Math.floor(i / 4) * 15, pw = Math.floor((TW - 8) / 4) - 3;
+        x.fillStyle = '#00000022'; x.fillRect(cx + 1, cy + 1, pw, 12);
+        x.fillStyle = it.priority === 'alta' ? '#ffb3a8' : cols[i % cols.length]; x.fillRect(cx, cy, pw, 12);
+        x.fillStyle = '#00000044'; for (let l = 0; l < 3; l++) x.fillRect(cx + 2, cy + 4 + l * 3, pw - 4 - ((i + l) % 3) * 2, 1);
+        x.fillStyle = it.status === 'in corso' ? '#e8414e' : '#3a6bd5'; x.fillRect(cx + Math.floor(pw / 2), cy - 1, 2, 2);
+      });
+      if (!items.length) drawText(x, 'TUTTO FATTO', 6, 26, '#5a3a22');
+      const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + w, z0, z0 + 60);
+      mapFace(ctx, img, r.p0, r.pu, r.pv);
+    }
+    if (d.type === 'perfboard') {
+      // lavagna SQUADRA: lavagna bianca con le barre dei task fatti (altezza) colorate dalla qualità
+      const w = d.w || 2.6, TW = Math.round(w * 22), TH = 60;
+      const [img, x] = tela(TW, TH);
+      x.fillStyle = '#b8bcc4'; x.fillRect(0, 0, TW, TH); x.fillStyle = '#f7f8f4'; x.fillRect(2, 2, TW - 4, TH - 5);
+      x.fillStyle = '#d4d8dc'; x.fillRect(1, TH - 3, TW - 2, 2);
+      drawText(x, 'SQUADRA', 4, 4, '#2f5fa8');
+      const rows = (this.team?.rows || []).filter((r) => r.enabled !== false).slice(0, 10);
+      const max = Math.max(1, ...rows.map((r) => r.done));
+      const bw = Math.max(2, Math.floor((TW - 10) / Math.max(1, rows.length)) - 2);
+      rows.forEach((r, i) => {
+        const hgt = Math.max(1, Math.round((r.done / max) * 36)), bx = 5 + i * (bw + 2), by = TH - 8 - hgt;
+        x.fillStyle = r.quality == null ? '#b8bcc4' : r.quality >= 80 ? '#3fae6a' : r.quality >= 60 ? '#e0b050' : '#d65a4a';
+        x.fillRect(bx, by, bw, hgt);
+        if (r.id === this.team?.most) { x.fillStyle = '#c9a227'; x.fillRect(bx, by - 3, bw, 2); }
+      });
+      x.fillStyle = '#9aa0aa'; x.fillRect(4, TH - 8, TW - 8, 1);
       const z0 = d.z ?? 34, r = this.wallRect(d.wall, d.at, d.at + w, z0, z0 + 60);
       mapFace(ctx, img, r.p0, r.pu, r.pv);
     }

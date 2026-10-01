@@ -9,6 +9,7 @@ import path from 'node:path';
 import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic, readJSON } from './util.js';
 import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, TASK_KINDS } from './prompts.js';
 import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
+import { Backlog, teamPerformance } from './boards.js';
 import { layoutHash } from '../web/layout-hash.js';
 import { SfxStore, SFX_CATEGORIES, JSFXR_PRESETS, elevenCredits, jsfxrVariants, jsfxrRender, postProcess, hasFfmpeg, slug } from './sfx.js';
 
@@ -60,6 +61,7 @@ export class Orchestrator {
     this.gitOk = null;
     this.idleTimers = new Map();
     this.costs = new CostBook(store, events);
+    this.backlog = new Backlog(store, events);
     this.sfx = new SfxStore(dataDir);
     this.catalog = { text: { ...(readJSON(path.join(studioDir, 'config', 'models.default.json'), {}).text || {}), ...(readJSON(path.join(dataDir, 'models.json'), {}).text || {}) } };
     providers.onUsage = (p, kind, r, o) => this.recordUsage(p, kind, r, o);
@@ -223,6 +225,8 @@ export class Orchestrator {
     this.chat('user', text, attachments.length ? { attachments } : {});
     // se la Regia aveva fatto una domanda, questo messaggio è la risposta: la richiesta originale continua qui
     const asked = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
+    const startM = text.match(/^(?:avvia|fai|esegui|parti con|lavora (?:a|su))\s+(?:la\s+|l')?\b(b-?\d+)\b[.!]?$/i);
+    if (startM) return this.startBacklogItem(startM[1].replace(/^b-?/i, 'B-'), { echoed: true });
     // "riprova" / "ferma" detti in chat valgono come i pulsanti sulla richiesta che aspetta una decisione
     const waiting = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && !r.quotePending && (r.escalation || r.planFailed));
     const cmd = text.toLowerCase().trim().replace(/[.!]+$/, '');
@@ -250,11 +254,30 @@ export class Orchestrator {
     return req;
   }
 
+  // avvia un'attività della lavagna DA FARE: diventa una richiesta normale (piano, preventivo, task…)
+  async startBacklogItem(id, { echoed = false } = {}) {
+    const it = this.backlog.get(id);
+    if (!it) throw new Error(`attività sconosciuta: ${id}`);
+    if (it.status === 'in corso' && it.requestId) throw new Error(`${it.id} è già in corso (${it.requestId})`);
+    const text = `Esegui l'attività ${it.id} della lavagna DA FARE: ${it.title}.${it.details ? `\n${it.details}` : ''}${it.agent ? `\n(concordata con ${this.agentName(it.agent)})` : ''}`;
+    if (!echoed) this.chat('user', `▶ Avvia ${it.id}: ${it.title}`);
+    const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [], backlogId: it.id };
+    this.S.requests[req.id] = req;
+    this.store.save();
+    this.events.emit('request.created', { request: req });
+    this.backlog.update(it.id, { status: 'in corso', requestId: req.id });
+    this.plan(req).catch((e) => this.fail(req, e));
+    return req;
+  }
+
+  performance() { return teamPerformance(this.S.tasks, this.agents.list().filter((a) => a.id !== 'director')); }
+
   setRequest(req, patch) {
     Object.assign(req, patch, { updatedAt: now() });
     this.store.save();
     this.events.emit('request.updated', { request: req });
     if (['CANCELLED', 'DONE', 'ANSWERED'].includes(req.status) || (req.status === 'RUNNING' && patch.status)) this.clearStaleStatus(req);
+    if (['CANCELLED', 'DONE', 'FAILED'].includes(req.status)) this.backlog?.onRequest(req);
   }
 
   // un ERRORE o un BLOCCO che riguarda una richiesta ormai chiusa (o ripartita) non deve restare appeso agli agenti
@@ -304,6 +327,12 @@ export class Orchestrator {
 
   async startPlan(req, plan) {
     {
+      if (plan.backlog?.length || plan.backlogDone?.length) {
+        const added = plan.backlog.map((b) => this.backlog.add({ ...b, source: req.id }));
+        const dropped = plan.backlogDone.map((id) => { try { return this.backlog.remove(id); } catch { return null; } }).filter(Boolean);
+        const lines = [...added.map((i) => `• **${i.id}** ${i.title}${i.agent ? ` — ${this.agentName(i.agent)}` : ''} _(${i.priority})_`), ...dropped.map((i) => `• ~~${i.id} ${i.title}~~ tolta`)];
+        if (!plan.tasks.length) plan.reply = `${plan.reply || 'Ho aggiornato la lista.'}\n\n**Lavagna DA FARE:**\n${lines.join('\n')}\n\nPer avviarne una: pulsante sulla lavagna oppure scrivi «avvia ${added[0]?.id || 'B-1'}».`;
+      }
       if (!plan.tasks.length) {
         this.chat('director', plan.reply || 'Fatto.', { agentId: 'director', requestId: req.id, kind: plan.needsUser ? 'question' : 'text' });
         this.setRequest(req, { status: plan.needsUser ? 'NEEDS_USER' : 'ANSWERED', question: plan.needsUser ? plan.reply : null });
@@ -448,7 +477,7 @@ export class Orchestrator {
     const provider = await this.providers.resolve(director.provider);
     let plan = null, raw = null;
     if (provider.id !== 'mock') {
-      const r = await provider.run({ agent: director, system: director.systemInstructions, prompt: directorPlanPrompt({ req, agents, chat, projectBrief, running: Object.values(this.S.requests).filter((x) => x.id !== req.id && ['RUNNING', 'PLANNING'].includes(x.status)) }), images: (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path), addDirs: req.attachments?.length ? [this.uploadsDir] : [], cwd: this.projectRoot, mode: 'plan', model: director.model, maxTurns: this.config.directorMaxTurns ?? 10, timeoutMs: (this.config.directorTimeoutMin ?? 6) * 60 * 1000, onEvent: (e) => this.onProviderEvent('director', null, e) });
+      const r = await provider.run({ agent: director, system: director.systemInstructions, prompt: directorPlanPrompt({ req, agents, chat, projectBrief, backlog: this.backlog.open(), running: Object.values(this.S.requests).filter((x) => x.id !== req.id && ['RUNNING', 'PLANNING'].includes(x.status)) }), images: (req.attachments || []).filter((a) => /^image\//.test(a.type)).map((a) => a.path), addDirs: req.attachments?.length ? [this.uploadsDir] : [], cwd: this.projectRoot, mode: 'plan', model: director.model, maxTurns: this.config.directorMaxTurns ?? 10, timeoutMs: (this.config.directorTimeoutMin ?? 6) * 60 * 1000, onEvent: (e) => this.onProviderEvent('director', null, e) });
       raw = r;
       if (r.ok) plan = extractJSON(r.text) || extractJSON(r.allText);
       if (!plan && r.ok && r.text) plan = { reply: r.text, tasks: [] };
@@ -497,6 +526,8 @@ export class Orchestrator {
 
   normalizePlan(plan, raw) {
     const out = { reply: String(plan.reply || ''), needsUser: !!plan.needsUser, tasks: [] };
+    out.backlog = (Array.isArray(plan.backlog) ? plan.backlog : []).slice(0, 20).filter((b) => b && b.title).map((b) => ({ title: clip(b.title, 160), agent: this.agents.get(b.agent) ? b.agent : null, priority: b.priority, details: String(b.details || b.instructions || '') }));
+    out.backlogDone = (Array.isArray(plan.backlogRemove) ? plan.backlogRemove : []).map(String);
     const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
     const keys = new Set();
     for (const [i, t] of tasks.entries()) {

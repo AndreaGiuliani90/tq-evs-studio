@@ -263,3 +263,16 @@ img.office-paint { position: absolute; z-index: 0; pointer-events: none; user-se
 .office-stage, #office, img.office-paint { pointer-events: none; }
 .office-overlay button, .office-overlay .oboard-hit { pointer-events: auto; }
 .right { position: relative; z-index: 5; }
+.oboard-todoboard { background: #6b4a2af2; border-color: #3a2a20; text-align: left; }
+.oboard-todoboard b { color: #fff27a; }
+.oboard-perfboard { background: #f7f8f4f2; color: #23263a; border-color: #9aa0aa; }
+.oboard-perfboard b { color: #2f5fa8; } .oboard-perfboard small { color: #4a4f60; }
+table.backlog td { vertical-align: top; }
+table.backlog tr.doing td { background: #ffffff0c; }
+.prio { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: #ffffff14; }
+.prio.p-alta { background: #d65a4a44; color: #ffb3a8; } .prio.p-bassa { opacity: .7; }
+.small { font-size: 12px; }
+.pbar { display: inline-block; width: 90px; height: 8px; background: #ffffff14; border-radius: 4px; vertical-align: middle; overflow: hidden; }
+.pbar i { display: block; height: 100%; background: var(--cyan, #3fe0d0); }
+table.team th { text-align: left; font-size: 12px; color: var(--muted, #aaa); font-weight: 600; padding: 4px 6px; }
+b.good { color: #5fd38a; } b.mid { color: #e0b050; } b.bad { color: #ff7a6a; }

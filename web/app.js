@@ -34,8 +34,8 @@ async function boot() {
   for (const a of st.agents) S.agents[a.id] = a;
   for (const r of st.requests) S.requests[r.id] = r;
   for (const t of st.tasks) S.tasks[t.id] = t;
-  S.chat = st.chat; S.config = st.config; S.lastSeq = st.lastSeq; S.costs = st.costs;
-  S.office = new Office($('#office'), $('#office-overlay'), { onSelect: (id) => openDrawer(id), onBoard: () => openModal('costs') });
+  S.chat = st.chat; S.config = st.config; S.lastSeq = st.lastSeq; S.costs = st.costs; S.backlog = st.backlog; S.team = st.team;
+  S.office = new Office($('#office'), $('#office-overlay'), { onSelect: (id) => openDrawer(id), onBoard: (type) => openModal(type === 'todoboard' ? 'backlog' : type === 'perfboard' ? 'team' : 'costs') });
   S.view = new OfficeView($('#office-wrap'), $('#office-stage'), S.office);
   S.office.view = S.view;
   setTimeout(() => $('#office-wrap').classList.add('hint-off'), 8000);
@@ -53,7 +53,7 @@ async function loadOffice() {
   const layout = await api('GET', '/api/office');
   $('#office-name').textContent = layout.name || '';
   S.office.setAgents(Object.values(S.agents));
-  S.office.costs = S.costs;
+  S.office.costs = S.costs; S.office.backlog = S.backlog; S.office.team = S.team;
   S.office.setLayout(layout);
   S.office.setPaint(layout.paint);
   const pb = $('#paint-toggle'), note = $('#paint-note');
@@ -90,6 +90,8 @@ function onEvent(e) {
   if (t === 'chat.message') { S.chat.push(e.message); appendChat(e.message); if (e.message.requestId) refreshStale(e.message.requestId); }
   if (t === 'studio.warning') toast(e.text, true);
   if (t === 'office.updated') loadOffice().catch(() => {});
+  if (t === 'backlog.updated') { S.backlog = e.backlog; S.office?.setBoards({ backlog: e.backlog }); if ($('#backlog-box')) openModal('backlog'); }
+  if ((t === 'task.updated' && ['DONE', 'FAILED'].includes(e.task?.status)) || t === 'agent.updated') refreshTeam();
   if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
   if (!['agent.status', 'task.updated', 'agent.updated'].includes(t)) { S.log.unshift(e); if (S.log.length > 300) S.log.pop(); renderLog(); }
 }
@@ -523,7 +525,35 @@ async function showDiff(reqId) {
   modal(`<h2>Modifiche di ${esc(reqId)}</h2><pre>${esc(d.summary?.stat || 'nessuna')}</pre><h3>Commit</h3><ul>${(d.summary?.commits || []).map((c) => `<li><code>${esc(c.short)}</code> ${esc(c.author)} — ${esc(c.subject)}</li>`).join('')}</ul><pre class="diff">${lines}</pre>`);
 }
 
+let teamT = null;
+function refreshTeam() { clearTimeout(teamT); teamT = setTimeout(async () => { try { S.team = await api('GET', '/api/team'); S.office?.setBoards({ team: S.team }); if ($('#team-box')) openModal('team'); } catch { /* niente */ } }, 1500); }
+
 async function openModal(which) {
+  if (which === 'backlog') {
+    const b = S.backlog || { open: [], done: [] };
+    const ag = (id) => (id && S.agents[id] ? esc(S.agents[id].name) : '<span class="muted">—</span>');
+    const agentOpts = (sel) => `<option value="">—</option>${Object.values(S.agents).filter((a) => a.enabled !== false && a.id !== 'director').map((a) => `<option value="${esc(a.id)}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}`;
+    modal(`<div id="backlog-box"><h2>Lavagna DA FARE</h2><p class="muted">Le attività concordate con la squadra. Per riempirla chiedi alla Regia, per esempio «programmate le prossime attività per il secondo rione». Non partono da sole: le avvii tu.</p>
+      <table class="costs backlog"><tbody>${b.open.map((i) => `<tr class="${i.status === 'in corso' ? 'doing' : ''}"><td><b>${esc(i.id)}</b></td><td>${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details.slice(0, 220))}</div>` : ''}</td><td>${ag(i.agent)}</td><td><span class="prio p-${esc(i.priority)}">${esc(i.priority)}</span></td>
+        <td class="num">${i.status === 'in corso' ? `<span class="muted">in corso · ${esc(i.requestId || '')}</span>` : `<button class="btn sm primary" data-bl-start="${esc(i.id)}">Avvia</button> <button class="btn sm" data-bl-drop="${esc(i.id)}" title="Togli dalla lista">✕</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Lista vuota.</td></tr>'}</tbody></table>
+      <form id="bl-add" class="form row-wrap"><input name="title" placeholder="Nuova attività" required style="flex:1"><select name="agent">${agentOpts()}</select><select name="priority"><option>alta</option><option selected>media</option><option>bassa</option></select><button class="btn">Aggiungi</button></form>
+      ${b.done.length ? `<h3>Fatte di recente</h3><ul class="muted small">${b.done.map((i) => `<li>✔ ${esc(i.id)} ${esc(i.title)}</li>`).join('')}</ul>` : ''}</div>`);
+    for (const x of document.querySelectorAll('[data-bl-start]')) x.onclick = act(async () => { await api('POST', `/api/backlog/${x.dataset.blStart}/start`); closeModal(); toast(`${x.dataset.blStart} avviata: segui la Regia in chat.`); });
+    for (const x of document.querySelectorAll('[data-bl-drop]')) x.onclick = act(async () => { if (confirm(`Togliere ${x.dataset.blDrop} dalla lista?`)) await api('DELETE', `/api/backlog/${x.dataset.blDrop}`); });
+    $('#bl-add').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); await api('POST', '/api/backlog', { title: f.get('title'), agent: f.get('agent') || null, priority: f.get('priority') }); });
+    return;
+  }
+  if (which === 'team') {
+    const tm = S.team || { rows: [] };
+    const bar = (v, max) => `<span class="pbar"><i style="width:${max ? Math.round((v / max) * 100) : 0}%"></i></span>`;
+    const max = Math.max(1, ...tm.rows.map((r) => r.done));
+    const q = (r) => (r.quality == null ? '<span class="muted">—</span>' : `<b class="${r.quality >= 80 ? 'good' : r.quality >= 60 ? 'mid' : 'bad'}">${r.quality}%</b>`);
+    modal(`<div id="team-box"><h2>Performance della squadra</h2>
+      <p>🏆 <b>Lavora di più:</b> ${esc(tm.rows.find((r) => r.id === tm.most)?.name || '—')} &nbsp; ⭐ <b>Lavora meglio:</b> ${esc(tm.rows.find((r) => r.id === tm.best)?.name || '— (servono almeno 3 lavori)')}</p>
+      <table class="costs team"><thead><tr><th></th><th>Task fatti</th><th>Qualità</th><th>Rifatti</th><th>Falliti</th><th>Tempo</th></tr></thead><tbody>${tm.rows.filter((r) => r.enabled !== false || r.done).map((r) => `<tr><td><b>${esc(r.name)}</b><div class="muted small">${esc(r.role || '')}</div></td><td>${bar(r.done, max)} ${r.done}</td><td>${q(r)}</td><td class="num">${r.rework}</td><td class="num">${r.failed}</td><td class="num">${r.minutes ? `${r.minutes} min` : '—'}${r.avgMin ? `<div class="muted small">${r.avgMin} min/task</div>` : ''}</td></tr>`).join('')}</tbody></table>
+      <p class="muted small">Qualità = lavori andati bene al primo colpo: completati ÷ (completati + falliti + rifatti perché il QA ha trovato problemi). Per Tizia un test che trova bug conta come lavoro ben fatto. Tempo = minuti passati a lavorare.</p></div>`);
+    return;
+  }
   if (which === 'costs') {
     const c = S.costs || { totalUsd: 0, providers: [] };
     const paid = c.providers.filter((p) => !p.included), inc = c.providers.filter((p) => p.included);

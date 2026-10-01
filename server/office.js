@@ -7,7 +7,7 @@ import path from 'node:path';
 import { readJSON, writeFileAtomic, ensureDir, now } from './util.js';
 
 export const STATION_KINDS = ['pc', 'tv', 'typewriter', 'easel', 'drafting', 'audio', 'library', 'puzzle', 'manager', 'table', 'wartable'];
-export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade', 'chesstable', 'glasswall'];
+export const DECOR_TYPES = ['window', 'banner', 'noticeboard', 'map', 'clock', 'lantern', 'bookcase', 'shelf', 'frame', 'rug', 'plant', 'tallplant', 'floorlamp', 'crates', 'sideboard', 'bench', 'costboard', 'coffee', 'watercooler', 'sofa', 'armchair', 'coffeetable', 'arcade', 'chesstable', 'glasswall', 'todoboard', 'perfboard'];
 const LOOK_FIELDS = ['skin', 'hair', 'eyes', 'shirt', 'accColor', 'hairStyle', 'outfit', 'facial', 'accessory'];
 
 export class OfficeStore {
@@ -38,6 +38,7 @@ export class OfficeStore {
     const own = readJSON(this.file, null);
     const o = own ? { ...def, ...own, room: { ...def.room, ...(own.room || {}) } } : def;
     // la lavagna delle spese c'è sempre (anche negli uffici personalizzati prima che esistesse)
+    for (const t of ['todoboard', 'perfboard']) if (Array.isArray(o.decor) && !o.decor.some((d) => d.type === t)) { const b = (def.decor || []).find((d) => d.type === t); if (b) o.decor = [...o.decor, b]; }
     if (Array.isArray(o.decor) && !o.decor.some((d) => d.type === 'costboard')) {
       const board = (def.decor || []).find((d) => d.type === 'costboard') || { type: 'costboard', wall: 'L', at: 7.1, w: 2.2 };
       o.decor = [...o.decor.filter((d) => !(d.type === 'frame' && d.wall === board.wall && d.at >= board.at - 0.3 && d.at < board.at + (board.w || 2.2))), board];
@@ -145,7 +146,7 @@ precedente resta salvata (l'utente può annullare con un clic).
 - \`decor\` — arredi. A parete ({ type, wall, at, w?, … }) oppure a pavimento ({ type, x, y, … }):
   - glasswall { wall, from, to, pane } (parete vetrata a tutta altezza con il panorama; pane = larghezza dei vetri) ·
     window { w, big } · banner { w, text (MAIUSCOLO, lettere A-Z 0-9) } · noticeboard { w, title } · map { w } · clock ·
-    lantern · costboard { w } (la lavagna delle spese: il contenuto lo scrive lo Studio) · bookcase { w, h } · shelf { w, z } · frame { w, z, h, picture: "borgo"|"foto"|"tq" }
+    lantern · costboard / todoboard / perfboard { w, z } (lavagne delle spese, delle cose da fare e della squadra: il contenuto lo scrive lo Studio) · bookcase { w, h } · shelf { w, z } · frame { w, z, h, picture: "borgo"|"foto"|"tq" }
   - rug { x, y, w, d } · plant { x, y, size } · tallplant { x, y, size } · floorlamp { x, y } · crates { x, y } ·
     sideboard { x, y } · bench { x, y }
   - angolo relax: coffee { x, y } (bancone con macchinetta del caffè) · watercooler { x, y } · sofa { x, y, w, rot: 0|1, color } ·

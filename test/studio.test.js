@@ -859,3 +859,35 @@ test('effetti sonori: Rumore progetta, ElevenLabs e jsfxr generano 3 varianti, r
   await waitFor(() => req3.status === 'DONE', 30000, 'DONE 3');
   assert.equal(Object.keys(s.orch.sfx.manifest().sounds).length, 15);
 });
+
+test('lavagne: la Regia programma le attività in DA FARE (senza eseguirle), «avvia B-1» le fa partire e si spuntano; performance della squadra', async () => {
+  const root = makeFixtureRepo();
+  const base = studioProvider();
+  const inner = base.handler;
+  base.handler = async (o, n) => {
+    if (o.agent.id === 'director' && /programm/i.test(o.prompt) && !/Esegui l'attività/.test(o.prompt)) {
+      assert.match(o.prompt, /Lavagna DA FARE attuale: vuota/);
+      return { text: '```json\n' + JSON.stringify({ reply: 'Ecco il piano.', needsUser: false, tasks: [], backlog: [{ title: 'Aggiungi una feature di prova', agent: 'dev', priority: 'alta', details: 'feature.js' }, { title: 'Testi del secondo rione', agent: 'narrative', priority: 'media' }] }) + '\n```' };
+    }
+    return inner(o, n);
+  };
+  const s = await studioFor(root, registryWith(base));
+  const r1 = await s.orch.handleUserMessage('Programmate le prossime attività');
+  await waitFor(() => r1.status === 'ANSWERED', 5000, 'risposta');
+  assert.equal(r1.taskIds.length, 0, 'programmare non avvia lavori');
+  const b = s.orch.backlog.summary();
+  assert.deepEqual(b.open.map((i) => i.id), ['B-1', 'B-2']);
+  assert.match(s.store.data.chat.at(-1).text, /Lavagna DA FARE[\s\S]*B-1[\s\S]*Tizo[\s\S]*avvia B-1/);
+  const r2 = await s.orch.handleUserMessage('avvia B-1');
+  assert.equal(s.orch.backlog.get('B-1').status, 'in corso');
+  await waitFor(() => r2.status === 'DONE', 15000, 'DONE');
+  assert.equal(s.orch.backlog.get('B-1').status, 'fatto');
+  assert.equal(s.orch.backlog.summary().counts.open, 1);
+  // performance: Tizo ha fatto implement + fix (il primo giro aveva un BUG → rifacimento), Tizia ha trovato il bug
+  const p = s.orch.performance();
+  const dev = p.rows.find((r) => r.id === 'dev'), qa = p.rows.find((r) => r.id === 'qa');
+  assert.equal(dev.done, 2); assert.equal(dev.rework, 1); assert.equal(dev.quality, 67);
+  assert.equal(qa.done, 2); assert.equal(qa.bugsFound, 1); assert.equal(qa.quality, 100);
+  assert.ok(['dev', 'qa'].includes(p.most));
+  assert.ok(s.office.get().decor.some((d) => d.type === 'todoboard') && s.office.get().decor.some((d) => d.type === 'perfboard'));
+});

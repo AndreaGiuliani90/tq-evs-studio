@@ -187,6 +187,16 @@ Sulla parete dell'ufficio c'è la **lavagna delle spese**: totale speso finora e
 Nano Banana, API Anthropic). Cliccala per il dettaglio; gli abbonamenti risultano "inclusi" con il numero di lavori.
 Gli importi sono stime dai prezzi di listino: il conto vero è nelle pagine di fatturazione di OpenAI e Google.
 
+### Le lavagne DA FARE e SQUADRA
+
+Sulla parete destra ci sono altre due lavagne (passaci sopra col cursore per il riassunto, clic per il dettaglio):
+- **DA FARE**: chiedi alla Regia di *programmare le prossime attività* (es. «programmate il lavoro per il secondo
+  rione»): la squadra concorda una lista di attività piccole e concrete, con chi le fa e la priorità, e le appende come
+  post-it. Non partono da sole: premi **Avvia** sulla lavagna o scrivi «avvia B-3». Quando la richiesta finisce
+  l'attività si spunta da sola. Puoi anche aggiungerne o toglierne a mano.
+- **SQUADRA**: chi lavora di più (task completati, tempo) e chi lavora meglio (qualità = completati ÷ completati +
+  falliti + rifatti perché il QA ha trovato problemi; per il QA trovare bug conta come lavoro ben fatto).
+
 ### Preventivo prima di spendere
 
 Le immagini via API (GPT Image, Nano Banana) si pagano a consumo, **a parte** rispetto agli abbonamenti. Il lavoro

@@ -116,15 +116,6 @@
       "z": 86
     },
     {
-      "type": "frame",
-      "wall": "R",
-      "at": 10.6,
-      "w": 1.2,
-      "z": 86,
-      "h": 18,
-      "picture": "borgo"
-    },
-    {
       "type": "lantern",
       "wall": "R",
       "at": 23.6
@@ -198,12 +189,6 @@
       "wall": "R",
       "at": 13.2,
       "w": 1.5
-    },
-    {
-      "type": "map",
-      "wall": "R",
-      "at": 6.3,
-      "w": 1.4
     },
     {
       "type": "clock",
@@ -306,8 +291,22 @@
       "at": 21.1,
       "w": 2.0,
       "title": "SAGRA"
+    },
+    {
+      "type": "todoboard",
+      "wall": "R",
+      "at": 6.05,
+      "w": 2.6,
+      "z": 44
+    },
+    {
+      "type": "perfboard",
+      "wall": "R",
+      "at": 10.45,
+      "w": 2.6,
+      "z": 44
     }
   ],
-  "layoutVersion": 3,
+  "layoutVersion": 4,
   "_pianta": "Sede grande (24×20): parete destra = programmazione, test, livelli, suono e l'angolo relax in fondo; parete sinistra = testi, arte, bibbia, enigmi e la lavagna delle spese; al centro l'isola (Arredo, Stratega) e il tavolo della Regia."
 }
