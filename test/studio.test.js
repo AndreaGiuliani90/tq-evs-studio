@@ -804,3 +804,58 @@ test('"riprova" e "ferma" scritti in chat agiscono sulla richiesta che aspetta u
   assert.equal(req2.status, 'CANCELLED');
   assert.equal(s.agents.get('art').runtime.status, 'IDLE', 'niente ERRORE appeso dopo la chiusura');
 });
+
+test('effetti sonori: Rumore progetta, ElevenLabs e jsfxr generano 3 varianti, rifinitura, manifest con licenza, cache e conferma oltre 10 suoni', async () => {
+  const root = makeFixtureRepo();
+  let design = [
+    { id: 'vetro_rotto_01', label: 'Vetro rotto', category: 'vandalismo', engine: 'elevenlabs', prompt: 'a glass bottle shattering on cobblestones, close, dry', duration: 1.5 },
+    { id: 'notte_borgo', label: 'Notte nel borgo', category: 'ambient', engine: 'elevenlabs', prompt: 'quiet mountain village night ambience, crickets, distant dog', duration: 10, loop: true },
+    { id: 'click_menu', label: 'Click del menu', category: 'ui', engine: 'jsfxr', preset: 'blipSelect' },
+    { id: 'pickup_birra', label: 'Pickup birra', category: 'gameplay', engine: 'jsfxr', preset: 'pickupCoin' },
+  ];
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 's', agent: 'audio', kind: 'sfx', title: 'Primo lotto di suoni', dependsOn: [] }]);
+    if (o.agent.id === 'audio') return { text: '```json\n' + JSON.stringify({ summary: 'ok', sounds: design }) + '\n```' };
+    return { text: '{}' };
+  });
+  const reg = registryWith(prov);
+  // un mp3 vero (un tono) per far lavorare ffmpeg come con ElevenLabs
+  const tone = path.join(os.tmpdir(), `tono-${Date.now()}.mp3`);
+  sh(os.tmpdir(), '--version');
+  const ff = (await import('node:child_process')).spawnSync('ffmpeg', ['-hide_banner', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=0.3', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-filter_complex', '[0][1]concat=n=2:v=0:a=1', tone]);
+  const calls = [];
+  reg.register({ id: 'elevenlabs', kind: 'audio', model: 'eleven_text_to_sound_v2', format: 'mp3_44100_128', available: async () => ({ ok: true }), subscription: async () => ({ ok: true, tier: 'free', used: 0, limit: 10000, commercial: false }), sound: async (o) => { calls.push(o); return { ok: true, buf: ff.status === 0 ? fs.readFileSync(tone) : Buffer.from('ID3fake'), ext: 'mp3', credits: 200 }; } });
+  const s = await studioFor(root, reg);
+  const req = await s.orch.handleUserMessage('Rumore, primo lotto di suoni: vetro rotto, notte del borgo, click del menu, pickup della birra');
+  await waitFor(() => req.status === 'DONE', 20000, 'DONE');
+  assert.equal(calls.length, 6, '2 suoni ElevenLabs × 3 varianti');
+  assert.match(calls[0].text, /no music, no voice$/);
+  assert.equal(calls.find((c) => /night/.test(c.text)).loop, true);
+  assert.ok(s.store.data.chat.some((m) => /Genero 4 suoni: 6 generazioni ElevenLabs \(≈ 1380 crediti, piano free\)/.test(m.text)));
+  const man = s.orch.sfx.manifest().sounds;
+  assert.deepEqual(Object.keys(man).sort(), ['sfx_click_menu', 'sfx_notte_borgo', 'sfx_pickup_birra', 'sfx_vetro_rotto_01']);
+  for (const x of Object.values(man)) { assert.equal(x.variants.length, 3); assert.equal(x.status, 'bozza'); }
+  assert.equal(man.sfx_vetro_rotto_01.license.plan, 'free');
+  assert.equal(man.sfx_vetro_rotto_01.license.commercial, false);
+  assert.equal(man.sfx_click_menu.license.commercial, true);
+  assert.ok(man.sfx_click_menu.variants[1].params && man.sfx_click_menu.variants[1].params.wave_type !== undefined, 'parametri jsfxr salvati');
+  if (ff.status === 0) {
+    assert.ok(man.sfx_vetro_rotto_01.variants[0].ogg.endsWith('.ogg') && man.sfx_vetro_rotto_01.variants[0].mp3.endsWith('.mp3'));
+    assert.ok(Math.abs(man.sfx_click_menu.variants[0].lufs - -20) < 2.5, `volume della categoria ui (${man.sfx_click_menu.variants[0].lufs})`);
+  }
+  assert.match(s.store.data.chat.find((m) => m.kind === 'report' || /Suoni pronti/.test(m.text))?.text || JSON.stringify(s.orch.tasksOf(req.id)[0].result), /release commerciale/);
+  const el = s.orch.costs.summary().providers.find((p) => p.id === 'elevenlabs');
+  assert.equal(el.runs, 6); assert.equal(el.credits, 1200); assert.equal(el.usd, 0);
+  // stessa richiesta: tutto dalla cache, nessuna nuova generazione
+  const req2 = await s.orch.handleUserMessage('rifai gli stessi suoni');
+  await waitFor(() => req2.status === 'DONE', 20000, 'DONE 2');
+  assert.equal(calls.length, 6);
+  // lotto grande: oltre 10 suoni si chiede l'ok, "riprova" li genera
+  design = Array.from({ length: 11 }, (_, i) => ({ id: `ui_${i}`, category: 'ui', engine: 'jsfxr', preset: 'click' }));
+  const req3 = await s.orch.handleUserMessage('undici suoni di interfaccia');
+  await waitFor(() => req3.status === 'NEEDS_USER', 10000, 'conferma');
+  assert.match(s.store.data.chat.at(-1).text, /Serve il tuo ok[\s\S]*11 suoni[\s\S]*riprova/);
+  await s.orch.handleUserMessage('riprova');
+  await waitFor(() => req3.status === 'DONE', 30000, 'DONE 3');
+  assert.equal(Object.keys(s.orch.sfx.manifest().sounds).length, 15);
+});

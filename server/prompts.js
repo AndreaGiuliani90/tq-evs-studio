@@ -10,6 +10,7 @@ export const TASK_KINDS = {
   test: 'verifica QA: test automatici + gioco nel browser',
   level: 'level design: mappe, rioni, posizione di NPC/bersagli/luci, script dei livelli',
   audio: 'suono e musica: effetti, integrazione delle tracce, volumi',
+  sfx: "effetti sonori NUOVI generati con ElevenLabs (realistici) o jsfxr (retro) per il gioco: lo fa il Suono (Rumore) in UN task; produce bozze con 3 varianti nello Studio, NON tocca il gioco (l'inserimento nel gioco è un lavoro separato, dopo che l'utente ha scelto)",
   lore: 'controllo del canone e della Bibbia del mondo (solo documenti, non cambia il gioco)',
   puzzle: 'enigmi e indagini: indizi, prerequisiti, soluzioni',
   office: "arredo e aspetto dell'ufficio dello Studio (mobili, luci, colori, aspetto dei personaggi): non tocca il gioco",

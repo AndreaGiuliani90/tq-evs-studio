@@ -10,9 +10,10 @@ import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic, read
 import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, TASK_KINDS } from './prompts.js';
 import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
 import { layoutHash } from '../web/layout-hash.js';
+import { SfxStore, SFX_CATEGORIES, JSFXR_PRESETS, elevenCredits, jsfxrVariants, jsfxrRender, postProcess, hasFfmpeg, slug } from './sfx.js';
 
 // qualità di partenza per tipo di task (regole dello Stratega quando non c'è un'AI che valuta)
-const KIND_TIER = { implement: 'alta', fix: 'alta', integrate: 'alta', analyze: 'media', test: 'media', narrative: 'media', lore: 'media', puzzle: 'media', level: 'media', art: 'media', audio: 'media', studio_ui: 'media', office: 'bassa', avatars: 'bassa', office_paint: 'bassa' };
+const KIND_TIER = { implement: 'alta', fix: 'alta', integrate: 'alta', analyze: 'media', test: 'media', narrative: 'media', lore: 'media', puzzle: 'media', level: 'media', art: 'media', audio: 'media', studio_ui: 'media', office: 'bassa', avatars: 'bassa', office_paint: 'bassa', sfx: 'media' };
 const TIERS = ['alta', 'media', 'bassa'];
 function pickByTier(options, tier) {
   const inc = options.filter((o) => o.included);
@@ -26,7 +27,7 @@ const WRITE_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', '
 // tipi che cambiano il gioco: dopo di loro serve un test del QA (lore tocca solo i documenti)
 const GAME_KINDS = ['implement', 'fix', 'narrative', 'art', 'level', 'audio', 'puzzle'];
 // tipi che non toccano il repository del gioco: l'arredo dell'ufficio (dati) e il codice dello Studio (repository suo)
-const STUDIO_KINDS = ['office', 'studio_ui', 'avatars', 'office_paint'];
+const STUDIO_KINDS = ['office', 'studio_ui', 'avatars', 'office_paint', 'sfx'];
 
 // Fotogrammi dei personaggi animati (avatar generati): animazione → descrizione di ogni fotogramma per il generatore
 const AVATAR_FRAMES = {
@@ -59,6 +60,7 @@ export class Orchestrator {
     this.gitOk = null;
     this.idleTimers = new Map();
     this.costs = new CostBook(store, events);
+    this.sfx = new SfxStore(dataDir);
     this.catalog = { text: { ...(readJSON(path.join(studioDir, 'config', 'models.default.json'), {}).text || {}), ...(readJSON(path.join(dataDir, 'models.json'), {}).text || {}) } };
     providers.onUsage = (p, kind, r, o) => this.recordUsage(p, kind, r, o);
   }
@@ -474,6 +476,8 @@ export class Orchestrator {
     const audio = has(/suono|musica|audio|effetto sonoro|sfx|volume/) && this.agents.forKind('audio');
     const puzzle = has(/enigma|indagine|indizi|rompicapo|puzzle/) && this.agents.forKind('puzzle');
     const lore = has(/bibbia|canone|coerenz|lore/) && this.agents.forKind('lore');
+    const sfxJob = has(/effett[oi] sonor|\bsuon[oi]\b|\bsfx\b|rumor[ei] d/) && !has(/integra|inserisci nel gioco|musica/) && this.agents.forKind('sfx');
+    if (sfxJob) return { reply: `Ci pensa ${sfxJob.name}.`, tasks: [{ key: 's', agent: sfxJob.id, kind: 'sfx', title: 'Effetti sonori', instructions: text, dependsOn: [] }] };
     const paintJob = has(/ridiping|dipingi|dipinto|illustraz|stile|resa grafica|qualit/) && has(/ufficio|studio|sede|stanza/) && !has(/personagg|sprite|avatar/) && this.agents.forKind('office_paint');
     if (paintJob) return { reply: `Ci pensa ${paintJob.name}.`, tasks: [{ key: 'p', agent: paintJob.id, kind: 'office_paint', title: 'Ridipingere l\'ufficio', instructions: text, dependsOn: [] }] };
     const avatarsJob = has(/sprite|avatar|personagg/) && has(/colleg|agenti|studio|squadra|ufficio|tutti/) && this.agents.forKind('avatars');
@@ -673,6 +677,7 @@ export class Orchestrator {
     if (t.kind === 'office') return this.runOffice(t, req, agent, signal);
     if (t.kind === 'avatars') return this.runAvatars(t, req, agent, signal);
     if (t.kind === 'office_paint') return this.runOfficePaint(t, req, agent, signal);
+    if (t.kind === 'sfx') return this.runSfx(t, req, agent, signal);
     if (t.kind === 'studio_ui') return this.runStudioUI(t, req, agent, signal);
     if (t.kind === 'integrate') {
       const mr = await this.git.git(['merge', '--no-ff', '--no-commit', req.baseBranch], req.worktree, { allowFail: true });
@@ -908,6 +913,98 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
     return { ok: true, result: { summary: `Ufficio ridipinto con ${choice.label}: ora è lo sfondo della sede (personaggi e luci restano animati sopra).`, notes: 'Se non ti piace: "↶ Annulla ultimo arredo" torna a prima; il pulsante 🎨 nell\'ufficio passa dal dipinto al disegno in codice. Se Arredo sposta i mobili, il dipinto va rifatto.', provider: choice.id } };
   }
 
+  // ─── Effetti sonori (Rumore) ─────────────────────────────────────────────────────────────────
+  // 1) Rumore (AI di testo, inclusa nel piano) traduce la richiesta in un elenco di suoni con prompt tecnici in inglese
+  //    o preset jsfxr; 2) lo Studio dice quante generazioni ElevenLabs sta per fare (oltre i 10 suoni chiede l'ok);
+  // 3) 3 varianti per suono, con la cache; 4) rifinitura (silenzi, volume per categoria, dissolvenze) in .ogg + .mp3;
+  // 5) manifest con motore, prompt/parametri, varianti, piano e licenza. Niente tocca il gioco: i suoni sono bozze.
+  normalizeSfxDesign(list) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list : []).slice(0, 40).map((x, i) => {
+      const engine = x.engine === 'jsfxr' ? 'jsfxr' : 'elevenlabs';
+      let id = `sfx_${slug(String(x.id || x.name || `suono_${i + 1}`).replace(/^sfx_/, ''))}`;
+      while (seen.has(id)) id += '_b';
+      seen.add(id);
+      const category = SFX_CATEGORIES.includes(x.category) ? x.category : engine === 'jsfxr' ? 'ui' : 'foley';
+      let prompt = String(x.prompt || '').trim();
+      if (engine === 'elevenlabs' && prompt && !/no music/i.test(prompt)) prompt += ', no music, no voice';
+      const duration = x.duration == null || x.duration === '' ? null : Math.min(30, Math.max(0.5, Number(x.duration) || 0)) || null;
+      return { id, label: String(x.label || x.name || id), category, engine, prompt, duration, loop: !!x.loop, influence: Math.min(1, Math.max(0, Number(x.influence ?? (x.loop ? 0.5 : 0.3)))), volume: Math.min(1, Math.max(0.05, Number(x.volume ?? 0.8))), stringId: x.stringId ? String(x.stringId) : null, preset: JSFXR_PRESETS.includes(x.preset) ? x.preset : 'blipSelect', variants: Math.min(3, Math.max(1, Number(x.variants) || 3)) };
+    }).filter((x) => x.engine === 'jsfxr' || x.prompt);
+  }
+
+  async runSfx(t, req, agent, signal) {
+    const el = this.providers.get('elevenlabs');
+    if (!t.sfxDesign) {
+      const provider = await this.providers.resolve(agent.provider);
+      const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: '- strings/it.json (testi del gioco: usa id coerenti con quelli esistenti)\n- docs/memoria/NARRATIVE_BIBLE.md (il mondo del gioco: borgo di montagna abruzzese)', qaCmd: null,
+        extra: `## Effetti sonori: progetta l'elenco, NON generare nulla
+Traduci la richiesta in un elenco di suoni. Per ognuno scegli il motore:
+- "elevenlabs" per i suoni realistici del borgo (passi, porte, campane, fontana, vetri, animali, brusio, ambienti): scrivi un prompt TECNICO in inglese (materiale, azione, ambiente/acustica, distanza, durata) che finisca con "no music, no voice". Ambienti ciclici (vento, fontana, notte): "loop": true e durata 10-20 s.
+- "jsfxr" per interfaccia e gameplay retro (click dei menu, pickup, salto, colpo, allarme, stelle): scegli un "preset" fra ${JSFXR_PRESETS.join(', ')}.
+Categorie: ${SFX_CATEGORIES.join(', ')}. Id stabili e leggibili in italiano (es. vetro_rotto_01, passi_sampietrini_01); se servono più suoni dello stesso tipo da alternare (es. passi), fai id separati _01, _02, _03.
+Ogni suono avrà 3 varianti da cui l'utente sceglie: non moltiplicare i suoni inutilmente.
+Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine", "prompt" (solo elevenlabs), "duration" (secondi o null), "loop", "influence" (0-1, 0.3 normale), "volume" (0-1 consigliato nel gioco), "preset" (solo jsfxr), "stringId" (se c'è un testo collegato)}].` });
+      const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd: this.projectRoot, mode: 'plan', model: agent.model, signal, timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
+      if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
+      const j = extractJSON(r.text) || extractJSON(r.allText) || {};
+      const design = this.normalizeSfxDesign(j.sounds);
+      if (!design.length) return { ok: false, error: 'Rumore non ha indicato nessun suono (campo "sounds" vuoto)' };
+      this.setTask(t, { sfxDesign: design }, `progetto: ${design.length} suoni`);
+    }
+    const design = t.sfxDesign;
+    const elSounds = design.filter((d) => d.engine === 'elevenlabs');
+    const keyOf = (d, v) => this.sfx.cacheKey({ e: 'elevenlabs', text: d.prompt, duration: d.duration, influence: d.influence, loop: d.loop, model: el?.model, format: el?.format, v });
+    const toGen = elSounds.flatMap((d) => Array.from({ length: d.variants }, (_, v) => ({ d, v }))).filter(({ d, v }) => !this.sfx.cached(keyOf(d, v)));
+    const credits = toGen.reduce((s, { d }) => s + elevenCredits(d.duration), 0);
+    if (toGen.length && !(await el?.available())?.ok) return { ok: false, blocked: true, error: 'Per i suoni realistici serve ELEVENLABS_API_KEY nel file .env dello Studio (i suoni jsfxr funzionano anche senza).' };
+    const sub = elSounds.length && el ? await el.subscription() : null;
+    if (design.length > (this.config.sfxConfirmOver ?? 10) && !t.sfxOk) {
+      this.setTask(t, { sfxOk: true });
+      return { ok: false, ask: true, error: `Rumore ha preparato ${design.length} suoni: ${toGen.length} generazioni ElevenLabs (≈ ${credits} crediti${sub?.ok && sub.limit ? `, te ne restano ${Math.max(0, sub.limit - sub.used)}` : ''}) e ${design.length - elSounds.length} suoni jsfxr (gratis). Sono più di 10 suoni: scrivi **riprova** per generarli o **ferma** per lasciar perdere.` };
+    }
+    if (sub?.ok && sub.limit && toGen.length && sub.limit - sub.used < credits) return { ok: false, ask: true, error: `Servono ≈ ${credits} crediti ElevenLabs ma te ne restano ${sub.limit - sub.used} (piano ${sub.tier}). Riduci la richiesta, aspetta il rinnovo o cambia piano; poi scrivi **riprova**.` };
+    this.chat('agent', `🔊 Genero ${design.length} suoni: ${toGen.length} generazioni ElevenLabs${toGen.length ? ` (≈ ${credits} crediti${sub?.ok ? `, piano ${sub.tier}` : ''})` : ''}${elSounds.length * 3 - toGen.length > 0 ? `, ${elSounds.reduce((s, d) => s + d.variants, 0) - toGen.length} già in cache` : ''} e ${design.length - elSounds.length} con jsfxr (gratis).`, { agentId: agent.id, requestId: req.id, taskId: t.id, kind: 'agent-update' });
+    const ff = await hasFfmpeg();
+    const done = [], failed = [];
+    let usedCredits = 0, gens = 0;
+    const license = (d) => (d.engine === 'jsfxr' ? { engine: 'jsfxr', terms: 'jsfxr: Unlicense (pubblico dominio); il suono è tuo', commercial: true } : { engine: 'elevenlabs', model: el?.model, plan: sub?.ok ? sub.tier : 'sconosciuto (la chiave non ha il permesso Utente)', commercial: sub?.ok ? sub.commercial : null });
+    for (const d of design) {
+      if (signal?.aborted) break;
+      this.agents.activity(agent.id, `${d.engine === 'jsfxr' ? 'sintetizzo' : 'genero'} ${d.id}`, 'agent.editing', { file: d.id });
+      const dir = this.sfx.dirFor(d.category, d.id);
+      const variants = [];
+      const params = d.engine === 'jsfxr' ? await jsfxrVariants({ preset: d.preset, count: d.variants }) : [];
+      for (let v = 0; v < d.variants; v++) {
+        let raw, key;
+        try {
+          if (d.engine === 'jsfxr') {
+            key = this.sfx.cacheKey({ e: 'jsfxr', p: params[v] });
+            raw = this.sfx.cached(key) || this.sfx.putCache(key, await jsfxrRender(params[v]), 'wav');
+          } else {
+            key = keyOf(d, v);
+            raw = this.sfx.cached(key);
+            if (!raw) {
+              const g = await el.sound({ text: d.prompt, duration: d.duration, influence: d.influence, loop: d.loop });
+              if (!g.ok) { failed.push(`${d.id} v${v + 1}: ${g.error}`); if (/API (401|402|429)|quota|credit/i.test(g.error)) break; continue; }
+              gens++; usedCredits += g.credits || elevenCredits(d.duration);
+              raw = this.sfx.putCache(key, g.buf, g.ext);
+            }
+          }
+          const pp = await postProcess(raw, path.join(dir, `v${v + 1}`), { category: d.category, loop: d.loop });
+          variants.push({ n: v + 1, ogg: pp.files.ogg ? this.sfx.url(pp.files.ogg) : null, mp3: pp.files.mp3 ? this.sfx.url(pp.files.mp3) : null, raw: pp.processed ? null : this.sfx.url(Object.values(pp.files)[0]), processed: pp.processed, durationSec: pp.durationSec ?? null, lufs: pp.lufs ?? null, peak: pp.peak ?? null, cacheKey: key, ...(d.engine === 'jsfxr' ? { params: params[v] } : {}) });
+        } catch (e) { failed.push(`${d.id} v${v + 1}: ${e.message}`); }
+      }
+      if (!variants.length) continue;
+      this.sfx.upsert({ id: d.id, label: d.label, category: d.category, engine: d.engine, prompt: d.prompt || null, preset: d.engine === 'jsfxr' ? d.preset : null, duration: d.duration, loop: d.loop, influence: d.influence, volume: d.volume, stringId: d.stringId, loudnessTarget: undefined, variants, chosen: null, status: 'bozza', license: license(d), createdAt: now(), request: req.id, task: t.id });
+      done.push(`${d.id} (${variants.length})`);
+    }
+    if (gens) this.costs.add('elevenlabs', { runs: gens, credits: usedCredits });
+    if (!done.length) return { ok: false, error: `nessun suono generato: ${failed.slice(0, 4).join(' · ')}` };
+    const freeWarn = sub?.ok && !sub.commercial ? `\n⚠️ Piano ElevenLabs "${sub.tier}": i suoni generati con questo piano non si possono usare in una release commerciale (serve almeno Starter). È segnato nel manifest.` : '';
+    return { ok: true, result: { summary: `Suoni pronti come bozze (3 varianti ciascuno): ${done.join(', ')}.${failed.length ? ` Problemi: ${failed.slice(0, 3).join(' · ')}` : ''}${ff ? '' : ' ffmpeg non installato: i file sono grezzi (brew install ffmpeg).'}${freeWarn}`, notes: 'Le varianti sono in data/audio/sfx/ dello Studio; ascolto e scelta nel pannello Suoni (prossimo passo).', sounds: done, generations: gens, credits: usedCredits, provider: 'elevenlabs+jsfxr' } };
+  }
+
   async defaultSnapshotter({ layout, out }) {
     const { officeSnapshot } = await import(path.join(this.studioDir, 'qa', 'office-snapshot.mjs'));
     return officeSnapshot({ webDir: path.join(this.studioDir, 'web'), layout, out });
@@ -991,6 +1088,12 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
     if (!res.ok) {
       // credito o limiti d'uso esauriti: ritentare subito non serve (e non si ritenta a vuoto)
       const noCredit = /API (402|429)|no credits|credit balance|usage limit|quota|billing|insufficient_quota/i.test(res.error || '');
+      if (res.ask) {   // non è un errore: l'agente chiede una conferma (es. un lotto grande di suoni) prima di proseguire
+        this.setTask(t, { status: 'FAILED', finishedAt: now(), lastError: truncate(res.error, 2000) }, 'in attesa della tua conferma');
+        this.agents.setStatus(agent.id, 'WAITING', { task: t, text: 'aspetto la tua conferma', semantic: 'agent.waiting' });
+        this.escalate(req, res.error, false, t, { ask: true });
+        return;
+      }
       const canRetry = !res.blocked && !noCredit && t.attempt <= (this.config.maxTaskRetries ?? 1);
       if (canRetry) {
         this.setTask(t, { status: 'PENDING', lastError: truncate(res.error, 2000) }, `errore, riprovo: ${truncate(res.error, 300)}`);
@@ -1045,9 +1148,15 @@ ${refs.length ? 'Match the style, rendering quality, resolution and lighting of 
     this.chat('director', `Rimando a ${dev.name} per la correzione (giro ${used} di ${(this.config.maxFixLoops ?? 3) - 1}), poi ${this.agentName(testTask.agentId)} riprova.`, { agentId: 'director', requestId: req.id, kind: 'text' });
   }
 
-  escalate(req, text, blocked, task) {
+  escalate(req, text, blocked, task, { ask = false } = {}) {
     // i task ancora in attesa di questa richiesta non partiranno
     for (const t of this.tasksOf(req.id)) if (t.status === 'PENDING') this.setTask(t, { status: 'CANCELLED' }, 'annullato: la richiesta è passata all\'utente');
+    if (ask) {
+      this.setRequest(req, { status: 'NEEDS_USER', escalation: text });
+      this.chat('director', `❓ Serve il tuo ok su ${req.id}.\n${text}`, { agentId: 'director', requestId: req.id, kind: 'escalation' });
+      this.agents.setStatus('director', 'WAITING', { task: { id: req.id, title: `Conferma: ${req.id}` }, text: 'aspetto il tuo ok', semantic: 'agent.waiting' });
+      return;
+    }
     this.setRequest(req, { status: 'NEEDS_USER', escalation: text });
     this.chat('director', `⚠️ Serve una tua decisione su ${req.id}.\n${text}\n\n${blocked ? 'Configura un provider AI (Impostazioni → Provider) e premi "Riprova".' : `Puoi: premere "Riprova" (rimette in coda i task non riusciti), scrivermi come procedere${req.branch ? ', oppure scartare il branch' : ''}.`}${req.branch ? ` Il lavoro fatto finora è nel branch ${req.branch}.` : ''}`, { agentId: 'director', requestId: req.id, kind: 'escalation' });
     this.agents.setStatus('director', 'BLOCKED', { task: { id: req.id, title: `Decisione richiesta: ${req.id}` }, text, semantic: 'agent.blocked' });

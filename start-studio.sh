@@ -38,10 +38,14 @@ if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
 fi
 
 # 3. pacchetti dello Studio (solo la prima volta) e browser per il QA
-if [ ! -d node_modules/playwright ]; then
-  say "Installo i pacchetti dello Studio (solo la prima volta)…"
-  (npm install --no-audit --no-fund >/dev/null 2>&1) || say "· npm install non riuscito: lo Studio parte lo stesso, ma il QA non potrà aprire il gioco nel browser."
+if [ ! -d node_modules/playwright ] || [ ! -f node_modules/.pkg-ok ] || [ package.json -nt node_modules/.pkg-ok ]; then
+  say "Installo/aggiorno i pacchetti dello Studio…"
+  if (npm install --no-audit --no-fund >/dev/null 2>&1); then touch node_modules/.pkg-ok
+  else say "· npm install non riuscito: lo Studio parte lo stesso (senza i pacchetti nuovi il QA nel browser o i suoni retro potrebbero non funzionare)."; fi
 fi
+# ffmpeg: rifinitura dei suoni (silenzi, volume, .ogg + .mp3)
+if command -v ffmpeg >/dev/null 2>&1; then say "✔ ffmpeg trovato: i suoni vengono rifiniti ed esportati in .ogg e .mp3"
+else say "· ffmpeg non trovato: i suoni restano grezzi. Per installarlo: brew install ffmpeg"; fi
 if [ -d node_modules/playwright ] && [ ! -f "$DATA/.browser-ok" ]; then
   if (node -e "import('playwright').then(p=>{process.exit(require('fs').existsSync(p.chromium.executablePath())?0:1)}).catch(()=>process.exit(1))") 2>/dev/null; then
     touch "$DATA/.browser-ok"

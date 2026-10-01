@@ -213,6 +213,20 @@ Nello stesso pannello, riquadro **Avatar**:
 
 Gli avatar caricati stanno in `data/avatars/`. Il disegno degli avatar è in `web/avatars.js` e `web/pixel.js`.
 
+## Effetti sonori (Rumore)
+
+Chiedi in chat, per esempio *«Rumore, fai i passi sui sampietrini (3 da alternare), il vetro rotto e il click del menu»*.
+Rumore trasforma la richiesta in un elenco di suoni con un prompt tecnico in inglese e sceglie il motore:
+**ElevenLabs Sound Effects** per i suoni realistici del borgo (gli ambienti ciclici in loop) oppure **jsfxr**,
+locale e gratuito, per interfaccia e gameplay retro (i parametri restano salvati, così si rigenera o si modifica).
+Ogni suono ha **3 varianti**. Prima di chiamare ElevenLabs lo Studio scrive quante generazioni farà e quanti crediti
+stima; oltre i 10 suoni chiede il tuo ok (rispondi «riprova» o «ferma»). Richieste identiche escono dalla **cache**.
+Con **ffmpeg** (`brew install ffmpeg`) i suoni vengono rifiniti: silenzi tagliati, stesso volume percepito per
+categoria (ambient, foley, ui, gameplay, vandalismo), dissolvenze brevi (non sui loop), esportati in .ogg e .mp3.
+Le bozze restano nello Studio in `data/audio/` (fuori da git) con il manifest `data/audio/sfx_manifest.json`:
+motore, prompt o parametri, varianti, scelta, stato e **licenza** (con il piano ElevenLabs Free i suoni non si
+possono usare in una release commerciale: lo Studio lo segnala). Serve `ELEVENLABS_API_KEY` nel file `.env`.
+
 ## Configurare i provider AI
 
 Il provider di ogni agente è `auto` = il primo disponibile fra:

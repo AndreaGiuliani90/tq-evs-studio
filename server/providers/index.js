@@ -6,6 +6,7 @@ import { OpenAIImageProvider } from './openai-image.js';
 import { CodexProvider } from './codex.js';
 import { GeminiCliProvider } from './gemini-cli.js';
 import { GeminiImageProvider } from './gemini-image.js';
+import { ElevenLabsSfx } from '../sfx.js';
 
 export class MockProvider {
   constructor() { this.id = 'mock'; this.kind = 'text'; this.label = 'Nessun AI (modalità dimostrativa)'; }
@@ -25,6 +26,7 @@ export class ProviderRegistry {
     this.register(new GeminiCliProvider());
     this.register(new GeminiImageProvider());
     this.register(new OpenAIImageProvider());
+    this.register(new ElevenLabsSfx());
     this.register(new MockProvider());
     this.autoOrder = ['claude-code', 'anthropic', 'mock'];
   }
