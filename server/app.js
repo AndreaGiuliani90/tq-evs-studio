@@ -167,7 +167,8 @@ export function createServer(studio) {
     ['POST', /^\/api\/requests\/([\w-]+)\/retry$/, async (m, b) => orch.retry(m[1], { choice: b?.choice })],
     ['POST', /^\/api\/requests\/([\w-]+)\/cancel$/, async (m) => orch.cancel(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/quote$/, async (m, b) => orch.answerQuote(m[1], ['approve', 'light', 'cancel'].includes(b?.action) ? b.action : 'approve', { choice: b?.choice, light: !!b?.light })],
-    ['POST', /^\/api\/requests\/([\w-]+)\/merge$/, async (m) => orch.merge(m[1])],
+    ['POST', /^\/api\/requests\/([\w-]+)\/merge$/, async (m, b) => orch.merge(m[1], { force: !!b?.force })],
+    ['POST', /^\/api\/requests\/([\w-]+)\/merge-repair$/, async (m) => orch.repairMerge(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/revert-merge$/, async (m) => orch.revertMerge(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/discard$/, async (m) => orch.discard(m[1])],
     ['GET', /^\/api\/requests\/([\w-]+)\/diff$/, async (m) => {

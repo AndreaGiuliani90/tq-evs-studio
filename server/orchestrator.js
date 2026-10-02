@@ -206,6 +206,7 @@ export class Orchestrator {
       }
       if (r.status === 'PLANNING') this.plan(r).catch((e) => this.fail(r, e));
     }
+    await this.syncMerged().catch(() => {});
     this.store.save();
     this.schedule();
   }
@@ -1328,10 +1329,13 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
   say(text, req, kind = 'agent-update') { this.chat('agent', text, { agentId: this.notaio(), requestId: req?.id, kind }); }
 
   // "Unisci": la richiesta entra nella coda del Notaio; le unioni passano una alla volta, in ordine di nascita
-  async merge(reqId) {
+  async merge(reqId, { force = false } = {}) {
     const req = this.S.requests[reqId];
     if (!req) throw new Error('richiesta sconosciuta');
-    if (req.merged) throw new Error('già unita');
+    await this.syncMerged([req]).catch(() => {});
+    if (req.merged) { this.setRequest(req, { mergeError: null }); return req; }
+    // "Unisci comunque": hai visto l'elenco del Notaio e hai deciso tu. Conflitti e versione all'indietro fermano lo stesso.
+    if (force) req.forceMerge = true;
     if (!(req.branch && req.report?.commits?.length) && !(req.studio?.branch && req.report?.studioCommits?.length)) throw new Error('niente da unire');
     const q = this.release.ledger.queue;
     if (!q.includes(req.id)) q.push(req.id);
@@ -1353,7 +1357,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
       const req = this.S.requests[id];
       try { if (req && !req.merged) await this.mergeNow(req); }
       catch (e) { if (req) { this.setRequest(req, { mergeError: e.message }); this.say(`Non ho unito ${id}: ${e.message}`, req, 'escalation'); } }
-      finally { q.splice(q.indexOf(id), 1); if (req) this.setRequest(req, { mergeQueued: false }); this.store.save(); }
+      finally { q.splice(q.indexOf(id), 1); if (req) { req.forceMerge = false; this.setRequest(req, { mergeQueued: false }); } this.store.save(); }
     }
     if (this.agents.get('release')) this.agents.setStatus('release', 'IDLE', { task: null, text: 'coda vuota' });
   }
@@ -1376,6 +1380,10 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
         this.integrate(req);
         return;
       }
+      if (!pf.ok && req.forceMerge && !pf.versionIssue) {
+        this.say(`${req.id}: unisco comunque, come hai deciso. Righe che nel risultato non ci sono più:\n${pf.missing.slice(0, 12).map((m) => `• ${m.file}: «${m.line}» (${m.side})`).join('\n')}`, req);
+        pf.ok = true; pf.forced = true;
+      }
       if (!pf.ok) {
         const list = pf.missing.slice(0, 12).map((m) => `• ${m.file}: «${m.line}» (${m.side})`).join('\n');
         if (!req.repairTried) {
@@ -1385,21 +1393,55 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
           this.integrate(req, `ATTENZIONE: il Notaio ha verificato che unendo questa richiesta andrebbero PERSE queste righe (devono restare tutte nel risultato, salvo che siano davvero da sostituire — in quel caso spiegalo nel riepilogo):\n${list}${pf.versionIssue ? `\nInoltre: ${pf.versionIssue}: la versione non deve mai tornare indietro.` : ''}`);
           return;
         }
-        throw new Error(`anche dopo l'allineamento andrebbero perse delle righe. Decidi tu:\n${list}`);
+        this.setRequest(req, { mergeDecision: true });
+        throw new Error(`anche dopo l'allineamento andrebbero perse delle righe. Decidi tu: «Unisci comunque» se vanno davvero via, «Rimanda allo sviluppo» se vanno rimesse.${pf.versionIssue ? `\n• ${pf.versionIssue}` : ''}\n${list}`);
       }
       const m = await this.git.merge(req);
       this.setRequest(req, { mergeCommit: m.mergeCommit });
       const files = (req.report?.filesChanged || []).map((f) => f.file || f).slice(0, 40);
-      const e = this.release.record(req, { mergeCommit: m.mergeCommit, version: pf.version, files, checks: { conflitti: 0, righePerse: 0, versione: pf.version || '—' } });
-      lines.push(`Gioco: unione n. ${e.n} — ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}${pf.version ? `, versione ${pf.version}` : ''}). Controlli: nessun conflitto, nessuna riga persa. Per annullare: "Annulla unione".`);
+      const e = this.release.record(req, { mergeCommit: m.mergeCommit, version: pf.version, files, checks: { conflitti: 0, righePerse: pf.forced ? pf.missing.length : 0, righeCambiate: pf.changed?.length || 0, decisione: pf.forced ? 'unita comunque' : '—', versione: pf.version || '—' } });
+      const ch = pf.changed || [];
+      lines.push(`Gioco: unione n. ${e.n} — ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}${pf.version ? `, versione ${pf.version}` : ''}). Controlli: nessun conflitto, ${pf.forced ? `${pf.missing.length} righe tolte per tua decisione` : 'nessuna riga persa'}${ch.length ? `, ${ch.length} righe ritoccate (non perse)` : ''}. Per annullare: "Annulla unione".${ch.length ? `\nRitoccate:\n${ch.slice(0, 6).map((c) => `• ${c.file}: «${c.line.slice(0, 80)}…» → «${c.now.slice(0, 80)}…»`).join('\n')}` : ''}`);
     }
     if (req.studio?.branch && req.report?.studioCommits?.length) {
       const m = await this.studioGit.merge(req.studio);
       req.studio.mergeCommit = m.mergeCommit;
       lines.push(`Studio: unito ${req.studio.branch} (commit ${m.mergeCommit.slice(0, 7)}). Riavvia lo Studio per vederlo: ./stop-studio.sh && ./start-studio.sh`);
     }
-    this.setRequest(req, { merged: true, mergedAt: now() });
+    req.forceMerge = false;
+    this.setRequest(req, { merged: true, mergedAt: now(), mergeError: null, mergeDecision: false });
     this.say(lines.join('\n'), req, 'text');
+  }
+
+  // Unioni già fatte: se il branch di una richiesta è già tutto dentro il branch principale (unito a mano con git,
+  // o da un'altra copia dello Studio) la richiesta risulta unita. Lo Studio guarda git, non solo il suo registro.
+  async syncMerged(list = Object.values(this.S.requests)) {
+    if (!this.gitOk) return;
+    for (const r of list) {
+      if (!r?.branch || r.merged || r.discarded || !r.report?.commits?.length) continue;
+      const g = (args) => this.git.git(args, this.projectRoot, { allowFail: true });
+      const tip = (await g(['rev-parse', '--verify', '--quiet', `refs/heads/${r.branch}`])).stdout.trim();
+      if (!tip || tip === r.baseCommit) continue;
+      const into = r.baseBranch || 'HEAD';
+      if ((await g(['merge-base', '--is-ancestor', tip, into])).code !== 0) continue;
+      const merges = (await g(['rev-list', '--merges', '--ancestry-path', `${tip}..${into}`])).stdout.trim().split('\n').filter(Boolean);
+      const mergeCommit = merges.at(-1) || null;
+      this.setRequest(r, { merged: true, mergedAt: now(), mergeCommit, mergeError: null, mergeDecision: false, mergedOutside: true });
+      this.release.record(r, { mergeCommit, files: [], checks: { nota: 'unita fuori dallo Studio (già nel branch principale)' } });
+      this.say(`${r.id} è già dentro ${r.baseBranch || 'il gioco'}${mergeCommit ? ` (commit ${mergeCommit.slice(0, 7)})` : ''}: la segno come unita.`, r, 'text');
+    }
+  }
+
+  // "Rimanda allo sviluppo": il Notaio ha trovato righe che mancano e tu vuoi che vengano rimesse
+  repairMerge(reqId) {
+    const req = this.S.requests[reqId];
+    if (!req) throw new Error('richiesta sconosciuta');
+    if (req.merged) throw new Error('già unita');
+    const list = String(req.mergeError || '').split('\n').filter((l) => l.startsWith('•')).join('\n');
+    req.remergeAfterIntegrate = true;
+    this.setRequest(req, { mergeError: null, mergeDecision: false });
+    this.integrate(req, `L'utente ha deciso: queste righe vanno RIMESSE nel risultato (non sono da sostituire):\n${list}`);
+    return req;
   }
 
   // Due richieste hanno toccato gli stessi file (tipico: versione e CHANGELOG). Lo sviluppo porta nel branch le novità

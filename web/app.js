@@ -187,6 +187,7 @@ function requestActions(req) {
   }
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
   if (req.mergeQueued) b.push('<span class="muted">📜 in coda per l\'unione…</span>');
+  else if (req.status === 'DONE' && !req.merged && !req.discarded && req.mergeDecision) b.push(`<button class="btn sm primary" data-act="merge-force" data-req="${req.id}">Unisci comunque</button>`, `<button class="btn sm" data-act="merge-repair" data-req="${req.id}">Rimanda allo sviluppo</button>`);
   else if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
   const failed = Object.values(S.tasks).some((t) => t.requestId === req.id && ['FAILED', 'CANCELLED'].includes(t.status) && !t.superseded);
@@ -356,6 +357,8 @@ document.addEventListener('click', act(async (ev) => {
   switch (el.dataset.act) {
     case 'diff': return showDiff(req);
     case 'merge': if (confirm('Unire le modifiche nel tuo branch? Si può annullare in ogni momento.')) { await api('POST', `/api/requests/${req}/merge`); toast('Unito.'); } return;
+    case 'merge-force': if (confirm('Unire anche se il Notaio segnala righe che non ci sarebbero più? Hai letto il suo elenco; si può annullare in ogni momento.')) { await api('POST', `/api/requests/${req}/merge`, { force: true }); toast('Unito.'); } return;
+    case 'merge-repair': await api('POST', `/api/requests/${req}/merge-repair`); toast('Rimandata allo sviluppo: rimette le righe, il QA riprova, poi la unisco io.'); return;
     case 'revert-merge': if (confirm('Annullare l\'unione (crea un commit di revert)?')) { await api('POST', `/api/requests/${req}/revert-merge`); toast('Unione annullata.'); } return;
     case 'retry': await api('POST', `/api/requests/${req}/retry`); return;
     case 'retry-choice': await api('POST', `/api/requests/${req}/retry`, { choice: document.querySelector(`[data-retry-choice="${req}"]`)?.value }); return;

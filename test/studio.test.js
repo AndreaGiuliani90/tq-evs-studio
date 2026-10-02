@@ -932,3 +932,37 @@ test('Notaio: coda in ordine, prova generale, blocca un\'unione che perderebbe r
   await assert.rejects(() => s.orch.revertMerge(b.id), /romperebbe/);
   assert.equal(sh(root, 'rev-parse', 'HEAD'), head);
 });
+
+test('Notaio: i numeri di versione e le righe ritoccate non sono "righe perse"; una riga sparita sì', async () => {
+  const { GitService } = await import('../server/git.js');
+  const { ReleaseDesk } = await import('../server/release.js');
+  const root = makeFixtureRepo();
+  const f = path.join(root, 'CHANGELOG.md');
+  fs.writeFileSync(f, '# changelog\n'); sh(root, 'add', '-A'); sh(root, 'commit', '-qm', 'base');
+  const base = sh(root, 'rev-parse', 'HEAD');
+  const lunga = '| `MenuScene.js` | Elenco livelli da `levels/index.json`, partita salvata, voci Musica, Modalità TV, Schermo intero, Calibra controller.';
+  fs.writeFileSync(f, `# changelog\n## Stato attuale (v0.33.0)\n## 0.32.1 — Il menu in basso a sinistra\n## voce blu importante\n${lunga}\n`);
+  sh(root, 'commit', '-qam', 'lato'); const ref = sh(root, 'rev-parse', 'HEAD');
+  // risultato: versione salita, voce rinumerata, riga lunga ritoccata, la voce blu sparita
+  fs.writeFileSync(f, `# changelog\n## Stato attuale (v0.33.1)\n## 0.33.1 — Il menu in basso a sinistra\n${lunga.replace('Calibra controller.', 'Calibra controller, IMPOSTAZIONI e LIVELLI EXTRA.')}\n`);
+  const desk = new ReleaseDesk({ git: new GitService(root), store: { data: {} }, events: null, dataDir: path.join(root, '.studio') });
+  const { missing, changed } = await desk.lostCheck({ cwd: root, base, sides: [{ label: 'x', ref }], withChanged: true });
+  assert.deepEqual(missing.map((m) => m.line), ['## voce blu importante'], 'solo la riga sparita davvero blocca');
+  assert.equal(changed.length, 1, 'la riga lunga ritoccata è un avviso');
+});
+
+test('Studio: un ramo già unito a mano con git risulta unito; "Unisci comunque" e "Rimanda allo sviluppo" esistono', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const req = await s.orch.handleUserMessage('Aggiungi una feature');
+  await waitFor(() => req.status === 'DONE', 15000, 'richiesta DONE');
+  assert.ok(!req.merged);
+  sh(root, 'merge', '--no-ff', '-q', '-m', 'unione a mano', req.branch);
+  await s.orch.syncMerged();
+  assert.ok(req.merged, 'riconosciuta come unita');
+  assert.equal(req.mergedOutside, true);
+  assert.equal(req.mergeCommit, sh(root, 'rev-parse', 'HEAD'));
+  await s.orch.merge(req.id);   // nessun errore, nessuna seconda unione
+  assert.equal(sh(root, 'log', '--merges', '--format=%s').split('\n').length, 1);
+  assert.equal(typeof s.orch.repairMerge, 'function');
+});

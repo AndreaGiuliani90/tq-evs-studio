@@ -18,6 +18,11 @@ const VERSION_RE = /VERSION\s*=\s*['"](\d+)\.(\d+)\.(\d+)['"]/;
 const cmpVer = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 const parseVer = (txt) => { const m = String(txt || '').match(VERSION_RE); return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null; };
 const verStr = (v) => (v ? v.join('.') : null);
+// confronto delle righe: senza numeri di versione; somiglianza fra righe lunghe (parole in comune)
+const SIMILAR_MIN = 60, SIMILAR_RATIO = 0.8;
+const normLine = (l) => l.replace(/\bv?\d+\.\d+\.\d+\b/g, '#');
+const words = (l) => new Set(normLine(l).toLowerCase().split(/[^\p{L}\p{N}_]+/u).filter((w) => w.length > 1));
+const similarity = (a, b) => { if (!a.size || !b.size) return 0; let n = 0; for (const w of a) if (b.has(w)) n++; return n / (a.size + b.size - n); };
 
 export class ReleaseDesk {
   constructor({ git, store, events, dataDir }) {
@@ -41,19 +46,38 @@ export class ReleaseDesk {
     return out;
   }
 
-  // controllo "niente perso" su una copia di lavoro che contiene il risultato dell'unione
-  async lostCheck({ cwd, base, sides }) {
-    const missing = [];
+  // controllo "niente perso" su una copia di lavoro che contiene il risultato dell'unione.
+  // Confronto riga per riga, ma non ottuso:
+  //   - i numeri di versione non contano ("Stato attuale (v0.33.0)" → "(v0.33.1)", una voce del CHANGELOG rinumerata
+  //     durante l'allineamento: è la stessa riga);
+  //   - una riga lunga che nel risultato c'è ancora, ritoccata (stesse parole quasi tutte), è CAMBIATA, non persa:
+  //     finisce tra gli avvisi, non blocca l'unione.
+  // Restano bloccanti le righe che nel risultato non hanno nessuna corrispondente: quelle si perderebbero davvero.
+  async lostCheck({ cwd, base, sides, withChanged = false }) {
+    const missing = [], changed = [];
+    const cache = new Map();
+    const fileInfo = (f) => {
+      if (!cache.has(f)) {
+        const raw = fs.readFileSync(f, 'utf8').split('\n').map((l) => l.trim());
+        cache.set(f, { have: new Set(raw), norm: new Set(raw.map(normLine)), long: raw.filter((l) => l.length >= SIMILAR_MIN).map((l) => ({ l, w: words(l) })) });
+      }
+      return cache.get(f);
+    };
     for (const { label, ref } of sides) {
       const added = await this.addedLines(base, ref, cwd);
       for (const [file, lines] of Object.entries(added)) {
         const f = path.join(cwd, file);
         if (!fs.existsSync(f)) { missing.push({ side: label, file, line: '(file sparito)' }); continue; }
-        const have = new Set(fs.readFileSync(f, 'utf8').split('\n').map((l) => l.trim()));
-        for (const l of lines) if (!have.has(l)) missing.push({ side: label, file, line: l.slice(0, 140) });
+        const info = fileInfo(f);
+        for (const l of lines) {
+          if (info.have.has(l) || info.norm.has(normLine(l))) continue;
+          const near = l.length >= SIMILAR_MIN ? info.long.find((x) => similarity(words(l), x.w) >= SIMILAR_RATIO) : null;
+          if (near) { if (!changed.some((c) => c.file === file && c.line === l.slice(0, 140))) changed.push({ side: label, file, line: l.slice(0, 140), now: near.l.slice(0, 140) }); continue; }
+          if (!missing.some((m) => m.file === file && m.line === l.slice(0, 140))) missing.push({ side: label, file, line: l.slice(0, 140) });
+        }
       }
     }
-    return missing;
+    return withChanged ? { missing, changed } : missing;
   }
 
   async versionAt(ref, cwd) { const r = await this.git.git(['show', `${ref}:src/version.js`], cwd, { allowFail: true }); return r.code === 0 ? parseVer(r.stdout) : null; }
@@ -81,11 +105,11 @@ export class ReleaseDesk {
       const m = await this.git.git(['merge', '--no-ff', '--no-commit', tip], cwd, { allowFail: true });
       const conflicted = (await this.git.git(['diff', '--name-only', '--diff-filter=U'], cwd, { allowFail: true })).stdout.split('\n').filter(Boolean);
       if (m.code !== 0 || conflicted.length) return { ok: false, conflict: true, files: conflicted, main, tip };
-      const missing = await this.lostCheck({ cwd, base, sides: [{ label: `già nel gioco`, ref: main }, { label: req.id, ref: tip }, ...(req.ownTips || []).map((ref) => ({ label: `${req.id} prima dell'allineamento`, ref }))] });
+      const { missing, changed } = await this.lostCheck({ cwd, base, withChanged: true, sides: [{ label: `già nel gioco`, ref: main }, { label: req.id, ref: tip }, ...(req.ownTips || []).map((ref) => ({ label: `${req.id} prima dell'allineamento`, ref }))] });
       const vMain = await this.versionAt(main, cwd), vTip = await this.versionAt(tip, cwd);
       const vRes = fs.existsSync(path.join(cwd, 'src/version.js')) ? parseVer(fs.readFileSync(path.join(cwd, 'src/version.js'), 'utf8')) : null;
       const versionIssue = vRes && [vMain, vTip].some((v) => v && cmpVer(vRes, v) < 0) ? `la versione risultante ${verStr(vRes)} è più bassa di ${verStr([vMain, vTip].filter(Boolean).sort(cmpVer).at(-1))}` : null;
-      return { ok: !missing.length && !versionIssue, conflict: false, missing, versionIssue, version: verStr(vRes), main, tip };
+      return { ok: !missing.length && !versionIssue, conflict: false, missing, changed, versionIssue, version: verStr(vRes), main, tip };
     });
   }
 
