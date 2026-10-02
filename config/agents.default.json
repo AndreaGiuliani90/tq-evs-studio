@@ -454,6 +454,42 @@
         },
         "lookVersion": 2
       }
+    },
+    {
+      "id": "release",
+      "name": "Notaio",
+      "role": "Custode delle unioni",
+      "description": "Fa entrare gli aggiornamenti nel gioco uno alla volta e in ordine: prova ogni unione in una copia a parte, controlla riga per riga che non si perda niente (né le novità né quello che era già entrato), che la versione non torni indietro e che il CHANGELOG tenga tutte le voci; tiene il registro delle unioni. Lavora solo con git: nessuna AI, nessun costo.",
+      "visible": true,
+      "enabled": true,
+      "capabilities": [
+        "release"
+      ],
+      "kinds": [
+        "release"
+      ],
+      "provider": "auto",
+      "model": "",
+      "contextDocs": [],
+      "systemInstructions": "Sei il Notaio dello studio: custodisci la coerenza delle unioni nel gioco.",
+      "avatar": {
+        "type": "pixel",
+        "emoji": "📜",
+        "color": "#7a5c9e",
+        "style": "pixel",
+        "character": {
+          "skin": "#e8b892",
+          "hair": "#5a4636",
+          "eyes": "#3b2a1a",
+          "hairStyle": "bald",
+          "outfit": "vest",
+          "shirt": "#efe7d6",
+          "accColor": "#3a2f5c",
+          "facial": "beard",
+          "accessory": "glasses"
+        },
+        "lookVersion": 2
+      }
     }
   ]
 }

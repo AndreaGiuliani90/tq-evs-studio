@@ -91,6 +91,23 @@ Clic su un agente → pannello con task corrente, attività recente, task comple
   salvate, e sempre con un merge separato.
 - Non ti piace? **Scarta** (cancella branch e copia) — oppure, se l'avevi già unita, **Annulla unione**.
 
+### Il Notaio: unioni in ordine, niente perso
+
+Quando lanci più richieste in parallelo, delle unioni si occupa **Notaio** (Custode delle unioni). Lavora solo con
+git: nessuna AI, nessun costo.
+
+- **Coda in ordine**: le unioni approvate entrano una alla volta, nell'ordine in cui sono nate le richieste. L'ordine
+  in cui premi "Unisci" non conta.
+- **Prova generale**: ogni unione si prova prima in una copia a parte. Se tocca gli stessi punti di aggiornamenti già
+  entrati, torna allo sviluppo per allinearsi e al QA per riprovarla. Poi la unisce da solo, senza che tu debba
+  ripremere. Il tuo gioco intanto non viene toccato.
+- **Niente perso**: prima di unire controlla riga per riga che nel risultato ci siano tutte le novità: quelle già
+  nel gioco, quelle della richiesta e quelle che la richiesta aveva prima dell'allineamento (le soluzioni dei
+  conflitti sono il punto debole). Controlla anche che la versione non torni indietro. Se manca qualcosa, ferma
+  l'unione, ti dice quali righe mancano e lo sviluppo le rimette. Se mancano ancora, decidi tu.
+- **Annullare un'unione**: prima la prova. Se toglierla romperebbe aggiornamenti entrati dopo, si ferma e te lo dice.
+- **Registro**: il pulsante **Unioni** mostra ogni unione con numero, data, commit, versione e controlli.
+
 ### Tornare indietro a mano (Terminale, nella cartella del gioco)
 
 ```bash

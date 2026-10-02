@@ -20,7 +20,7 @@ export const TASK_KINDS = {
 };
 
 export function rosterText(agents) {
-  return agents.filter((a) => a.enabled !== false && a.id !== 'director' && a.id !== 'strategist')
+  return agents.filter((a) => a.enabled !== false && a.id !== 'director' && a.id !== 'strategist' && a.id !== 'release')
     .map((a) => `- id "${a.id}" — ${a.name}, ${a.role}. Tipi di task: ${(a.kinds || []).join(', ')}. Capacità: ${(a.capabilities || []).join(', ')}. ${a.description}`)
     .join('\n');
 }

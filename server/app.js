@@ -195,6 +195,7 @@ export function createServer(studio) {
     ['DELETE', /^\/api\/backlog\/(B-\d+)$/, async (m) => orch.backlog.remove(m[1])],
     ['POST', /^\/api\/backlog\/(B-\d+)\/start$/, async (m) => orch.startBacklogItem(m[1])],
     ['GET', /^\/api\/team$/, async () => orch.performance()],
+    ['GET', /^\/api\/releases$/, async () => orch.release.summary()],
     ['GET', /^\/api\/client-log$/, async (m, b, q) => { try { fs.appendFileSync(path.join(dataDir, 'client-errors.log'), `${new Date().toISOString()} ${String(q?.get?.('m') || '').slice(0, 800).replace(/\n/g, ' ')}\n`); } catch { /* niente */ } return { ok: true }; }],
     ['GET', /^\/api\/sfx$/, async () => orch.sfx.manifest()],
     ['POST', /^\/api\/costs\/reset$/, async () => orch.costs.reset()],

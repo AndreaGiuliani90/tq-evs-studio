@@ -90,6 +90,7 @@ function onEvent(e) {
   if (t === 'chat.message') { S.chat.push(e.message); appendChat(e.message); if (e.message.requestId) refreshStale(e.message.requestId); }
   if (t === 'studio.warning') toast(e.text, true);
   if (t === 'office.updated') loadOffice().catch(() => {});
+  if (t === 'releases.updated' && $('#modal-box')?.querySelector('h2')?.textContent === 'Registro delle unioni') openModal('releases');
   if (t === 'backlog.updated') { S.backlog = e.backlog; S.office?.setBoards({ backlog: e.backlog }); if ($('#backlog-box')) openModal('backlog'); }
   if ((t === 'task.updated' && ['DONE', 'FAILED'].includes(e.task?.status)) || t === 'agent.updated') refreshTeam();
   if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
@@ -185,7 +186,8 @@ function requestActions(req) {
     return b.join('');
   }
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
-  if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
+  if (req.mergeQueued) b.push('<span class="muted">📜 in coda per l\'unione…</span>');
+  else if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
   const failed = Object.values(S.tasks).some((t) => t.requestId === req.id && ['FAILED', 'CANCELLED'].includes(t.status) && !t.superseded);
   if (['NEEDS_USER', 'FAILED'].includes(req.status) && !req.quotePending && (req.worktree || failed || req.planFailed)) {
@@ -529,6 +531,13 @@ let teamT = null;
 function refreshTeam() { clearTimeout(teamT); teamT = setTimeout(async () => { try { S.team = await api('GET', '/api/team'); S.office?.setBoards({ team: S.team }); if ($('#team-box')) openModal('team'); } catch { /* niente */ } }, 1500); }
 
 async function openModal(which) {
+  if (which === 'releases') {
+    const r = await api('GET', '/api/releases');
+    modal(`<h2>Registro delle unioni</h2><p class="muted">Tenuto dal Notaio: ogni aggiornamento entra nel gioco uno alla volta, dopo una prova in una copia a parte e il controllo che non si perda nessuna riga.</p>
+      ${r.queue.length ? `<p>In coda: <b>${r.queue.map(esc).join(' → ')}</b></p>` : ''}
+      <table class="costs"><thead><tr><th>N.</th><th>Richiesta</th><th>Quando</th><th>Versione</th><th>Commit</th><th>Controlli</th></tr></thead><tbody>${r.entries.map((e) => `<tr><td>${e.n}</td><td><b>${esc(e.requestId)}</b> ${e.kind === 'annullamento' ? '<span class="prio p-alta">annullata</span>' : ''}<div class="muted small">${esc(e.title)}</div></td><td class="small">${new Date(e.at).toLocaleString('it-IT')}</td><td>${esc(e.version || '—')}</td><td><code>${esc((e.mergeCommit || '').slice(0, 7))}</code></td><td class="small">${Object.entries(e.checks || {}).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(' · ')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Nessuna unione ancora.</td></tr>'}</tbody></table>`);
+    return;
+  }
   if (which === 'backlog') {
     const b = S.backlog || { open: [], done: [] };
     const ag = (id) => (id && S.agents[id] ? esc(S.agents[id].name) : '<span class="muted">—</span>');

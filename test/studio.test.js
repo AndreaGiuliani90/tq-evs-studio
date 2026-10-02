@@ -38,7 +38,7 @@ test('agenti: caricati dai predefiniti, rinomina persistente dopo il riavvio', a
   const root = makeFixtureRepo();
   const s1 = await studioFor(root, registryWith(studioProvider()));
   const ids = s1.agents.list().map((a) => a.id).sort();
-  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'puzzle', 'qa', 'strategist']);
+  assert.deepEqual(ids, ['art', 'audio', 'dev', 'director', 'level', 'lore', 'narrative', 'puzzle', 'qa', 'release', 'strategist']);
   assert.equal(s1.agents.get('dev').name, 'Tizo');
   s1.agents.update('dev', { name: 'Pippo', role: 'Capo Codice', avatar: { emoji: '🦊' } });
   s1.store.flush();
@@ -201,7 +201,7 @@ test('server HTTP: stato, chat, modifica agente e stream di eventi SSE', async (
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const st = await (await fetch(`${base}/api/state`)).json();
-    assert.equal(st.agents.filter((a) => a.visible).length, 9);
+    assert.equal(st.agents.filter((a) => a.visible).length, 10);
     const page = await (await fetch(`${base}/`)).text();
     assert.match(page, /GAME STUDIO/);
     // SSE
@@ -429,8 +429,7 @@ test('richieste in parallelo: la seconda che tocca gli stessi file viene allinea
   await waitFor(() => a.status === 'DONE' && b.status === 'DONE', 15000, 'due richieste DONE');
   await s.orch.merge(a.id);
   await s.orch.merge(b.id);   // conflitto → allineamento automatico
-  await waitFor(() => b.status === 'DONE' && s.orch.tasksOf(b.id).some((t) => t.kind === 'integrate' && t.status === 'DONE'), 15000, 'allineata');
-  await s.orch.merge(b.id);
+  await waitFor(() => b.merged, 20000, 'allineata e unita da sola');   // il Notaio la rimette in coda da solo
   const cl = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
   assert.match(cl, /rosso/); assert.match(cl, /blu/); assert.doesNotMatch(cl, /<<<<<<<|>>>>>>>/);
 });
@@ -890,4 +889,46 @@ test('lavagne: la Regia programma le attività in DA FARE (senza eseguirle), «a
   assert.equal(qa.done, 2); assert.equal(qa.bugsFound, 1); assert.equal(qa.quality, 100);
   assert.ok(['dev', 'qa'].includes(p.most));
   assert.ok(s.office.get().decor.some((d) => d.type === 'todoboard') && s.office.get().decor.some((d) => d.type === 'perfboard'));
+});
+
+test('Notaio: coda in ordine, prova generale, blocca un\'unione che perderebbe righe, la fa riparare e la unisce; registro', async () => {
+  const root = makeFixtureRepo();
+  let careless = true;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: o.prompt.includes('ROSSO') ? 'rosso' : 'blu', dependsOn: [] }]);
+    if (o.agent.id === 'dev') {
+      const f = path.join(o.cwd, 'CHANGELOG.md');
+      if (/conflitti/.test(o.prompt)) {
+        let t = fs.readFileSync(f, 'utf8');
+        // la prima volta "risolve" tenendo solo la voce già nel gioco (perde la propria!), la seconda le tiene entrambe
+        if (careless && !/PERSE/.test(o.prompt)) { careless = false; t = t.replace(/<<<<<<< .*\n[\s\S]*?=======\n([\s\S]*?)>>>>>>> .*\n/, '$1'); }
+        else t = t.replace(/<<<<<<< .*\n|=======\n|>>>>>>> .*\n/g, '');
+        // il Notaio ha elencato le righe perse: lo sviluppo le rimette
+        for (const m of o.prompt.matchAll(/CHANGELOG\.md: «(.+?)»/g)) if (!t.includes(m[1])) t = t.replace('# changelog\n', `# changelog\n\n${m[1]}\n`);
+        fs.writeFileSync(f, t); return { text: '{"summary":"conflitti risolti"}' };
+      }
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('# changelog\n', `# changelog\n\n## voce ${o.prompt.includes('ROSSO') ? 'rosso' : 'blu'} importante\n`));
+      return { text: '{"summary":"voce"}' };
+    }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { parallelPerAgent: 2 });
+  const a = await s.orch.handleUserMessage('Fai ROSSO');
+  const b = await s.orch.handleUserMessage('Fai BLU');
+  await waitFor(() => a.status === 'DONE' && b.status === 'DONE', 15000, 'due richieste DONE');
+  // approvate "nell'ordine sbagliato": prima la più nuova
+  await s.orch.merge(b.id);
+  assert.ok(b.merged);
+  await s.orch.merge(a.id);   // conflitto → allineamento; la soluzione sbagliata viene scoperta e riparata
+  await waitFor(() => a.merged, 30000, 'unita dopo la riparazione');
+  const cl = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  assert.match(cl, /voce rosso importante/); assert.match(cl, /voce blu importante/, 'la voce di BLU (entrata prima) non è andata persa');
+  assert.ok(s.store.data.chat.some((m) => /Fermata l'unione[\s\S]*voce rosso importante/.test(m.text)), 'il Notaio ha segnalato la riga che si sarebbe persa');
+  const L = s.orch.release.summary();
+  assert.deepEqual(L.entries.map((e) => e.requestId), [a.id, b.id]);
+  assert.equal(L.queue.length, 0);
+  // annullare B romperebbe A (stesso punto del CHANGELOG): il Notaio si ferma e non tocca niente
+  const head = sh(root, 'rev-parse', 'HEAD');
+  await assert.rejects(() => s.orch.revertMerge(b.id), /romperebbe/);
+  assert.equal(sh(root, 'rev-parse', 'HEAD'), head);
 });

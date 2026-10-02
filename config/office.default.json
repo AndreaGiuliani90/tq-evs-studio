@@ -78,12 +78,12 @@
       "y": 12.6
     },
     {
-      "agent": null,
+      "agent": "release",
       "wall": "R",
       "at": 6.4,
       "b0": 12.6,
-      "kind": "pc",
-      "spare": true
+      "kind": "library",
+      "spare": false
     },
     {
       "agent": null,
@@ -307,6 +307,6 @@
       "z": 44
     }
   ],
-  "layoutVersion": 4,
+  "layoutVersion": 5,
   "_pianta": "Sede grande (24×20): parete destra = programmazione, test, livelli, suono e l'angolo relax in fondo; parete sinistra = testi, arte, bibbia, enigmi e la lavagna delle spese; al centro l'isola (Arredo, Stratega) e il tavolo della Regia."
 }
