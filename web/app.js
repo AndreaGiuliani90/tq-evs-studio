@@ -243,66 +243,78 @@ function refreshStale(reqId) {
     if (tag) { if (st) tag.textContent = st; else tag.remove(); }
   }
 }
-// ─── DA SEGUIRE: decisioni, unioni da confermare, lavori in corso e in attesa ───────────────────────
-// La barra in cima alla chat le conta; ‹ › le scorre una per una nella chat; ▾ apre l'elenco completo
-// (anche le richieste completate di recente, per agganciarci un seguito).
+// ─── TOCCA A TE: le decisioni, spiegate una per una, con i pulsanti per decidere lì ─────────────────
+// Ogni scheda dice: cosa è successo, cosa ti si chiede, se il lavoro è fermo per te o se puoi farlo quando vuoi.
+// Quello che non richiede niente (lavori in corso, in attesa) sta in una riga tranquilla sotto.
 function lastOf(r) { const seen = new Set(); while (r?.followedBy && S.requests[r.followedBy] && !seen.has(r.id)) { seen.add(r.id); r = S.requests[r.followedBy]; } return r; }
-function title(r) { return String(r.parentText && r.parent ? r.text : (r.originalText || r.text) || '').split('\n')[0].slice(0, 70); }
+function title(r) { const t = String((r.parent ? r.text : (r.originalText || r.text)) || '').replace(/\s+/g, ' ').trim(); return t.length > 70 ? t.slice(0, 68) + '…' : t; }
 function canMerge(r) { return r.status === 'DONE' && !r.mergeDecision && !r.merged && !r.discarded && !r.mergeQueued && !(r.followedBy && S.requests[r.followedBy]?.sameBranch) && (r.report?.commits?.length || r.report?.studioCommits?.length); }
-function pendingGroups() {
-  const all = Object.values(S.requests).sort((a, b) => b.id.localeCompare(a.id));
-  const done = new Set();
-  const take = (f) => all.filter((r) => !done.has(r.id) && f(r)).map((r) => (done.add(r.id), r));
-  return [
-    { key: 'dec', label: 'Decisioni', icon: '❓', items: take((r) => r.status === 'NEEDS_USER' || (r.status === 'DONE' && r.mergeDecision && !r.merged && !r.discarded)) },
-    { key: 'merge', label: 'Unioni da confermare', icon: '⇲', items: take(canMerge) },
-    { key: 'queue', label: 'In coda per l\'unione', icon: '📜', items: take((r) => r.mergeQueued) },
-    { key: 'run', label: 'In lavorazione', icon: '⚙', items: take((r) => ['RUNNING', 'PLANNING'].includes(r.status)) },
-    { key: 'wait', label: 'In attesa (seguiti)', icon: '⏳', items: take((r) => r.status === 'QUEUED') },
-    { key: 'recent', label: 'Completate di recente', icon: '✔', items: take((r) => ['DONE', 'ANSWERED', 'FAILED', 'CANCELLED'].includes(r.status) && !r.followedBy).slice(0, 8), muted: true },
-  ];
+const clipT = (t, n) => { t = String(t || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+const usd = (n) => `≈ $${Number(n || 0).toFixed(2)}`;
+function card(r) {
+  const T = `<b>${esc(r.id)}</b> «${esc(title(r))}»`;
+  const goto = `<button class="tt-link" data-goto="${esc(r.id)}">vedi in chat</button>`;
+  const play = r.worktree && !r.discarded ? `<a class="btn sm" href="/play/${esc(r.id)}/" target="_blank" rel="noopener">▶ Prova questa versione</a>` : '';
+  if (r.status === 'NEEDS_USER' && r.quotePending) {
+    const q = r.quote || {}, free = (q.options || []).find((o) => o.plan);
+    return { u: 'stop', html: `<div class="tt-what">${T}: è pronto il piano, ma costa soldi in più rispetto all'abbonamento: ${usd(q.usd)} (immagini via API).</div>
+      <div class="tt-ask">Spendo?</div>
+      <div class="tt-btns"><button class="btn sm primary" data-act="quote-approve" data-req="${esc(r.id)}">Sì, procedi (${usd(q.usd)})</button>${free ? `<button class="btn sm" data-act="quote-pick" data-choice="${esc(free.id)}" data-req="${esc(r.id)}">Gratis con l'abbonamento (sperimentale)</button>` : ''}<button class="btn sm" data-act="quote-cancel" data-req="${esc(r.id)}">No, lascia stare</button>${goto}</div>` };
+  }
+  if (r.status === 'NEEDS_USER' && r.question && !r.escalation && !r.planFailed) {
+    return { u: 'stop', html: `<div class="tt-what">${T}: prima di partire la Regia ti chiede una cosa.</div>
+      <div class="tt-q">${esc(clipT(r.question, 320))}</div>
+      <div class="tt-btns"><button class="btn sm primary" data-hook="${esc(r.id)}">Rispondi</button><button class="btn sm" data-act="close-q" data-req="${esc(r.id)}">Non serve più</button>${goto}</div>` };
+  }
+  if (r.status === 'NEEDS_USER') {
+    return { u: 'stop', html: `<div class="tt-what">${T} si è fermata: ${esc(clipT(r.escalation || r.question || 'serve una tua indicazione', 260))}</div>
+      <div class="tt-ask">Riprovo, mi dici tu come procedere, o la fermo?</div>
+      <div class="tt-btns"><button class="btn sm primary" data-act="retry" data-req="${esc(r.id)}">Riprova</button><button class="btn sm" data-hook="${esc(r.id)}">Scrivi come procedere</button><button class="btn sm" data-act="cancel" data-req="${esc(r.id)}">Fermala</button>${goto}</div>` };
+  }
+  if (r.mergeDecision) {
+    const i = r.mergeInfo || {}, n = i.lines || Number((String(r.mergeError || '').match(/tolto (\d+)/) || [])[1]) || 0;
+    const ov = (i.overlapping || []).map((o) => `${esc(o.id)} «${esc(clipT(o.title, 50))}»`).join(', ');
+    if (i.markers || i.versionIssue) return { u: 'merge', html: `<div class="tt-what">${T} è finita, ma nell'allineamento sono rimasti ${i.markers ? 'dei segni di conflitto (il gioco non partirebbe)' : 'problemi di versione'}.</div>
+      <div class="tt-ask">Va rimandata allo sviluppo.</div><div class="tt-btns"><button class="btn sm primary" data-act="merge-repair" data-req="${esc(r.id)}">Rimanda allo sviluppo</button>${goto}</div>` };
+    return { u: 'merge', html: `<div class="tt-what">${T} è finita e testata. Però, per allinearla con ${ov || 'aggiornamenti entrati nel gioco dopo'}, lo sviluppo ha tolto ${n ? `${n} righe` : 'una parte'} del suo codice${(i.files || []).length ? ` (${esc(i.files.slice(0, 3).join(', '))})` : ''}. Di solito vuol dire che quel lavoro è stato rifatto${ov ? ' da lì' : ''} e la sua versione non serve più.</div>
+      ${i.devSays ? `<div class="tt-dev">${esc(S.agents.dev?.name || 'Sviluppo')}: «${esc(clipT(i.devSays, 260))}»</div>` : ''}
+      <div class="tt-ask">Prova il gioco: quello che avevi chiesto in ${esc(r.id)} funziona?</div>
+      <div class="tt-btns">${play}<button class="btn sm primary" data-act="merge-force" data-req="${esc(r.id)}">Sì, funziona: uniscila</button><button class="btn sm" data-act="merge-repair" data-req="${esc(r.id)}">No: rimetti il suo codice</button><button class="btn sm danger" data-act="discard" data-req="${esc(r.id)}">Non serve più: scartala</button>${goto}</div>` };
+  }
+  if (canMerge(r)) {
+    return { u: 'later', html: `<div class="tt-what">${T} è finita${r.result === 'FAIL' ? ', ma l\'ultimo test NON è passato' : ' e testata'}.</div>
+      <div class="tt-ask">Provala; se ti piace, uniscila al gioco.</div>
+      <div class="tt-btns">${play}<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci al gioco</button><button class="btn sm danger" data-act="discard" data-req="${esc(r.id)}">Scarta</button>${goto}</div>` };
+  }
+  return null;
 }
-function why(r) {
-  if (r.mergeDecision && !r.merged) return 'unione: decidi tu';
-  if (r.status === 'NEEDS_USER') return r.quotePending ? 'preventivo' : r.escalation ? 'problema' : 'domanda';
-  if (r.status === 'QUEUED') return `dopo ${r.waitingFor || r.parent}`;
-  if (r.mergeQueued) return 'in coda';
-  if (canMerge(r)) return r.result === 'FAIL' ? 'da unire · test FAIL' : 'da unire';
-  return (REQ_IT[r.status] || r.status) + (r.merged ? ' · unita' : '');
-}
-function itemHTML(r) {
-  const prim = canMerge(r) ? `<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci</button>`
-    : r.status === 'NEEDS_USER' && r.question && !r.quotePending ? `<button class="btn sm" data-act="close-q" data-req="${esc(r.id)}" title="Non serve più: togli la domanda">Chiudi</button>` : '';
-  return `<li class="pd-item"><button class="pd-go" data-goto="${esc(r.id)}" title="Vai al messaggio in chat"><b>${esc(r.id)}</b> <span class="pd-why">${esc(why(r))}</span> <span class="pd-t">${esc(title(r))}</span></button>${prim}<button class="btn sm hookbtn" data-hook="${esc(r.id)}" title="Scrivi un messaggio agganciato a ${esc(r.id)}">↪</button></li>`;
-}
-S.pdOpen = false; S.pdPos = -1;
+const URG = { stop: ['⏸ Ferma: aspetta te', 'tt-stop'], merge: ['Non entra nel gioco finché non decidi', 'tt-merge'], later: ['Quando vuoi: niente è fermo', 'tt-later'] };
+try { S.pdOpen = localStorage.getItem('studio:tt-open') !== '0'; } catch { S.pdOpen = true; }
 function renderDecisions() {
   const box = $('#pending-bar'); if (!box) return;
-  const g = pendingGroups();
-  const urgent = [...g[0].items, ...g[1].items];
-  const ONE = { dec: 'decisione', merge: 'unione da confermare', queue: 'in coda per l\'unione', run: 'in lavorazione', wait: 'in attesa' };
-  const counts = g.filter((x) => !x.muted && x.items.length).map((x) => `${x.icon} ${x.items.length} ${x.items.length === 1 ? ONE[x.key] : x.label.toLowerCase()}`);
-  const any = g.some((x) => x.items.length);
-  box.hidden = !any;
-  if (!any) return;
-  box.classList.toggle('calm', !urgent.length);
-  box.innerHTML = `<div class="pd-head"><button class="pd-toggle" data-pd="toggle" title="Mostra/nascondi l'elenco">${S.pdOpen ? '▾' : '▸'} <b>Da seguire</b></button> <span class="pd-counts">${counts.join(' · ') || 'niente in sospeso'}</span>
-      ${urgent.length ? `<span class="pd-nav"><button class="btn sm" data-pd="prev" title="Precedente in chat">‹</button><button class="btn sm" data-pd="next" title="Successiva in chat">›</button></span>` : ''}</div>
-    ${S.pdOpen ? `<div class="pd-list">${g.filter((x) => x.items.length).map((x) => `<div class="pd-group${x.muted ? ' muted-g' : ''}"><div class="pd-gl">${x.icon} ${esc(x.label)}</div><ul>${x.items.map(itemHTML).join('')}</ul></div>`).join('')}</div>` : ''}`;
+  const all = Object.values(S.requests).sort((a, b) => a.id.localeCompare(b.id));
+  const cards = all.map((r) => ({ r, c: card(r) })).filter((x) => x.c);
+  const order = { stop: 0, merge: 1, later: 2 };
+  cards.sort((a, b) => order[a.c.u] - order[b.c.u] || a.r.id.localeCompare(b.r.id));
+  const running = all.filter((r) => ['RUNNING', 'PLANNING'].includes(r.status) || r.mergeQueued);
+  const waiting = all.filter((r) => r.status === 'QUEUED');
+  const quiet = [...running.map((r) => `⚙ ${esc(r.id)} ${r.mergeQueued ? 'si sta unendo al gioco' : 'in lavorazione'}`), ...waiting.map((r) => `⏳ ${esc(r.id)} parte dopo ${esc(r.waitingFor || r.parent)}`)];
+  box.hidden = !cards.length && !quiet.length;
+  if (box.hidden) return;
+  const nStop = cards.filter((x) => x.c.u !== 'later').length, nLater = cards.length - nStop;
+  box.classList.toggle('calm', !nStop);
+  const head = cards.length
+    ? `<button class="pd-toggle" data-pd="toggle">${S.pdOpen ? '▾' : '▸'} <b>Tocca a te</b></button> <span class="pd-counts">${nStop ? `${nStop === 1 ? 'una cosa aspetta' : `${nStop} cose aspettano`} una tua decisione` : ''}${nStop && nLater ? ' · ' : ''}${nLater ? `${nLater === 1 ? 'una pronta' : `${nLater} pronte`} da unire, quando vuoi` : ''}</span>`
+    : '<span class="pd-counts"><b>Niente da decidere.</b></span>';
+  box.innerHTML = `<div class="pd-head">${head}</div>
+    ${cards.length && S.pdOpen ? `<div class="tt-cards">${cards.map(({ r, c }) => `<div class="tt-card ${URG[c.u][1]}" data-tt="${esc(r.id)}"><div class="tt-tag">${URG[c.u][0]}</div>${c.html}</div>`).join('')}</div>` : ''}
+    ${quiet.length ? `<div class="tt-quiet">Non serve fare niente: ${quiet.join(' · ')}</div>` : ''}`;
 }
 function gotoReq(id) {
   const msgs = [...document.querySelectorAll(`[data-msg-req="${CSS.escape(id)}"]`)];
   const m = msgs.filter((x) => !x.classList.contains('stale')).pop() || msgs.pop();
   if (m) { m.scrollIntoView({ behavior: 'smooth', block: 'center' }); m.classList.add('flash'); setTimeout(() => m.classList.remove('flash'), 1600); }
   else toast(`${id}: nessun messaggio in chat`);
-}
-function stepPending(dir) {
-  const g = pendingGroups(); const list = [...g[0].items, ...g[1].items].sort((a, b) => a.id.localeCompare(b.id));
-  if (!list.length) return;
-  S.pdPos = (S.pdPos + dir + list.length) % list.length;
-  if (S.pdPos < 0) S.pdPos = 0;
-  gotoReq(list[S.pdPos].id);
-  toast(`${S.pdPos + 1} di ${list.length}: ${list[S.pdPos].id} · ${why(list[S.pdPos])}`);
 }
 
 // ─── aggancio: il prossimo messaggio riguarda questa richiesta ───────────────────────────────────
@@ -434,7 +446,7 @@ document.addEventListener('click', act(async (ev) => {
   if (hook) { setReplyTo(hook.dataset.hook); return; }
   if (ev.target.closest('[data-hook-clear]')) { setReplyTo(null); return; }
   const pd = ev.target.closest('[data-pd]');
-  if (pd) { if (pd.dataset.pd === 'toggle') { S.pdOpen = !S.pdOpen; renderDecisions(); } else stepPending(pd.dataset.pd === 'next' ? 1 : -1); return; }
+  if (pd) { S.pdOpen = !S.pdOpen; try { localStorage.setItem('studio:tt-open', S.pdOpen ? '1' : '0'); } catch { /* niente */ } renderDecisions(); return; }
   const el = ev.target.closest('[data-act],[data-task],[data-open],[data-example],[data-tab]');
   if (!el) return;
   if (el.dataset.example !== undefined) { $('#msg').value = 'Analizza il gioco attuale e dimmi un piccolo miglioramento che valga la pena implementare come test. Implementalo e testalo.'; $('#msg').focus(); return; }
@@ -446,7 +458,7 @@ document.addEventListener('click', act(async (ev) => {
   switch (el.dataset.act) {
     case 'diff': return showDiff(req);
     case 'merge': if (confirm('Unire le modifiche nel tuo branch? Si può annullare in ogni momento.')) { await api('POST', `/api/requests/${req}/merge`); toast('Unito.'); } return;
-    case 'merge-force': if (confirm('Unire anche se il Notaio segnala righe che non ci sarebbero più? Hai letto il suo elenco; si può annullare in ogni momento.')) { await api('POST', `/api/requests/${req}/merge`, { force: true }); toast('Unito.'); } return;
+    case 'merge-force': if (confirm('Unire al gioco? Se poi qualcosa non va, «Annulla unione» la toglie.')) { await api('POST', `/api/requests/${req}/merge`, { force: true }); toast('Unito.'); } return;
     case 'merge-repair': await api('POST', `/api/requests/${req}/merge-repair`); toast('Rimandata allo sviluppo: rimette le righe, il QA riprova, poi la unisco io.'); return;
     case 'revert-merge': if (confirm('Annullare l\'unione (crea un commit di revert)?')) { await api('POST', `/api/requests/${req}/revert-merge`); toast('Unione annullata.'); } return;
     case 'retry': await api('POST', `/api/requests/${req}/retry`); return;
@@ -457,6 +469,7 @@ document.addEventListener('click', act(async (ev) => {
     case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
     case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;
     case 'quote-choice': await api('POST', `/api/requests/${req}/quote`, { action: 'approve', choice: document.querySelector(`[data-quote-choice="${req}"]`)?.value, light: !!document.querySelector(`[data-quote-light="${req}"]`)?.checked }); return;
+    case 'quote-pick': await api('POST', `/api/requests/${req}/quote`, { action: 'approve', choice: el.dataset.choice }); return;
     case 'quote-cancel': await api('POST', `/api/requests/${req}/quote`, { action: 'cancel' }); return;
     case 'discard': if (confirm('Scartare il lavoro di questa richiesta (branch e copia di lavoro)?')) await api('POST', `/api/requests/${req}/discard`); return;
     case 'close': return closeModal();

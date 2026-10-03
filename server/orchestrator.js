@@ -1535,7 +1535,11 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
           this.integrate(req, `ATTENZIONE: il Notaio ha verificato che unendo questa richiesta andrebbero PERSE queste righe (devono restare tutte nel risultato, salvo che siano davvero da sostituire — in quel caso spiegalo nel riepilogo):\n${list}${pf.versionIssue ? `\nInoltre: ${pf.versionIssue}: la versione non deve mai tornare indietro.` : ''}`);
           return;
         }
-        this.setRequest(req, { mergeDecision: true });
+        // per spiegartelo in chiaro: quali aggiornamenti già nel gioco toccano gli stessi file, e cosa dice chi ha allineato
+        const mfiles = [...new Set(pf.missing.map((m) => m.file))];
+        const overlapping = this.release.ledger.entries.filter((e) => e.kind === 'unione' && e.requestId !== req.id && (!req.createdAt || e.at > req.createdAt) && (e.files || []).some((f) => mfiles.includes(f))).map((e) => ({ id: e.requestId, title: e.title }));
+        const devSays = [...this.tasksOf(req.id)].reverse().find((t) => t.kind === 'integrate' && t.result?.summary)?.result.summary || '';
+        this.setRequest(req, { mergeDecision: true, mergeInfo: { lines: pf.missing.length, files: mfiles.slice(0, 6), overlapping: overlapping.slice(-4), devSays: clip(devSays, 400), markers: pf.missing.some((m) => m.side === 'segni di conflitto rimasti'), versionIssue: pf.versionIssue || null } });
         const markers = pf.missing.some((m) => m.side === 'segni di conflitto rimasti');
         throw new Error(`${markers ? 'nei file sono rimasti dei segni di conflitto (<<<<<<<): così il gioco non parte.' : `risolvendo i conflitti lo sviluppo ha tolto ${pf.missing.length === 1 ? 'una riga' : `${pf.missing.length} righe`} e non ${pf.missing.length === 1 ? 'l\'ha rimessa' : 'le ha rimesse'} nemmeno al secondo giro: forse ${pf.missing.length === 1 ? 'è stata sostituita' : 'sono state sostituite'} apposta.`}${pf.versionIssue ? ` Inoltre ${pf.versionIssue}.` : ''}\n**Cosa fare:** ${markers || pf.versionIssue ? '«Rimanda allo sviluppo».' : 'prova «Gioca questa versione»: se va bene, «Unisci comunque»; se manca qualcosa, «Rimanda allo sviluppo».'}\n_Dettagli tecnici:_\n${list}`);
       }
@@ -1604,9 +1608,11 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
 
   // all'avvio: le unioni che avevi approvato e che si erano fermate si riprovano con i controlli attuali
   recheckStuck() {
-    const ids = Object.values(this.S.requests).filter((r) => r.mergeDecision && !r.merged && !r.discarded && !r.followedBy).map((r) => r.id).sort();
+    // solo quelle fermate dai controlli vecchi (senza mergeInfo); se il giro di riparazione l'hanno già fatto
+    // con i controlli nuovi non lo si rifà: si ricalcola solo la spiegazione
+    const ids = Object.values(this.S.requests).filter((r) => r.mergeDecision && !r.mergeInfo && !r.merged && !r.discarded && !r.followedBy).map((r) => r.id).sort();
     if (!ids.length) return;
-    for (const id of ids) Object.assign(this.S.requests[id], { mergeDecision: false, mergeError: null, repairTried: false });
+    for (const id of ids) { const r = this.S.requests[id]; Object.assign(r, { mergeDecision: false, repairTried: /^(risolvendo i conflitti|nei file sono rimasti)/.test(r.mergeError || '') ? r.repairTried : false, mergeError: null }); }
     this.store.save();
     this.say(`Riprovo con i controlli nuovi le unioni che avevi approvato e che si erano fermate: ${ids.join(', ')}. Una alla volta, in ordine; se serve allineare ci pensa lo sviluppo. Ti chiamo solo se resta qualcosa da decidere.`, this.S.requests[ids[0]]);
     for (const id of ids) this.merge(id).catch((e) => this.chat('system', `Unione di ${id} non riuscita: ${e.message}`, { requestId: id }));

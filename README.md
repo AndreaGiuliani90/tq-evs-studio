@@ -116,9 +116,10 @@ git: nessuna AI, nessun costo.
 
 ### Da seguire e seguiti agganciati
 
-- In cima alla chat, **Da seguire** conta le decisioni che ti aspettano, le unioni da confermare, i lavori in corso
-  e quelli in attesa. **‹ ›** ti porta nella chat da una all'altra. **▸** apre l'elenco completo, con anche le
-  richieste completate di recente: da lì puoi andare al messaggio, unire o agganciare.
+- In cima alla chat, **Tocca a te** mostra una scheda per ogni cosa che aspetta te: cosa è successo, cosa ti si
+  chiede e i pulsanti per decidere lì, senza cercare in chat. L'etichetta dice quanto è urgente: **Ferma: aspetta
+  te** (il lavoro non va avanti), **Non entra nel gioco finché non decidi**, **Quando vuoi** (pronta da unire, niente
+  è fermo). Sotto, in una riga, quello che non richiede niente (lavori in corso, in attesa).
 - **↪ Aggancia**, sul pulsante di ogni richiesta o passando sopra un messaggio: il prossimo messaggio riguarda quella
   richiesta. Sopra la casella vedi cosa succederà:
   - se aspettava una tua risposta, è quella risposta;

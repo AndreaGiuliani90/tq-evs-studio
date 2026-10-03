@@ -304,3 +304,19 @@ b.good { color: #5fd38a; } b.mid { color: #e0b050; } b.bad { color: #ff7a6a; }
 .reply-to { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--pink); background: rgba(255, 80, 160, .08); font-size: 13px; }
 .reply-to[hidden] { display: none; }
 .reply-to button { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; }
+/* ─── Tocca a te ─── */
+.pending-bar { max-height: 58vh; }
+.tt-cards { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.tt-card { border-radius: 10px; padding: 10px 12px; background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.08); border-left: 4px solid var(--muted); color: var(--text); font-size: 14px; line-height: 1.45; display: flex; flex-direction: column; gap: 6px; }
+.tt-card.tt-stop { border-left-color: var(--red); }
+.tt-card.tt-merge { border-left-color: var(--yellow); }
+.tt-card.tt-later { border-left-color: var(--green); }
+.tt-tag { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.tt-stop .tt-tag { color: var(--red); } .tt-merge .tt-tag { color: var(--yellow); } .tt-later .tt-tag { color: var(--green); }
+.tt-ask { font-weight: 700; }
+.tt-q { background: rgba(255,255,255,.06); border-radius: 8px; padding: 6px 9px; font-style: italic; }
+.tt-dev { color: var(--muted); font-size: 13px; }
+.tt-btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.tt-link { background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px; margin-left: auto; }
+.tt-quiet { margin-top: 6px; font-size: 12.5px; opacity: .85; }
+.pending-bar.calm .tt-quiet { margin-top: 0; }
