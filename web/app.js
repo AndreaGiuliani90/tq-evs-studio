@@ -192,7 +192,7 @@ function requestActions(req) {
   }
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
   if (req.followedBy) b.push(`<span class="muted">↪ proseguita in <a href="#" data-goto="${esc(lastOf(req).id)}">${esc(lastOf(req).id)}</a></span>`);
-  if (req.status === 'QUEUED') b.push(`<span class="muted">⏳ parte dopo ${esc(req.waitingFor || req.parent)}</span>`);
+  if (req.status === 'QUEUED') b.push(`<span class="muted">⏳ parte dopo ${esc(req.waitingFor || req.parent)}</span>`, `<button class="btn sm" data-act="unlink" data-req="${req.id}" title="È indipendente: falla partire subito, da sola">Sgancia</button>`);
   if (req.mergeQueued) b.push('<span class="muted">📜 in coda per l\'unione…</span>');
   else if (req.followedBy && S.requests[req.followedBy]?.sameBranch) { /* si unisce il seguito */ }
   else if (req.status === 'DONE' && !req.merged && !req.discarded && req.mergeDecision) b.push(`<button class="btn sm primary" data-act="merge-force" data-req="${req.id}">Unisci comunque</button>`, `<button class="btn sm" data-act="merge-repair" data-req="${req.id}">Rimanda allo sviluppo</button>`);
@@ -451,6 +451,7 @@ document.addEventListener('click', act(async (ev) => {
     case 'retry': await api('POST', `/api/requests/${req}/retry`); return;
     case 'retry-choice': await api('POST', `/api/requests/${req}/retry`, { choice: document.querySelector(`[data-retry-choice="${req}"]`)?.value }); return;
     case 'cancel': await api('POST', `/api/requests/${req}/cancel`); return;
+    case 'unlink': await api('POST', `/api/requests/${req}/unlink`); return;
     case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
     case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;
     case 'quote-choice': await api('POST', `/api/requests/${req}/quote`, { action: 'approve', choice: document.querySelector(`[data-quote-choice="${req}"]`)?.value, light: !!document.querySelector(`[data-quote-light="${req}"]`)?.checked }); return;

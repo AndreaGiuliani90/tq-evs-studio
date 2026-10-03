@@ -121,6 +121,11 @@ git: nessuna AI, nessun costo.
     contiene tutto, e la vecchia non si può più unire per sbaglio;
   - se era già unita o chiusa, parte una richiesta nuova dal gioco attuale, con il contesto di quella vecchia.
 - A voce: inizia con «R 12:» (o «su R-12 …») per agganciare il messaggio alla richiesta R-0012. Esc toglie l'aggancio.
+- **Se non agganci niente, decide lo Stratega.** Quando ci sono lavori aperti (in corso, in attesa, da unire, con una
+  domanda in sospeso), legge il messaggio e decide se è una cosa nuova (parte subito, in parallelo), il seguito di
+  un lavoro aperto (lo aggancia e ti dice perché) o la risposta a una domanda. Usa un modello veloce incluso nel
+  piano. Se ha sbagliato e il seguito sta ancora aspettando, premi **Sgancia**: parte subito, da sola. Senza Stratega
+  (o se non risponde) vale la regola di prima: il messaggio risponde all'ultima domanda in sospeso, altrimenti è nuovo.
 
 ### Tornare indietro a mano (Terminale, nella cartella del gioco)
 

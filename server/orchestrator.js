@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic, readJSON } from './util.js';
-import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, TASK_KINDS } from './prompts.js';
+import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, triagePrompt, TASK_KINDS } from './prompts.js';
 import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
 import { Backlog, teamPerformance } from './boards.js';
 import { ReleaseDesk } from './release.js';
@@ -242,8 +242,6 @@ export class Orchestrator {
       // agganciato a una richiesta che aspetta la risposta a una domanda / a un preventivo: è quella risposta
       if (!(target.status === 'NEEDS_USER' && target.question && !target.answeredBy)) return this.followUp(target, text, attachments);
     }
-    // se la Regia aveva fatto una domanda, questo messaggio è la risposta: la richiesta originale continua qui
-    const asked = target || Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
     const startM = text.match(/^(?:avvia|fai|esegui|parti con|lavora (?:a|su))\s+(?:la\s+|l')?\b(b-?\d+)\b[.!]?$/i);
     if (startM) return this.startBacklogItem(startM[1].replace(/^b-?/i, 'B-'), { echoed: true });
     // "riprova" / "ferma" detti in chat valgono come i pulsanti sulla richiesta che aspetta una decisione
@@ -251,6 +249,19 @@ export class Orchestrator {
     const cmd = text.toLowerCase().trim().replace(/[.!]+$/, '');
     if (waiting.length && /^(riprova|riprovaci|ritenta|vai di nuovo)$/.test(cmd)) { const r = waiting.sort((x, y) => y.id.localeCompare(x.id))[0]; this.chat('director', `Riprovo ${r.id}.`, { agentId: 'director', requestId: r.id }); return this.retry(r.id); }
     if (waiting.length && /^(ferma|fermala|annulla|lascia stare|lascia perdere|stop)$/.test(cmd)) { const r = waiting.sort((x, y) => y.id.localeCompare(x.id))[0]; this.chat('director', `Fermo ${r.id}: nessun altro tentativo.`, { agentId: 'director', requestId: r.id }); return this.cancel(r.id); }
+    // messaggio senza aggancio: lo Stratega decide se è una cosa nuova, il seguito di un lavoro aperto o una risposta
+    let asked = target;
+    if (!target) {
+      const tri = await this.triage(text);
+      if (tri.decision === 'seguito') {
+        const f = this.followUp(tri.target, text, attachments, { by: tri });
+        return f;
+      }
+      if (tri.decision === 'risposta') {
+        asked = tri.target;
+        if (tri.by === 'stratega') this.say2(`È la risposta a ${asked.id}. ${tri.why}`.trim(), asked);
+      }
+    }
     if (asked?.quotePending) {
       const t = text.toLowerCase().trim();
       const opts = asked.quote?.options || [];
@@ -281,18 +292,73 @@ export class Orchestrator {
   mustWait(r) { return this.isBusy(r) || (r.status === 'NEEDS_USER' && !!r.quotePending); }
   isBusy(r) { return ['PLANNING', 'RUNNING', 'QUEUED'].includes(r.status) || !!r.mergeQueued || this.planning.has(r.id); }
 
-  followUp(target, text, attachments = []) {
+  followUp(target, text, attachments = [], { by = null } = {}) {
     const t = this.lastOf(target);
-    const req = { id: this.store.nextId('request', 'R'), text, status: 'QUEUED', createdAt: now(), taskIds: [], attachments: [...attachments], parent: t.id, parentText: clip(t.originalText ? `${t.originalText} — ${t.text}` : t.text, 600) };
+    const req = { id: this.store.nextId('request', 'R'), text, status: 'QUEUED', createdAt: now(), taskIds: [], attachments: [...attachments], parent: t.id, parentText: clip(t.originalText ? `${t.originalText} — ${t.text}` : t.text, 600), linkedBy: by ? 'stratega' : 'utente' };
     this.S.requests[req.id] = req;
     this.store.save();
     this.events.emit('request.created', { request: req });
+    const why = by ? `${by.why ? by.why + ' ' : ''}` : '';
+    if (by && !this.mustWait(t)) this.chat('agent', `Questo messaggio dipende da ${t.id}: lo aggancio come ${req.id}. ${why}`.trim(), { agentId: 'strategist', requestId: req.id, kind: 'agent-update' });
     if (this.mustWait(t)) {
       req.waitingFor = t.id; this.store.save();
+      if (by) { this.chat('agent', `Questo messaggio dipende da ${t.id}: lo aggancio come ${req.id} e parte appena ${t.id} ${t.status === 'NEEDS_USER' ? 'avrà la tua decisione' : 'finisce'}, sullo stesso branch. ${why}\nSe invece è indipendente: «Sgancia» e parte subito da sola.`, { agentId: 'strategist', requestId: req.id, kind: 'plan' }); return req; }
       this.chat('director', `${req.id} agganciata a ${t.id}${t.id !== target.id ? ` (che ha proseguito ${target.id})` : ''}. ${t.status === 'NEEDS_USER' ? `${t.id} aspetta il tuo ok al preventivo: appena decidi parto` : `${t.id} è ancora in lavorazione: parto appena finisce`}, sullo stesso branch, così non si perde niente.`, { agentId: 'director', requestId: req.id, kind: 'plan' });
       return req;
     }
     this.startFollowup(req).catch((e) => this.fail(req, e));
+    return req;
+  }
+
+  say2(text, req) { this.chat('agent', text, { agentId: 'strategist', requestId: req?.id, kind: 'agent-update' }); }
+
+  // i lavori a cui un messaggio nuovo potrebbe agganciarsi: aperti, finiti ma non uniti, domande in sospeso
+  triageCandidates() {
+    return Object.values(this.S.requests).filter((r) => !r.followedBy && !r.discarded && (
+      ['PLANNING', 'RUNNING', 'QUEUED', 'NEEDS_USER'].includes(r.status) || r.mergeQueued
+      || (r.status === 'DONE' && !r.merged && (r.report?.commits?.length || r.report?.studioCommits?.length))))
+      .sort((a, b) => b.id.localeCompare(a.id)).slice(0, 12);
+  }
+
+  async triage(text) {
+    const cands = this.triageCandidates();
+    const pendingQ = cands.filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy);
+    // regole di riserva (Stratega spento o che non risponde): come prima, la domanda in sospeso più recente
+    const rules = pendingQ.length ? { decision: 'risposta', target: pendingQ[0], by: 'regole', why: '' } : { decision: 'nuova', by: 'regole', why: '' };
+    if (!cands.length || this.config.autoLink === false) return rules;
+    const strat = this.agents.get('strategist');
+    if ((this.config.strategist ?? 'ai') !== 'ai' || !strat || strat.enabled === false) return rules;
+    const sopts = await this.textOptions(strat);
+    const fast = pickByTier(sopts, 'bassa');
+    const provider = this.providers.get(fast.provider)?.run ? this.providers.get(fast.provider) : await this.providers.resolve(strat.provider);
+    if (provider.id === 'mock') return rules;
+    const STATE = { PLANNING: 'in pianificazione', RUNNING: 'in lavorazione', QUEUED: 'in attesa di un altro lavoro', NEEDS_USER: 'aspetta una decisione dell\'utente', DONE: 'finita, non ancora unita al gioco' };
+    const candidates = cands.map((r) => ({ id: r.id, state: r.mergeQueued ? 'in coda per l\'unione' : STATE[r.status] || r.status, text: r.originalText ? `${r.originalText} — ${r.text}` : r.text, question: r.status === 'NEEDS_USER' && !r.answeredBy ? r.question : null, files: (r.report?.filesChanged || []).map((f) => f.file || f), tasks: this.tasksOf(r.id).map((t) => `${this.agentName(t.agentId)}: ${t.title}`) }));
+    this.agents.setStatus('strategist', 'THINKING', { task: { id: 'triage', title: `Smisto: ${clip(text, 50)}` }, text: 'controllo se dipende da lavori aperti', semantic: 'agent.thinking' });
+    try {
+      const r = await provider.run({ agent: strat, system: strat.systemInstructions, prompt: triagePrompt({ text, candidates }), cwd: this.projectRoot, mode: 'plan', model: fast.model, timeoutMs: 90 * 1000, maxTurns: 2, onEvent: () => {} }).catch((e) => ({ ok: false, error: String(e) }));
+      const j = r.ok ? (extractJSON(r.text) || extractJSON(r.allText)) : null;
+      const dec = String(j?.decision || '').toLowerCase();
+      const tgt = j?.request && cands.find((c) => c.id === String(j.request).toUpperCase().trim());
+      const why = clip(String(j?.why || ''), 300);
+      if (!['nuova', 'seguito', 'risposta'].includes(dec)) { if (!r.ok) this.events.emit('studio.warning', { text: `Stratega (smistamento): ${truncate(r.error, 160)} — regole di base` }); return rules; }
+      if (dec === 'nuova') return { decision: 'nuova', by: 'stratega', why };
+      if (!tgt) return rules;
+      if (dec === 'risposta' && pendingQ.includes(tgt)) return { decision: 'risposta', target: tgt, by: 'stratega', why };
+      return { decision: 'seguito', target: tgt, by: 'stratega', why };
+    } finally { this.agents.setStatus('strategist', 'IDLE', { task: null, text: 'smistamento fatto' }); }
+  }
+
+  // "Sgancia": il seguito che lo Stratega aveva agganciato (e che ancora aspetta) parte da solo, dal gioco attuale
+  unlink(reqId) {
+    const req = this.S.requests[reqId];
+    if (!req) throw new Error('richiesta sconosciuta');
+    if (req.status !== 'QUEUED') throw new Error(`${req.id} è già partita${req.sameBranch ? ` sul branch di ${req.parent}` : ''}: non si può più sganciare`);
+    const was = req.parent;
+    Object.assign(req, { parent: null, parentText: null, waitingFor: null, linkedBy: null, unlinkedFrom: was });
+    this.chat('director', `${req.id} sganciata da ${was}: parte da sola, dal gioco attuale.`, { agentId: 'director', requestId: req.id, kind: 'agent-update' });
+    this.setRequest(req, { status: 'PLANNING' });
+    this.plan(req).catch((e) => this.fail(req, e));
     return req;
   }
 

@@ -840,7 +840,9 @@ test('effetti sonori: Rumore progetta, ElevenLabs e jsfxr generano 3 varianti, r
   assert.ok(man.sfx_click_menu.variants[1].params && man.sfx_click_menu.variants[1].params.wave_type !== undefined, 'parametri jsfxr salvati');
   if (ff.status === 0) {
     assert.ok(man.sfx_vetro_rotto_01.variants[0].ogg.endsWith('.ogg') && man.sfx_vetro_rotto_01.variants[0].mp3.endsWith('.mp3'));
-    assert.ok(Math.abs(man.sfx_click_menu.variants[0].lufs - -20) < 2.5, `volume della categoria ui (${man.sfx_click_menu.variants[0].lufs})`);
+    const v0 = man.sfx_click_menu.variants[0];
+    // a volume giusto, oppure già al limite dei picchi (un clic secco non può salire oltre senza distorcere)
+    assert.ok(Math.abs(v0.lufs - -20) < 2.5 || (v0.lufs < -20 && v0.peak >= -2), `volume della categoria ui (${v0.lufs} LUFS, picco ${v0.peak})`);
   }
   assert.match(s.store.data.chat.find((m) => m.kind === 'report' || /Suoni pronti/.test(m.text))?.text || JSON.stringify(s.orch.tasksOf(req.id)[0].result), /release commerciale/);
   const el = s.orch.costs.summary().providers.find((p) => p.id === 'elevenlabs');
@@ -1007,4 +1009,48 @@ test('seguiti: un messaggio agganciato a una richiesta continua sul suo branch, 
   await waitFor(() => e.status === 'DONE', 20000, 'E DONE dopo D');
   assert.ok(e.sameBranch); assert.equal(e.branch, d.branch);
   assert.ok(fs.existsSync(path.join(e.worktree, 'lenta.txt')) && fs.existsSync(path.join(e.worktree, 'delta.txt')));
+});
+
+test('Stratega smista i messaggi senza aggancio: seguito di un lavoro aperto, cosa nuova in parallelo, «Sgancia»', async () => {
+  const root = makeFixtureRepo();
+  let hold = null; let triaged = 0;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (/Smistamento di un nuovo messaggio/.test(o.prompt)) {
+      triaged++;
+      const msg = o.prompt.split('## Messaggio\n')[1].split('\n')[0];
+      const open = [...o.prompt.matchAll(/### (R-\d+) — [^\n]*\nRichiesta: ([^\n]*)/g)].find((m) => /lenta/.test(m[2]))?.[1];
+      return { text: /lenta/.test(msg) && open ? JSON.stringify({ decision: 'seguito', request: open, why: 'riguarda la stessa parola' }) : '{"decision":"nuova","request":null,"why":"altra parte del gioco"}' };
+    }
+    if (o.agent.id === 'director') {
+      const w = (o.prompt.match(/PAROLA (\w+)/g) || []).pop()?.split(' ')[1] || 'x';
+      return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: `scrivi ${w}`, instructions: `PAROLA ${w}`, dependsOn: [] }]);
+    }
+    if (o.agent.id === 'dev') {
+      const w = (o.prompt.match(/PAROLA (\w+)/g) || []).pop().split(' ')[1];
+      if (w === 'lenta') await new Promise((r) => { hold = r; });
+      fs.appendFileSync(path.join(o.cwd, `${w}.txt`), `${w}\n`);
+      return { text: '{"summary":"ok"}' };
+    }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { parallelPerAgent: 2, strategist: 'ai' });
+  const o = s.orch;
+  const a = await o.handleUserMessage('Fai PAROLA lenta');
+  assert.equal(triaged, 0, 'nessun lavoro aperto: niente smistamento');
+  await waitFor(() => hold, 15000, 'A al lavoro');
+  const b = await o.handleUserMessage('la parola lenta falla PAROLA rossa');
+  assert.equal(b.status, 'QUEUED'); assert.equal(b.parent, a.id); assert.equal(b.linkedBy, 'stratega');
+  assert.ok(s.store.data.chat.some((m) => m.agentId === 'strategist' && m.requestId === b.id && /dipende da/.test(m.text)));
+  const c = await o.handleUserMessage('Fai PAROLA verde');
+  assert.ok(!c.parent, 'cosa indipendente: parte subito');
+  await waitFor(() => c.status === 'DONE', 15000, 'C DONE in parallelo ad A');
+  const d = await o.handleUserMessage('anche lenta: PAROLA eco');
+  assert.equal(d.status, 'QUEUED');
+  o.unlink(d.id);
+  await waitFor(() => d.status === 'DONE', 15000, 'D sganciata e finita');
+  assert.ok(!d.parent && d.branch !== a.branch);
+  hold();
+  await waitFor(() => b.status === 'DONE', 20000, 'B DONE dopo A');
+  assert.ok(b.sameBranch); assert.equal(b.branch, a.branch);
+  assert.throws(() => o.unlink(b.id), /già partita/);
 });

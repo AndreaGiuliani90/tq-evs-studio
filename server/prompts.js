@@ -190,3 +190,30 @@ ${img}
 Rispondi SOLO con un blocco JSON:
 {"summary": "1-2 frasi: come hai distribuito i modelli e perché", "tasks": [{"key": "…", "provider": "…", "model": "…", "why": "mezza frase"}]${images.length ? ', "images": {"choice": "<id del generatore>", "why": "mezza frase"}' : ''}, "advice": "${images.length ? 'il tuo consiglio sul preventivo se ci sono spese, altrimenti vuoto' : ''}"}`;
 }
+
+// Lo Stratega smista un messaggio arrivato senza aggancio: è una cosa nuova, il seguito di un lavoro aperto,
+// o la risposta a una domanda in sospeso?
+export function triagePrompt({ text, candidates }) {
+  return `# Smistamento di un nuovo messaggio dell'utente
+
+L'utente ha scritto alla Regia senza agganciare il messaggio a una richiesta. Ci sono lavori aperti: decidi se il
+messaggio è INDIPENDENTE o se DIPENDE da uno di loro.
+
+## Messaggio
+${clip(text, 1500)}
+
+## Lavori aperti
+${candidates.map((c) => `### ${c.id} — ${c.state}
+Richiesta: ${clip(c.text, 400)}${c.question ? `\nDomanda in sospeso all'utente: ${clip(c.question, 400)}` : ''}${c.files?.length ? `\nFile toccati: ${c.files.slice(0, 15).join(', ')}` : ''}${c.tasks?.length ? `\nTask: ${c.tasks.slice(0, 8).join(' · ')}` : ''}`).join('\n\n')}
+
+## Come decidere
+- "risposta": SOLO se una richiesta ha una domanda in sospeso e il messaggio le risponde (o approva / rifiuta il preventivo).
+- "seguito": il messaggio corregge, cambia, estende o riguarda la stessa funzione, schermata, personaggio o file di un
+  lavoro aperto, o lo nomina ("anche", "invece", "come prima", "quella cosa di…"). Lavorando in parallelo i due si
+  ignorerebbero o andrebbero in conflitto. Nel dubbio fra seguito e nuova quando potrebbero toccare le stesse cose,
+  scegli seguito: costa solo un po' di attesa.
+- "nuova": riguarda un'altra parte del gioco o dello Studio e può procedere in parallelo senza pestarsi i piedi.
+
+Rispondi SOLO con JSON:
+{"decision": "nuova" | "seguito" | "risposta", "request": "R-0000 oppure null", "why": "una frase in italiano"}`;
+}

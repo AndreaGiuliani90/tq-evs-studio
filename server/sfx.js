@@ -121,14 +121,22 @@ export async function postProcess(input, outBase, { category = 'foley', loop = f
   const gain = m && Number.isFinite(m.lufs) ? Math.max(-30, Math.min(24, target - m.lufs)) : 0;
   const dur = await durationOf(trimmed);
   const fades = loop || !dur ? '' : `,afade=t=in:d=0.005,afade=t=out:st=${Math.max(0, dur - 0.03).toFixed(3)}:d=0.03`;
-  const chain = `volume=${gain.toFixed(2)}dB,alimiter=limit=0.89:level=false${fades}`;
   const files = { ogg: `${outBase}.ogg`, mp3: `${outBase}.mp3` };
-  r = await run('ffmpeg', ['-hide_banner', '-y', '-i', trimmed, '-af', chain, '-c:a', 'libvorbis', '-q:a', '5', files.ogg], { timeoutMs: 60000 });
-  if (r.code !== 0) throw new Error(`ffmpeg (ogg): ${(r.stderr || '').slice(-300)}`);
-  r = await run('ffmpeg', ['-hide_banner', '-y', '-i', trimmed, '-af', chain, '-c:a', 'libmp3lame', '-q:a', '3', files.mp3], { timeoutMs: 60000 });
-  if (r.code !== 0) throw new Error(`ffmpeg (mp3): ${(r.stderr || '').slice(-300)}`);
+  const encode = async (g) => {
+    const chain = `volume=${g.toFixed(2)}dB,alimiter=limit=0.89:level=false${fades}`;
+    let e = await run('ffmpeg', ['-hide_banner', '-y', '-i', trimmed, '-af', chain, '-c:a', 'libvorbis', '-q:a', '5', files.ogg], { timeoutMs: 60000 });
+    if (e.code !== 0) throw new Error(`ffmpeg (ogg): ${(e.stderr || '').slice(-300)}`);
+    e = await run('ffmpeg', ['-hide_banner', '-y', '-i', trimmed, '-af', chain, '-c:a', 'libmp3lame', '-q:a', '3', files.mp3], { timeoutMs: 60000 });
+    if (e.code !== 0) throw new Error(`ffmpeg (mp3): ${(e.stderr || '').slice(-300)}`);
+    return measure(files.ogg);
+  };
+  let after = await encode(gain);
+  // i suoni brevi e secchi (clic) perdono volume nel limitatore e nelle dissolvenze: una seconda passata corregge
+  if (after && Number.isFinite(after.lufs) && Math.abs(target - after.lufs) > 1) {
+    const g2 = Math.max(-30, Math.min(30, gain + (target - after.lufs)));
+    if (Math.abs(g2 - gain) > 0.3) after = await encode(g2);
+  }
   try { fs.unlinkSync(trimmed); } catch { /* pazienza */ }
-  const after = await measure(files.ogg);
   return { processed: true, files, durationSec: await durationOf(files.ogg), lufs: after?.lufs ?? null, peak: after?.peak ?? null, target };
 }
 
