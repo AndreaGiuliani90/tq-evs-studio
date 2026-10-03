@@ -899,17 +899,17 @@ test('Notaio: coda in ordine, prova generale, blocca un\'unione che perderebbe r
   const prov = new ScriptedProvider('scripted', async (o) => {
     if (o.agent.id === 'director') return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: o.prompt.includes('ROSSO') ? 'rosso' : 'blu', dependsOn: [] }]);
     if (o.agent.id === 'dev') {
-      const f = path.join(o.cwd, 'CHANGELOG.md');
+      const f = path.join(o.cwd, 'src/main.js');
       if (/conflitti/.test(o.prompt)) {
         let t = fs.readFileSync(f, 'utf8');
         // la prima volta "risolve" tenendo solo la voce già nel gioco (perde la propria!), la seconda le tiene entrambe
         if (careless && !/PERSE/.test(o.prompt)) { careless = false; t = t.replace(/<<<<<<< .*\n[\s\S]*?=======\n([\s\S]*?)>>>>>>> .*\n/, '$1'); }
         else t = t.replace(/<<<<<<< .*\n|=======\n|>>>>>>> .*\n/g, '');
         // il Notaio ha elencato le righe perse: lo sviluppo le rimette
-        for (const m of o.prompt.matchAll(/CHANGELOG\.md: «(.+?)»/g)) if (!t.includes(m[1])) t = t.replace('# changelog\n', `# changelog\n\n${m[1]}\n`);
+        for (const m of o.prompt.matchAll(/src\/main\.js: «(.+?)»/g)) if (!t.includes(m[1])) t = t.replace('console.log(VERSION);\n', `console.log(VERSION);\n${m[1]}\n`);
         fs.writeFileSync(f, t); return { text: '{"summary":"conflitti risolti"}' };
       }
-      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('# changelog\n', `# changelog\n\n## voce ${o.prompt.includes('ROSSO') ? 'rosso' : 'blu'} importante\n`));
+      fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('console.log(VERSION);\n', `console.log(VERSION);\nconsole.log('voce ${o.prompt.includes('ROSSO') ? 'rosso' : 'blu'} importante');\n`));
       return { text: '{"summary":"voce"}' };
     }
     return { text: '{"verdict":"PASS","summary":"ok"}' };
@@ -923,13 +923,13 @@ test('Notaio: coda in ordine, prova generale, blocca un\'unione che perderebbe r
   assert.ok(b.merged);
   await s.orch.merge(a.id);   // conflitto → allineamento; la soluzione sbagliata viene scoperta e riparata
   await waitFor(() => a.merged, 30000, 'unita dopo la riparazione');
-  const cl = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  const cl = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
   assert.match(cl, /voce rosso importante/); assert.match(cl, /voce blu importante/, 'la voce di BLU (entrata prima) non è andata persa');
   assert.ok(s.store.data.chat.some((m) => /Fermata l'unione[\s\S]*voce rosso importante/.test(m.text)), 'il Notaio ha segnalato la riga che si sarebbe persa');
   const L = s.orch.release.summary();
   assert.deepEqual(L.entries.map((e) => e.requestId), [a.id, b.id]);
   assert.equal(L.queue.length, 0);
-  // annullare B romperebbe A (stesso punto del CHANGELOG): il Notaio si ferma e non tocca niente
+  // annullare B romperebbe A (stesso punto del codice): il Notaio si ferma e non tocca niente
   const head = sh(root, 'rev-parse', 'HEAD');
   await assert.rejects(() => s.orch.revertMerge(b.id), /romperebbe/);
   assert.equal(sh(root, 'rev-parse', 'HEAD'), head);
@@ -1053,4 +1053,71 @@ test('Stratega smista i messaggi senza aggancio: seguito di un lavoro aperto, co
   await waitFor(() => b.status === 'DONE', 20000, 'B DONE dopo A');
   assert.ok(b.sameBranch); assert.equal(b.branch, a.branch);
   assert.throws(() => o.unlink(b.id), /già partita/);
+});
+
+test('Notaio: conta solo quello che si perde risolvendo i conflitti; i file di lavoro (.shots) non entrano; un seguito di sola risposta restituisce l\'unione', async () => {
+  const { GitService } = await import('../server/git.js');
+  const { ReleaseDesk } = await import('../server/release.js');
+  // 1) una riga entrata dal gioco con l'allineamento e poi cambiata APPOSTA con un commit normale: non è persa
+  const root = makeFixtureRepo();
+  const f = path.join(root, 'src/main.js');
+  const base = sh(root, 'rev-parse', 'HEAD');
+  sh(root, 'checkout', '-q', '-b', 'ramo');
+  fs.appendFileSync(f, "console.log('mia');\n"); sh(root, 'commit', '-qam', 'mia');
+  sh(root, 'checkout', '-q', 'main');
+  fs.writeFileSync(path.join(root, 'src/altro.js'), "export const vecchio = 'gioco';\nexport const resta = [1, 2, 3];\n"); sh(root, 'add', '-A'); sh(root, 'commit', '-qm', 'gioco');
+  sh(root, 'checkout', '-q', 'ramo');
+  sh(root, 'merge', '-q', '--no-ff', '-m', 'allinea', 'main');
+  fs.writeFileSync(path.join(root, 'src/altro.js'), "export const nuovo = 'riscritto apposta';\nexport const resta = [1, 2, 3];\n"); sh(root, 'commit', '-qam', 'riscrivo');
+  const desk = new ReleaseDesk({ git: new GitService(root), store: { data: {} }, events: null, dataDir: path.join(root, '.studio-data') });
+  let rc = await desk.resolutionCheck({ cwd: root, base, tip: 'ramo' });
+  assert.deepEqual(rc.missing, [], 'una modifica fatta dopo, apposta, non è una riga persa');
+  // 2) la stessa riga tolta DENTRO la soluzione di un conflitto e mai più rimessa: persa
+  sh(root, 'checkout', '-q', 'main');
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8') + "console.log('del gioco');\n"); sh(root, 'commit', '-qam', 'gioco 2');
+  sh(root, 'checkout', '-q', 'ramo');
+  try { sh(root, 'merge', '-q', '--no-ff', '-m', 'allinea 2', 'main'); } catch { /* conflitto atteso */ }
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/<<<<<<< .*\n([\s\S]*?)=======\n[\s\S]*?>>>>>>> .*\n/, '$1'));   // tiene solo la propria
+  sh(root, 'commit', '-qam', 'allinea 2');
+  rc = await desk.resolutionCheck({ cwd: root, base, tip: 'ramo' });
+  assert.deepEqual(rc.missing.map((m) => m.line), ["console.log('del gioco');"]);
+
+  // 3) .shots e simili restano fuori dai commit; seguito di sola risposta → la richiesta di prima torna unibile
+  const root2 = makeFixtureRepo();
+  let answerOnly = false;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return answerOnly ? planJSON([], 'Te lo spiego: è tutto a posto.') : planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: 'x', dependsOn: [] }]);
+    if (o.agent.id === 'dev') { fs.mkdirSync(path.join(o.cwd, '.shots'), { recursive: true }); fs.writeFileSync(path.join(o.cwd, '.shots/prova.png'), 'png'); fs.writeFileSync(path.join(o.cwd, 'src/x.js'), 'export const x = 1;\n'); return { text: '{"summary":"ok"}' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root2, registryWith(prov));
+  const a = await s.orch.handleUserMessage('Fai x');
+  await waitFor(() => a.status === 'DONE', 15000, 'A DONE');
+  const files = sh(root2, 'ls-tree', '-r', '--name-only', a.branch).split('\n');
+  assert.ok(files.includes('src/x.js') && !files.some((x) => x.startsWith('.shots/')), 'niente file di lavoro nel branch');
+  answerOnly = true;
+  const q = await s.orch.handleUserMessage('non capisco, spiegami', { replyTo: a.id });
+  await waitFor(() => q.status === 'ANSWERED', 15000, 'risposta');
+  assert.equal(a.followedBy, null, 'il seguito di sola risposta non si tiene l\'unione');
+  await s.orch.merge(a.id);
+  assert.ok(a.merged && fs.existsSync(path.join(root2, 'src/x.js')));
+});
+
+test('Stratega: una risposta secca a una scelta («1-b 2-a») va alla domanda aperta; «Chiudi» toglie una domanda appesa', async () => {
+  const root = makeFixtureRepo();
+  let asked = 0;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (/Smistamento/.test(o.prompt)) return { text: '{"decision":"nuova","request":null,"why":"sbaglio apposta"}' };
+    if (o.agent.id === 'director') { asked++; return { text: '```json\n' + JSON.stringify({ reply: asked % 2 ? 'Domanda: 1) a o b? 2) a o b?' : 'ok', needsUser: !!(asked % 2), tasks: [] }) + '\n```' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { strategist: 'ai' });
+  const q = await s.orch.handleUserMessage('Facciamo una prova?');
+  await waitFor(() => q.status === 'NEEDS_USER', 15000, 'domanda');
+  const r = await s.orch.handleUserMessage('1-b 2-a');
+  assert.equal(r.continues, q.id, 'la risposta va alla domanda, anche se lo Stratega avrebbe detto "nuova"');
+  const q2 = await s.orch.handleUserMessage('Un\'altra prova?');
+  await waitFor(() => q2.status === 'NEEDS_USER', 15000, 'seconda domanda');
+  s.orch.closeQuestion(q2.id);
+  assert.equal(q2.status, 'ANSWERED');
 });

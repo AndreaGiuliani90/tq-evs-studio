@@ -101,10 +101,16 @@ git: nessuna AI, nessun costo.
 - **Prova generale**: ogni unione si prova prima in una copia a parte. Se tocca gli stessi punti di aggiornamenti già
   entrati, torna allo sviluppo per allinearsi e al QA per riprovarla. Poi la unisce da solo, senza che tu debba
   ripremere. Il tuo gioco intanto non viene toccato.
-- **Niente perso**: prima di unire controlla riga per riga che nel risultato ci siano tutte le novità: quelle già
-  nel gioco, quelle della richiesta e quelle che la richiesta aveva prima dell'allineamento (le soluzioni dei
-  conflitti sono il punto debole). Controlla anche che la versione non torni indietro. Se manca qualcosa, ferma
-  l'unione, ti dice quali righe mancano e lo sviluppo le rimette. Se mancano ancora, decidi tu.
+- **Niente perso**: il punto debole sono le soluzioni dei conflitti. Per ogni allineamento il Notaio controlla che
+  le novità delle due parti siano rimaste. Una riga tolta lì e mai più rimessa è persa. Una riga cambiata dopo, con
+  un commit normale, è una scelta dello sviluppo. Non contano i commenti spostati, le righe fuse in una sola né i
+  numeri di versione. Nei documenti (CHANGELOG, note, Bibbia) un testo riscritto è solo un avviso nel messaggio di
+  unione. Bloccano anche i segni di conflitto rimasti (<<<<<<<) e la versione all'indietro. Se manca qualcosa,
+  lo sviluppo lo rimette da solo; ti chiama solo se manca ancora.
+- **File di lavoro**: gli screenshot e gli script di prova degli agenti (`.shots/` ecc.) non entrano nei commit e
+  il Notaio li toglie dai branch prima di unire.
+- **All'avvio**: le unioni che avevi approvato e che si erano fermate vengono riprovate da sole con i controlli
+  attuali.
 - **Annullare un'unione**: prima la prova. Se toglierla romperebbe aggiornamenti entrati dopo, si ferma e te lo dice.
 - **Registro**: il pulsante **Unioni** mostra ogni unione con numero, data, commit, versione e controlli.
 
@@ -121,6 +127,7 @@ git: nessuna AI, nessun costo.
     contiene tutto, e la vecchia non si può più unire per sbaglio;
   - se era già unita o chiusa, parte una richiesta nuova dal gioco attuale, con il contesto di quella vecchia.
 - A voce: inizia con «R 12:» (o «su R-12 …») per agganciare il messaggio alla richiesta R-0012. Esc toglie l'aggancio.
+- **Chiudi** (nell'elenco Da seguire) toglie una domanda rimasta appesa che non serve più.
 - **Se non agganci niente, decide lo Stratega.** Quando ci sono lavori aperti (in corso, in attesa, da unire, con una
   domanda in sospeso), legge il messaggio e decide se è una cosa nuova (parte subito, in parallelo), il seguito di
   un lavoro aperto (lo aggancia e ti dice perché) o la risposta a una domanda. Usa un modello veloce incluso nel

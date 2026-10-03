@@ -204,10 +204,11 @@ ${clip(text, 1500)}
 
 ## Lavori aperti
 ${candidates.map((c) => `### ${c.id} — ${c.state}
-Richiesta: ${clip(c.text, 400)}${c.question ? `\nDomanda in sospeso all'utente: ${clip(c.question, 400)}` : ''}${c.files?.length ? `\nFile toccati: ${c.files.slice(0, 15).join(', ')}` : ''}${c.tasks?.length ? `\nTask: ${c.tasks.slice(0, 8).join(' · ')}` : ''}`).join('\n\n')}
+Richiesta: ${clip(c.text, 400)}${c.question ? `\nDomanda in sospeso all'utente (il messaggio potrebbe essere la risposta, anche solo con le sigle delle opzioni):\n${clip(c.question, 2500)}` : ''}${c.files?.length ? `\nFile toccati: ${c.files.slice(0, 15).join(', ')}` : ''}${c.tasks?.length ? `\nTask: ${c.tasks.slice(0, 8).join(' · ')}` : ''}`).join('\n\n')}
 
 ## Come decidere
-- "risposta": SOLO se una richiesta ha una domanda in sospeso e il messaggio le risponde (o approva / rifiuta il preventivo).
+- "risposta": se una richiesta ha una domanda in sospeso e il messaggio le risponde, anche in modo telegrafico
+  (sigle delle opzioni come «1-b 2-a», «sì», «la seconda»), o approva / rifiuta un preventivo.
 - "seguito": il messaggio corregge, cambia, estende o riguarda la stessa funzione, schermata, personaggio o file di un
   lavoro aperto, o lo nomina ("anche", "invece", "come prima", "quella cosa di…"). Lavorando in parallelo i due si
   ignorerebbero o andrebbero in conflitto. Nel dubbio fra seguito e nuova quando potrebbero toccare le stesse cose,

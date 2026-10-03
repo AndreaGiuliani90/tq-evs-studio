@@ -165,6 +165,7 @@ export function createServer(studio) {
     ['GET', /^\/api\/tasks$/, async () => Object.values(store.data.tasks)],
     ['GET', /^\/api\/tasks\/([\w-]+)$/, async (m) => store.data.tasks[m[1]] || null],
     ['POST', /^\/api\/requests\/([\w-]+)\/unlink$/, async (m) => orch.unlink(m[1])],
+    ['POST', /^\/api\/requests\/([\w-]+)\/close$/, async (m) => orch.closeQuestion(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/retry$/, async (m, b) => orch.retry(m[1], { choice: b?.choice })],
     ['POST', /^\/api\/requests\/([\w-]+)\/cancel$/, async (m) => orch.cancel(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/quote$/, async (m, b) => orch.answerQuote(m[1], ['approve', 'light', 'cancel'].includes(b?.action) ? b.action : 'approve', { choice: b?.choice, light: !!b?.light })],

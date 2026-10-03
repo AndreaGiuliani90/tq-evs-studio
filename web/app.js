@@ -271,7 +271,8 @@ function why(r) {
   return (REQ_IT[r.status] || r.status) + (r.merged ? ' · unita' : '');
 }
 function itemHTML(r) {
-  const prim = canMerge(r) ? `<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci</button>` : '';
+  const prim = canMerge(r) ? `<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci</button>`
+    : r.status === 'NEEDS_USER' && r.question && !r.quotePending ? `<button class="btn sm" data-act="close-q" data-req="${esc(r.id)}" title="Non serve più: togli la domanda">Chiudi</button>` : '';
   return `<li class="pd-item"><button class="pd-go" data-goto="${esc(r.id)}" title="Vai al messaggio in chat"><b>${esc(r.id)}</b> <span class="pd-why">${esc(why(r))}</span> <span class="pd-t">${esc(title(r))}</span></button>${prim}<button class="btn sm hookbtn" data-hook="${esc(r.id)}" title="Scrivi un messaggio agganciato a ${esc(r.id)}">↪</button></li>`;
 }
 S.pdOpen = false; S.pdPos = -1;
@@ -452,6 +453,7 @@ document.addEventListener('click', act(async (ev) => {
     case 'retry-choice': await api('POST', `/api/requests/${req}/retry`, { choice: document.querySelector(`[data-retry-choice="${req}"]`)?.value }); return;
     case 'cancel': await api('POST', `/api/requests/${req}/cancel`); return;
     case 'unlink': await api('POST', `/api/requests/${req}/unlink`); return;
+    case 'close-q': await api('POST', `/api/requests/${req}/close`); return;
     case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
     case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;
     case 'quote-choice': await api('POST', `/api/requests/${req}/quote`, { action: 'approve', choice: document.querySelector(`[data-quote-choice="${req}"]`)?.value, light: !!document.querySelector(`[data-quote-light="${req}"]`)?.checked }); return;

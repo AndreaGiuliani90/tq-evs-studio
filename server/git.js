@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, slug, ensureDir } from './util.js';
+import { isJunk } from './release.js';
 
 export class GitService {
   constructor(root, { worktreesDir, events } = {}) {
@@ -84,9 +85,14 @@ export class GitService {
   commitAll(cwd, info) { return this.locked(cwd, () => this._commitAll(cwd, info)); }
 
   async _commitAll(cwd, { agent, task, request, summary }) {
-    const files = await this.changedFiles(cwd);
-    if (!files.length) return null;
+    const files = (await this.changedFiles(cwd)).filter((f) => !isJunk(f.file));
+    const merging = (await this.git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], cwd, { allowFail: true })).code === 0;
+    if (!files.length && !merging) return null;
     await this.git(['add', '-A'], cwd);
+    // i file di lavoro degli agenti (screenshot di prova, script usa e getta) restano fuori dai commit
+    const junk = (await this.git(['diff', '--cached', '--name-only', '--diff-filter=A'], cwd, { allowFail: true })).stdout.split('\n').filter((f) => f && isJunk(f));
+    if (junk.length) await this.git(['rm', '--cached', '-q', '-r', '--', ...junk], cwd, { allowFail: true });
+    if (!merging && !(await this.git(['diff', '--cached', '--name-only'], cwd, { allowFail: true })).stdout.trim()) return null;
     const who = `${agent.name} (Studio)`;
     const email = `${agent.id}@studio.local`;
     const msg = [

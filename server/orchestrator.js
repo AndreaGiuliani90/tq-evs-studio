@@ -10,7 +10,7 @@ import { now, truncate, clip, extractJSON, run, ensureDir, writeFileAtomic, read
 import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPrompt, triagePrompt, TASK_KINDS } from './prompts.js';
 import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
 import { Backlog, teamPerformance } from './boards.js';
-import { ReleaseDesk } from './release.js';
+import { ReleaseDesk, isJunk } from './release.js';
 import { layoutHash } from '../web/layout-hash.js';
 import { SfxStore, SFX_CATEGORIES, JSFXR_PRESETS, elevenCredits, jsfxrVariants, jsfxrRender, postProcess, hasFfmpeg, slug } from './sfx.js';
 
@@ -207,9 +207,11 @@ export class Orchestrator {
       if (r.status === 'PLANNING') this.plan(r).catch((e) => this.fail(r, e));
     }
     await this.syncMerged().catch(() => {});
+    this.releaseOrphans();
     this.store.save();
     this.schedule();
     this.wakeFollowups();
+    setTimeout(() => this.recheckStuck(), 1500);
   }
 
   // ─── chat ──────────────────────────────────────────────────────────────────────────────────────
@@ -326,6 +328,8 @@ export class Orchestrator {
     // regole di riserva (Stratega spento o che non risponde): come prima, la domanda in sospeso più recente
     const rules = pendingQ.length ? { decision: 'risposta', target: pendingQ[0], by: 'regole', why: '' } : { decision: 'nuova', by: 'regole', why: '' };
     if (!cands.length || this.config.autoLink === false) return rules;
+    // risposte secche a una scelta («1-b 2-a», «sì», «ok», «la seconda») con una sola domanda aperta: niente da valutare
+    if (pendingQ.length === 1 && text.length <= 60 && /^\s*((\d+\s*[-.):]?\s*[a-z]\b|[a-z]\s*[-.):]?\s*\d+\b|s[iì]|no|ok|okay|va bene|procedi|vai|la (prima|seconda|terza)|opzione \w+)[\s,;/.!]*)+$/i.test(text)) return { decision: 'risposta', target: pendingQ[0], by: 'regole', why: '' };
     const strat = this.agents.get('strategist');
     if ((this.config.strategist ?? 'ai') !== 'ai' || !strat || strat.enabled === false) return rules;
     const sopts = await this.textOptions(strat);
@@ -416,6 +420,7 @@ export class Orchestrator {
     if (['CANCELLED', 'DONE', 'ANSWERED'].includes(req.status) || (req.status === 'RUNNING' && patch.status)) this.clearStaleStatus(req);
     if (['CANCELLED', 'DONE', 'FAILED'].includes(req.status)) this.backlog?.onRequest(req);
     if (Object.values(this.S.requests).some((r) => r.status === 'QUEUED')) this.wakeFollowups();
+    if (req.sameBranch && ['ANSWERED', 'CANCELLED', 'FAILED'].includes(req.status)) this.releaseOrphans();
   }
 
   // un ERRORE o un BLOCCO che riguarda una richiesta ormai chiusa (o ripartita) non deve restare appeso agli agenti
@@ -1506,6 +1511,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     const N = 'release';
     if (req.branch && req.report?.commits?.length) {
       if (this.agents.get(N)) this.agents.setStatus(N, 'TESTING', { task: { id: req.id, title: `Prova l'unione di ${req.id}` }, text: 'prova generale in una copia a parte', semantic: 'agent.testing' });
+      await this.cleanJunk(req).catch(() => {});
       let pf;
       try { pf = await this.release.preflight(req); }
       catch (e) { throw new Error(`prova generale non riuscita: ${e.message.slice(0, 300)}`); }
@@ -1530,14 +1536,15 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
           return;
         }
         this.setRequest(req, { mergeDecision: true });
-        throw new Error(`anche dopo l'allineamento andrebbero perse delle righe. Decidi tu: «Unisci comunque» se vanno davvero via, «Rimanda allo sviluppo» se vanno rimesse.${pf.versionIssue ? `\n• ${pf.versionIssue}` : ''}\n${list}`);
+        const markers = pf.missing.some((m) => m.side === 'segni di conflitto rimasti');
+        throw new Error(`${markers ? 'nei file sono rimasti dei segni di conflitto (<<<<<<<): così il gioco non parte.' : `risolvendo i conflitti lo sviluppo ha tolto ${pf.missing.length === 1 ? 'una riga' : `${pf.missing.length} righe`} e non ${pf.missing.length === 1 ? 'l\'ha rimessa' : 'le ha rimesse'} nemmeno al secondo giro: forse ${pf.missing.length === 1 ? 'è stata sostituita' : 'sono state sostituite'} apposta.`}${pf.versionIssue ? ` Inoltre ${pf.versionIssue}.` : ''}\n**Cosa fare:** ${markers || pf.versionIssue ? '«Rimanda allo sviluppo».' : 'prova «Gioca questa versione»: se va bene, «Unisci comunque»; se manca qualcosa, «Rimanda allo sviluppo».'}\n_Dettagli tecnici:_\n${list}`);
       }
       const m = await this.git.merge(req);
       this.setRequest(req, { mergeCommit: m.mergeCommit });
       const files = (req.report?.filesChanged || []).map((f) => f.file || f).slice(0, 40);
       const e = this.release.record(req, { mergeCommit: m.mergeCommit, version: pf.version, files, checks: { conflitti: 0, righePerse: pf.forced ? pf.missing.length : 0, righeCambiate: pf.changed?.length || 0, decisione: pf.forced ? 'unita comunque' : '—', versione: pf.version || '—' } });
-      const ch = pf.changed || [];
-      lines.push(`Gioco: unione n. ${e.n} — ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}${pf.version ? `, versione ${pf.version}` : ''}). Controlli: nessun conflitto, ${pf.forced ? `${pf.missing.length} righe tolte per tua decisione` : 'nessuna riga persa'}${ch.length ? `, ${ch.length} righe ritoccate (non perse)` : ''}. Per annullare: "Annulla unione".${ch.length ? `\nRitoccate:\n${ch.slice(0, 6).map((c) => `• ${c.file}: «${c.line.slice(0, 80)}…» → «${c.now.slice(0, 80)}…»`).join('\n')}` : ''}`);
+      const ch = pf.changed || [], dc = pf.docs || [];
+      lines.push(`Gioco: unione n. ${e.n} — ${req.branch} in ${req.baseBranch} (commit ${m.mergeCommit.slice(0, 7)}${pf.version ? `, versione ${pf.version}` : ''}). Controlli: nessun conflitto, ${pf.forced ? `${pf.missing.length} righe tolte per tua decisione` : 'nessuna riga persa'}${ch.length ? `, ${ch.length} righe ritoccate (non perse)` : ''}. Per annullare: "Annulla unione".${dc.length ? `\nNei documenti ${dc.length === 1 ? 'una riga è stata riscritta o tolta' : `${dc.length} righe sono state riscritte o tolte`} durante gli allineamenti (non blocca): ${[...new Set(dc.map((d) => d.file))].slice(0, 4).join(', ')}.` : ''}${ch.length ? `\nRitoccate:\n${ch.slice(0, 6).map((c) => `• ${c.file}: «${c.line.slice(0, 80)}…» → «${c.now.slice(0, 80)}…»`).join('\n')}` : ''}`);
     }
     if (req.studio?.branch && req.report?.studioCommits?.length) {
       const m = await this.studioGit.merge(req.studio);
@@ -1567,6 +1574,53 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
       this.release.record(r, { mergeCommit, files: [], checks: { nota: 'unita fuori dallo Studio (già nel branch principale)' } });
       this.say(`${r.id} è già dentro ${r.baseBranch || 'il gioco'}${mergeCommit ? ` (commit ${mergeCommit.slice(0, 7)})` : ''}: la segno come unita.`, r, 'text');
     }
+  }
+
+  // i file di lavoro degli agenti finiti per errore nel branch (.shots/ ecc.) escono prima dell'unione
+  async cleanJunk(req) {
+    const wt = req.worktree;
+    if (!wt || !fs.existsSync(wt)) return;
+    return this.git.locked(wt, async () => {
+      const g = (args) => this.git.git(args, wt, { allowFail: true });
+      const tracked = (await g(['ls-files'])).stdout.split('\n').filter((f) => f && isJunk(f));
+      if (!tracked.length) return;
+      const inMain = new Set((await g(['ls-tree', '-r', '--name-only', req.baseBranch || 'HEAD'])).stdout.split('\n'));
+      const rm = tracked.filter((f) => !inMain.has(f));
+      if (!rm.length) return;
+      await g(['rm', '--cached', '-q', '-r', '--', ...rm]);
+      const hasUser = (await g(['config', 'user.name'])).stdout.trim();
+      await g([...(hasUser ? [] : ['-c', 'user.name=Game Studio', '-c', 'user.email=studio@studio.local']), 'commit', '--no-verify', '-q', '--author', 'Notaio (Studio) <release@studio.local>', '-m', `[release] Tolgo dal branch ${rm.length} file di lavoro degli agenti (screenshot e script di prova)\n\nStudio-Agent: release\nStudio-Request: ${req.id}`]);
+    });
+  }
+
+  // un seguito sullo stesso branch che si è chiuso senza lavoro (solo una risposta, o annullato) restituisce il
+  // testimone: la richiesta di prima torna unibile
+  releaseOrphans() {
+    for (const r of Object.values(this.S.requests)) {
+      const f = r.followedBy && this.S.requests[r.followedBy];
+      if (f && f.sameBranch && ['ANSWERED', 'CANCELLED', 'FAILED'].includes(f.status) && !this.tasksOf(f.id).some((t) => t.result?.commit)) { r.followedBy = null; this.events.emit('request.updated', { request: r }); }
+    }
+  }
+
+  // all'avvio: le unioni che avevi approvato e che si erano fermate si riprovano con i controlli attuali
+  recheckStuck() {
+    const ids = Object.values(this.S.requests).filter((r) => r.mergeDecision && !r.merged && !r.discarded && !r.followedBy).map((r) => r.id).sort();
+    if (!ids.length) return;
+    for (const id of ids) Object.assign(this.S.requests[id], { mergeDecision: false, mergeError: null, repairTried: false });
+    this.store.save();
+    this.say(`Riprovo con i controlli nuovi le unioni che avevi approvato e che si erano fermate: ${ids.join(', ')}. Una alla volta, in ordine; se serve allineare ci pensa lo sviluppo. Ti chiamo solo se resta qualcosa da decidere.`, this.S.requests[ids[0]]);
+    for (const id of ids) this.merge(id).catch((e) => this.chat('system', `Unione di ${id} non riuscita: ${e.message}`, { requestId: id }));
+  }
+
+  // "Chiudi": una domanda rimasta appesa che non serve più
+  closeQuestion(reqId) {
+    const req = this.S.requests[reqId];
+    if (!req) throw new Error('richiesta sconosciuta');
+    if (req.quotePending) return this.answerQuote(reqId, 'cancel');
+    if (req.status !== 'NEEDS_USER') throw new Error(`${req.id} non aspetta niente`);
+    this.setRequest(req, { status: 'ANSWERED', closedByUser: true });
+    this.chat('system', `${req.id}: domanda chiusa.`, { requestId: req.id });
+    return req;
   }
 
   // "Rimanda allo sviluppo": il Notaio ha trovato righe che mancano e tu vuoi che vengano rimesse
