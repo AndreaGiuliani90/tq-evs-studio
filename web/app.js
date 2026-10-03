@@ -2,6 +2,7 @@
 import { avatarHTML, applyAvatarState, pulse, paintPortraits } from './avatars.js';
 import { Office } from './office.js';
 import { OfficeView } from './office-view.js';
+import { layoutHash } from './layout-hash.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -60,7 +61,11 @@ async function loadOffice() {
   pb.hidden = !layout.paint;
   pb.classList.toggle('on', !!S.office.painted);
   pb.title = S.office.painted ? 'Sfondo dipinto (clic: torna al disegno in codice)' : 'Disegno in codice (clic: sfondo dipinto)';
-  note.hidden = !(layout.paint && !S.office.paintMatches);
+  // l'avviso si può chiudere: resta chiuso finché la pianta non cambia di nuovo (o arriva un dipinto nuovo)
+  const key = `${layout.paint?.hash || ''}|${layoutHash(layout)}`;
+  let closed = null; try { closed = localStorage.getItem('studio:paint-note-closed'); } catch { /* ok */ }
+  note.hidden = !(layout.paint && !S.office.paintMatches) || closed === key;
+  $('#paint-note-x').onclick = () => { note.hidden = true; try { localStorage.setItem('studio:paint-note-closed', key); } catch { /* ok */ } };
 }
 
 function connect() {
