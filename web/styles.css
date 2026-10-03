@@ -278,3 +278,29 @@ table.backlog tr.doing td { background: #ffffff0c; }
 .pbar i { display: block; height: 100%; background: var(--cyan, #3fe0d0); }
 table.team th { text-align: left; font-size: 12px; color: var(--muted, #aaa); font-weight: 600; padding: 4px 6px; }
 b.good { color: #5fd38a; } b.mid { color: #e0b050; } b.bad { color: #ff7a6a; }
+
+/* ─── Da seguire + aggancio ─── */
+.pending-bar { flex: 0 0 auto; flex-direction: column; flex-wrap: nowrap; align-items: stretch; max-height: 46vh; overflow-y: auto; overflow-x: hidden; min-width: 0; }
+.right { min-width: 0; }
+.pd-list, .pd-group, .pd-item { min-width: 0; }
+.pending-bar.calm { background: var(--panel2); border-color: var(--line); color: var(--text); }
+.pd-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pd-toggle { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.pd-counts { flex: 1; opacity: .9; }
+.pd-nav { display: flex; gap: 4px; }
+.pd-list { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.pd-gl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .75; margin-bottom: 2px; }
+.pd-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.pd-group.muted-g { opacity: .75; }
+.pd-item { display: flex; gap: 6px; align-items: center; }
+.pd-go { flex: 1; min-width: 0; text-align: left; background: rgba(0,0,0,.18); border: 1px solid transparent; border-radius: 7px; color: inherit; font: inherit; padding: 4px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-go:hover { border-color: currentColor; }
+.pd-why { font-size: 11px; padding: 0 6px; border-radius: 6px; background: rgba(255,255,255,.12); margin: 0 4px; }
+.pd-t { opacity: .85; }
+.mhook { margin-left: 6px; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted, #999); cursor: pointer; font: inherit; padding: 0 5px; opacity: 0; transition: opacity .15s; }
+.msg:hover .mhook, .mhook:focus { opacity: 1; }
+.mhook:hover { border-color: var(--pink); color: var(--pink); }
+@media (hover: none) { .mhook { opacity: .7; } }
+.reply-to { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--pink); background: rgba(255, 80, 160, .08); font-size: 13px; }
+.reply-to[hidden] { display: none; }
+.reply-to button { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; }

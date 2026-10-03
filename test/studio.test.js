@@ -966,3 +966,45 @@ test('Studio: un ramo già unito a mano con git risulta unito; "Unisci comunque"
   assert.equal(sh(root, 'log', '--merges', '--format=%s').split('\n').length, 1);
   assert.equal(typeof s.orch.repairMerge, 'function');
 });
+
+test('seguiti: un messaggio agganciato a una richiesta continua sul suo branch, aspetta se è in corso, o riparte dal gioco se era unita', async () => {
+  const root = makeFixtureRepo();
+  let hold = null;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') {
+      const w = (o.prompt.match(/PAROLA (\w+)/g) || []).pop()?.split(' ')[1] || 'x';
+      return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: `scrivi ${w}`, instructions: `PAROLA ${w}`, dependsOn: [] }]);
+    }
+    if (o.agent.id === 'dev') {
+      const w = (o.prompt.match(/PAROLA (\w+)/g) || []).pop().split(' ')[1];
+      if (w === 'lenta') await new Promise((r) => { hold = r; });
+      fs.appendFileSync(path.join(o.cwd, `${w}.txt`), `${w}\n`);
+      return { text: '{"summary":"ok"}' };
+    }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { parallelPerAgent: 2 });
+  const o = s.orch;
+  // 1. finita e non unita → stesso branch
+  const a = await o.handleUserMessage('Fai PAROLA alfa');
+  await waitFor(() => a.status === 'DONE', 15000, 'A DONE');
+  const b = await o.handleUserMessage('aggiungi PAROLA beta', { replyTo: a.id });
+  await waitFor(() => b.status === 'DONE', 15000, 'B DONE');
+  assert.equal(b.parent, a.id); assert.ok(b.sameBranch); assert.equal(b.branch, a.branch); assert.equal(a.followedBy, b.id);
+  await assert.rejects(() => o.merge(a.id), /proseguita/);
+  await o.merge(b.id);
+  assert.ok(fs.existsSync(path.join(root, 'alfa.txt')) && fs.existsSync(path.join(root, 'beta.txt')), 'il seguito porta con sé anche il lavoro di A');
+  // 2. agganciata a una richiesta unita (anche passando dalla vecchia A) → nuova richiesta dal gioco attuale
+  const c = await o.handleUserMessage('ancora PAROLA gamma', { replyTo: a.id });
+  await waitFor(() => c.status === 'DONE', 15000, 'C DONE');
+  assert.equal(c.parent, b.id); assert.ok(!c.sameBranch); assert.notEqual(c.branch, b.branch);
+  // 3. agganciata a una richiesta ancora in lavorazione → aspetta, poi continua sul suo branch; «R-n:» a voce vale come aggancio
+  const d = await o.handleUserMessage('Fai PAROLA lenta');
+  await waitFor(() => hold, 15000, 'D al lavoro');
+  const e = await o.handleUserMessage(`${d.id.replace('R-000', 'R ')}: poi PAROLA delta`);
+  assert.equal(e.status, 'QUEUED'); assert.equal(e.parent, d.id); assert.equal(e.text, 'poi PAROLA delta');
+  hold();
+  await waitFor(() => e.status === 'DONE', 20000, 'E DONE dopo D');
+  assert.ok(e.sameBranch); assert.equal(e.branch, d.branch);
+  assert.ok(fs.existsSync(path.join(e.worktree, 'lenta.txt')) && fs.existsSync(path.join(e.worktree, 'delta.txt')));
+});

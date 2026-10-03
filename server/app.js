@@ -131,7 +131,7 @@ export function createServer(studio) {
         if (!f.startsWith(up + path.sep) || !fs.existsSync(f)) throw new Error(`allegato non trovato: ${a.name}`);
         return { id: a.id, name: path.basename(f), type: a.type || '', size: fs.statSync(f).size, path: f, url: `/uploads/${a.id}/${encodeURIComponent(path.basename(f))}` };
       });
-      return { request: await orch.handleUserMessage(b.text, { attachments }) };
+      return { request: await orch.handleUserMessage(b.text, { attachments, replyTo: b.replyTo || null }) };
     }],
     ['POST', /^\/api\/uploads$/, async (m, b) => {
       const mm = String(b.dataUrl || '').match(/^data:([^;,]*)(;base64)?,(.*)$/s);

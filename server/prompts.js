@@ -45,7 +45,7 @@ ${history || '(nessuna)'}
 ${running.length ? running.map((r) => `- ${r.id}: ${truncate(r.text, 160)} [${r.status}]`).join('\n') : '(nessuno)'}
 
 ## Nuova richiesta dell'utente (${req.id})
-${req.continues ? `È la RISPOSTA dell'utente alla tua domanda sulla richiesta ${req.continues}. Richiesta originale: "${req.originalText}"\nRisposta: ` : ''}${req.text}
+${req.parent ? `È un SEGUITO della richiesta ${req.parent}: "${req.parentText}"${req.parentOutcome ? `\nCom'era andata: ${truncate(req.parentOutcome, 900)}` : ''}\n${req.sameBranch ? `Si lavora nella STESSA copia di lavoro di ${req.parent}: le sue modifiche sono già nei file. Pianifica solo quello che serve per questa nuova indicazione (più il test).` : `${req.parent} è già unita o chiusa: si parte dal gioco attuale.`}\nNuova indicazione dell'utente: ` : ''}${req.continues ? `È la RISPOSTA dell'utente alla tua domanda sulla richiesta ${req.continues}. Richiesta originale: "${req.originalText}"\nRisposta: ` : ''}${req.text}
 ${req.attachments?.length ? `\n## Allegati dell'utente (puoi aprirli con Read)\n${req.attachments.map((a) => `- ${a.path} (${a.type || 'file'}, ${a.name})`).join('\n')}` : ''}
 
 ## Come rispondere
@@ -82,6 +82,7 @@ export function taskPrompt({ task, req, agent, deps, contextList, qaCmd, extra }
   const out = [`# Task ${task.id} — ${task.title}`,
     `Sei ${agent.name} (${agent.role}) nello studio virtuale che sviluppa TQ:EVS.`,
     `Richiesta originale dell'utente (${req.id}): "${req.originalText ? req.originalText + '" — chiarimenti: "' + req.text : req.text}"`,
+    req.parent ? `È il seguito di ${req.parent}: "${truncate(req.parentText || '', 400)}"${req.sameBranch ? ' — le sue modifiche sono già nei file di questa cartella: non rifarle, costruisci sopra.' : ' (già chiusa).'}` : '',
     req.attachments?.length ? `Allegati dell'utente (reference, screenshot di bug…), apribili con Read:\n${req.attachments.map((a) => `- ${a.path} (${a.name})`).join('\n')}` : '',
     '',
     '## Istruzioni del task',

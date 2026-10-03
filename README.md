@@ -108,6 +108,20 @@ git: nessuna AI, nessun costo.
 - **Annullare un'unione**: prima la prova. Se toglierla romperebbe aggiornamenti entrati dopo, si ferma e te lo dice.
 - **Registro**: il pulsante **Unioni** mostra ogni unione con numero, data, commit, versione e controlli.
 
+### Da seguire e seguiti agganciati
+
+- In cima alla chat, **Da seguire** conta le decisioni che ti aspettano, le unioni da confermare, i lavori in corso
+  e quelli in attesa. **‹ ›** ti porta nella chat da una all'altra. **▸** apre l'elenco completo, con anche le
+  richieste completate di recente: da lì puoi andare al messaggio, unire o agganciare.
+- **↪ Aggancia**, sul pulsante di ogni richiesta o passando sopra un messaggio: il prossimo messaggio riguarda quella
+  richiesta. Sopra la casella vedi cosa succederà:
+  - se aspettava una tua risposta, è quella risposta;
+  - se è ancora in lavorazione, il seguito aspetta e parte appena finisce;
+  - se è finita ma non unita, il seguito continua **sullo stesso branch**: alla fine unisci solo il seguito, che
+    contiene tutto, e la vecchia non si può più unire per sbaglio;
+  - se era già unita o chiusa, parte una richiesta nuova dal gioco attuale, con il contesto di quella vecchia.
+- A voce: inizia con «R 12:» (o «su R-12 …») per agganciare il messaggio alla richiesta R-0012. Esc toglie l'aggancio.
+
 ### Tornare indietro a mano (Terminale, nella cartella del gioco)
 
 ```bash

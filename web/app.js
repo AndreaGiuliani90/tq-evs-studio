@@ -11,7 +11,7 @@ const time = (ts) => (ts ? new Date(ts).toLocaleTimeString('it-IT', { hour: '2-d
 
 const S = { agents: {}, requests: {}, tasks: {}, chat: [], log: [], config: {}, lastSeq: 0, drawer: null };
 const STATUS_IT = { IDLE: 'libero', THINKING: 'pensa', WORKING: 'lavora', WAITING: 'in attesa', TESTING: 'testa', BLOCKED: 'bloccato', DONE: 'fatto', ERROR: 'errore' };
-const REQ_IT = { PLANNING: 'in pianificazione', RUNNING: 'in corso', DONE: 'completata', ANSWERED: 'risposta', NEEDS_USER: 'serve una tua decisione', FAILED: 'fallita', CANCELLED: 'annullata' };
+const REQ_IT = { QUEUED: 'in attesa', PLANNING: 'in pianificazione', RUNNING: 'in corso', DONE: 'completata', ANSWERED: 'risposta', NEEDS_USER: 'serve una tua decisione', FAILED: 'fallita', CANCELLED: 'annullata' };
 
 async function api(method, url, body) {
   let r;
@@ -91,7 +91,7 @@ function onEvent(e) {
     if (S.focus === e.agentId) renderFocus();
   }
   if (t === 'task.created' || t === 'task.updated') { S.tasks[e.task.id] = e.task; renderTasks(); refreshChips(e.task.requestId); if (S.drawer) renderDrawer(); }
-  if (t === 'request.created' || t === 'request.updated') { S.requests[e.request.id] = e.request; renderTasks(); refreshChips(e.request.id); refreshActions(e.request.id); refreshStale(e.request.id); renderDecisions(); }
+  if (t === 'request.created' || t === 'request.updated') { S.requests[e.request.id] = e.request; renderTasks(); refreshChips(e.request.id); refreshActions(e.request.id); refreshStale(e.request.id); renderDecisions(); if (S.replyTo) renderReplyTo(); }
   if (t === 'chat.message') { S.chat.push(e.message); appendChat(e.message); if (e.message.requestId) refreshStale(e.message.requestId); }
   if (t === 'studio.warning') toast(e.text, true);
   if (t === 'office.updated') loadOffice().catch(() => {});
@@ -191,7 +191,10 @@ function requestActions(req) {
     return b.join('');
   }
   if (req.worktree && !req.discarded) b.push(`<a class="btn sm" href="/play/${req.id}/" target="_blank" rel="noopener">▶ Gioca questa versione</a>`, `<button class="btn sm" data-act="diff" data-req="${req.id}">Modifiche</button>`);
+  if (req.followedBy) b.push(`<span class="muted">↪ proseguita in <a href="#" data-goto="${esc(lastOf(req).id)}">${esc(lastOf(req).id)}</a></span>`);
+  if (req.status === 'QUEUED') b.push(`<span class="muted">⏳ parte dopo ${esc(req.waitingFor || req.parent)}</span>`);
   if (req.mergeQueued) b.push('<span class="muted">📜 in coda per l\'unione…</span>');
+  else if (req.followedBy && S.requests[req.followedBy]?.sameBranch) { /* si unisce il seguito */ }
   else if (req.status === 'DONE' && !req.merged && !req.discarded && req.mergeDecision) b.push(`<button class="btn sm primary" data-act="merge-force" data-req="${req.id}">Unisci comunque</button>`, `<button class="btn sm" data-act="merge-repair" data-req="${req.id}">Rimanda allo sviluppo</button>`);
   else if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
   if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
@@ -201,8 +204,9 @@ function requestActions(req) {
     const alt = (req.quote?.options || []).filter((o) => !o.plan && o.id !== req.imageChoice);
     if (alt.length && failed) b.push(`<span class="quote-alt">Riprova con <select data-retry-choice="${req.id}">${alt.map((o) => `<option value="${esc(o.id)}">${esc(o.label)} — ≈ $${Number(o.usd).toFixed(2)}</option>`).join('')}</select> <button class="btn sm" data-act="retry-choice" data-req="${req.id}">Riprova così</button></span>`);
   }
-  if (['RUNNING', 'PLANNING', 'NEEDS_USER'].includes(req.status)) b.push(`<button class="btn sm" data-act="cancel" data-req="${req.id}">Ferma</button>`);
-  if (req.branch && !req.discarded && !['RUNNING', 'PLANNING'].includes(req.status)) b.push(`<button class="btn sm danger" data-act="discard" data-req="${req.id}">Scarta</button>`);
+  if (['RUNNING', 'PLANNING', 'NEEDS_USER', 'QUEUED'].includes(req.status)) b.push(`<button class="btn sm" data-act="cancel" data-req="${req.id}">Ferma</button>`);
+  b.push(`<button class="btn sm hookbtn" data-hook="${esc(req.id)}" title="Scrivi un nuovo messaggio agganciato a ${esc(req.id)}">↪ Aggancia</button>`);
+  if (req.branch && !req.discarded && !req.followedBy && !['RUNNING', 'PLANNING'].includes(req.status)) b.push(`<button class="btn sm danger" data-act="discard" data-req="${req.id}">Scarta</button>`);
   return b.join('');
 }
 
@@ -239,12 +243,86 @@ function refreshStale(reqId) {
     if (tag) { if (st) tag.textContent = st; else tag.remove(); }
   }
 }
-// barra in cima alla chat: SOLO le decisioni che ti aspettano adesso
+// ─── DA SEGUIRE: decisioni, unioni da confermare, lavori in corso e in attesa ───────────────────────
+// La barra in cima alla chat le conta; ‹ › le scorre una per una nella chat; ▾ apre l'elenco completo
+// (anche le richieste completate di recente, per agganciarci un seguito).
+function lastOf(r) { const seen = new Set(); while (r?.followedBy && S.requests[r.followedBy] && !seen.has(r.id)) { seen.add(r.id); r = S.requests[r.followedBy]; } return r; }
+function title(r) { return String(r.parentText && r.parent ? r.text : (r.originalText || r.text) || '').split('\n')[0].slice(0, 70); }
+function canMerge(r) { return r.status === 'DONE' && !r.mergeDecision && !r.merged && !r.discarded && !r.mergeQueued && !(r.followedBy && S.requests[r.followedBy]?.sameBranch) && (r.report?.commits?.length || r.report?.studioCommits?.length); }
+function pendingGroups() {
+  const all = Object.values(S.requests).sort((a, b) => b.id.localeCompare(a.id));
+  const done = new Set();
+  const take = (f) => all.filter((r) => !done.has(r.id) && f(r)).map((r) => (done.add(r.id), r));
+  return [
+    { key: 'dec', label: 'Decisioni', icon: '❓', items: take((r) => r.status === 'NEEDS_USER' || (r.status === 'DONE' && r.mergeDecision && !r.merged && !r.discarded)) },
+    { key: 'merge', label: 'Unioni da confermare', icon: '⇲', items: take(canMerge) },
+    { key: 'queue', label: 'In coda per l\'unione', icon: '📜', items: take((r) => r.mergeQueued) },
+    { key: 'run', label: 'In lavorazione', icon: '⚙', items: take((r) => ['RUNNING', 'PLANNING'].includes(r.status)) },
+    { key: 'wait', label: 'In attesa (seguiti)', icon: '⏳', items: take((r) => r.status === 'QUEUED') },
+    { key: 'recent', label: 'Completate di recente', icon: '✔', items: take((r) => ['DONE', 'ANSWERED', 'FAILED', 'CANCELLED'].includes(r.status) && !r.followedBy).slice(0, 8), muted: true },
+  ];
+}
+function why(r) {
+  if (r.mergeDecision && !r.merged) return 'unione: decidi tu';
+  if (r.status === 'NEEDS_USER') return r.quotePending ? 'preventivo' : r.escalation ? 'problema' : 'domanda';
+  if (r.status === 'QUEUED') return `dopo ${r.waitingFor || r.parent}`;
+  if (r.mergeQueued) return 'in coda';
+  if (canMerge(r)) return r.result === 'FAIL' ? 'da unire · test FAIL' : 'da unire';
+  return (REQ_IT[r.status] || r.status) + (r.merged ? ' · unita' : '');
+}
+function itemHTML(r) {
+  const prim = canMerge(r) ? `<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci</button>` : '';
+  return `<li class="pd-item"><button class="pd-go" data-goto="${esc(r.id)}" title="Vai al messaggio in chat"><b>${esc(r.id)}</b> <span class="pd-why">${esc(why(r))}</span> <span class="pd-t">${esc(title(r))}</span></button>${prim}<button class="btn sm hookbtn" data-hook="${esc(r.id)}" title="Scrivi un messaggio agganciato a ${esc(r.id)}">↪</button></li>`;
+}
+S.pdOpen = false; S.pdPos = -1;
 function renderDecisions() {
   const box = $('#pending-bar'); if (!box) return;
-  const open = Object.values(S.requests).filter((r) => r.status === 'NEEDS_USER').sort((a, b) => a.id.localeCompare(b.id));
-  box.hidden = !open.length;
-  box.innerHTML = open.length ? `<b>${open.length === 1 ? 'Una decisione ti aspetta' : `${open.length} decisioni ti aspettano`}:</b> ${open.map((r) => `<button class="btn sm" data-goto="${esc(r.id)}">${esc(r.id)} · ${esc(r.quotePending ? 'preventivo' : r.escalation ? 'problema' : 'domanda')}</button>`).join(' ')}` : '';
+  const g = pendingGroups();
+  const urgent = [...g[0].items, ...g[1].items];
+  const ONE = { dec: 'decisione', merge: 'unione da confermare', queue: 'in coda per l\'unione', run: 'in lavorazione', wait: 'in attesa' };
+  const counts = g.filter((x) => !x.muted && x.items.length).map((x) => `${x.icon} ${x.items.length} ${x.items.length === 1 ? ONE[x.key] : x.label.toLowerCase()}`);
+  const any = g.some((x) => x.items.length);
+  box.hidden = !any;
+  if (!any) return;
+  box.classList.toggle('calm', !urgent.length);
+  box.innerHTML = `<div class="pd-head"><button class="pd-toggle" data-pd="toggle" title="Mostra/nascondi l'elenco">${S.pdOpen ? '▾' : '▸'} <b>Da seguire</b></button> <span class="pd-counts">${counts.join(' · ') || 'niente in sospeso'}</span>
+      ${urgent.length ? `<span class="pd-nav"><button class="btn sm" data-pd="prev" title="Precedente in chat">‹</button><button class="btn sm" data-pd="next" title="Successiva in chat">›</button></span>` : ''}</div>
+    ${S.pdOpen ? `<div class="pd-list">${g.filter((x) => x.items.length).map((x) => `<div class="pd-group${x.muted ? ' muted-g' : ''}"><div class="pd-gl">${x.icon} ${esc(x.label)}</div><ul>${x.items.map(itemHTML).join('')}</ul></div>`).join('')}</div>` : ''}`;
+}
+function gotoReq(id) {
+  const msgs = [...document.querySelectorAll(`[data-msg-req="${CSS.escape(id)}"]`)];
+  const m = msgs.filter((x) => !x.classList.contains('stale')).pop() || msgs.pop();
+  if (m) { m.scrollIntoView({ behavior: 'smooth', block: 'center' }); m.classList.add('flash'); setTimeout(() => m.classList.remove('flash'), 1600); }
+  else toast(`${id}: nessun messaggio in chat`);
+}
+function stepPending(dir) {
+  const g = pendingGroups(); const list = [...g[0].items, ...g[1].items].sort((a, b) => a.id.localeCompare(b.id));
+  if (!list.length) return;
+  S.pdPos = (S.pdPos + dir + list.length) % list.length;
+  if (S.pdPos < 0) S.pdPos = 0;
+  gotoReq(list[S.pdPos].id);
+  toast(`${S.pdPos + 1} di ${list.length}: ${list[S.pdPos].id} · ${why(list[S.pdPos])}`);
+}
+
+// ─── aggancio: il prossimo messaggio riguarda questa richiesta ───────────────────────────────────
+function followHint(r) {
+  const t = lastOf(r);
+  const via = t.id !== r.id ? ` (prosegue in ${t.id})` : '';
+  if (t.status === 'NEEDS_USER' && t.question && !t.answeredBy) return `è la tua risposta a ${t.id}${via}`;
+  if (['RUNNING', 'PLANNING', 'QUEUED'].includes(t.status) || t.mergeQueued || (t.status === 'NEEDS_USER' && t.quotePending)) return `parte appena ${t.id} finisce${via}, sullo stesso branch`;
+  if (t.branch && !t.discarded && !t.merged && t.worktree) return `continua ${t.id}${via} sullo stesso branch: poi unisci solo il seguito`;
+  return `nuova richiesta dal gioco attuale, con il contesto di ${t.id}${via}`;
+}
+function setReplyTo(id) {
+  S.replyTo = id && S.requests[id] ? id : null;
+  renderReplyTo();
+  if (S.replyTo) $('#msg').focus();
+}
+function renderReplyTo() {
+  const box = $('#reply-to'); if (!box) return;
+  const r = S.replyTo && S.requests[S.replyTo];
+  box.hidden = !r;
+  box.innerHTML = r ? `<span>↪ <b>${esc(r.id)}</b> · ${esc(title(r))} <span class="muted">— ${esc(followHint(r))}</span></span><button type="button" data-hook-clear title="Togli l'aggancio">✕</button>` : '';
 }
 
 function msgHTML(m) {
@@ -255,7 +333,7 @@ function msgHTML(m) {
   const st = staleTag(m);
   return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}${st ? ' stale' : ''}" data-id="${esc(m.id)}" ${m.requestId ? `data-msg-req="${esc(m.requestId)}"` : ''}>
     ${m.role !== 'user' && a ? `<div class="mav">${avatarHTML(a, { size: 30 })}</div>` : ''}
-    <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.requestId ? ' · ' + esc(m.requestId) : ''}</span>${st ? ` <span class="stale-tag">${esc(st)}</span>` : ''}</div>
+    <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.replyTo ? ' · ↪ ' : m.requestId ? ' · ' : ''}${m.requestId ? esc(m.requestId) : ''}</span>${st ? ` <span class="stale-tag">${esc(st)}</span>` : ''}${m.requestId && S.requests[m.requestId] ? `<button class="mhook" data-hook="${esc(m.requestId)}" title="Aggancia un nuovo messaggio a ${esc(m.requestId)}">↪</button>` : ''}</div>
     <div class="mtext">${md(m.text)}</div>${m.attachments?.length ? `<div class="msg-att">${m.attachments.map((a) => /^image\//.test(a.type) ? `<a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="${esc(a.name)}"></a>` : `<a class="file" href="${esc(a.url)}" target="_blank">📄 ${esc(a.name)}</a>`).join('')}</div>` : ''}${chips}${m.kind === 'report' ? reportHTML(m.report) : ''}${m.kind === 'question' ? '<div class="muted qhint">↳ Rispondi qui sotto (anche a voce): la richiesta riparte da dove era.</div>' : ''}${actions}</div></div>`;
 }
 
@@ -340,17 +418,22 @@ $('#composer').onsubmit = act(async (ev) => {
   if (S.pending.some((a) => a.uploading)) { toast('Aspetta che finiscano i caricamenti…'); return; }
   if (!text && !S.pending.length) return;
   const attachments = S.pending.map(({ id, name, type }) => ({ id, name, type }));
-  const keep = { text, pending: S.pending };
-  $('#msg').value = ''; S.pending = []; renderPending();
-  try { await api('POST', '/api/chat', { text, attachments }); }
-  catch (e) { if (!$('#msg').value) $('#msg').value = keep.text; S.pending = keep.pending; renderPending(); throw new Error(`Messaggio NON inviato (è ancora nella casella): ${e.message}`); }
+  const keep = { text, pending: S.pending, replyTo: S.replyTo };
+  $('#msg').value = ''; S.pending = []; renderPending(); setReplyTo(null);
+  try { await api('POST', '/api/chat', { text, attachments, replyTo: keep.replyTo }); }
+  catch (e) { if (!$('#msg').value) $('#msg').value = keep.text; S.pending = keep.pending; renderPending(); setReplyTo(keep.replyTo); throw new Error(`Messaggio NON inviato (è ancora nella casella): ${e.message}`); }
 });
-$('#msg').onkeydown = (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#composer').requestSubmit(); } };
+$('#msg').onkeydown = (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#composer').requestSubmit(); } else if (ev.key === 'Escape' && S.replyTo) setReplyTo(null); };
 
 // azioni sui pulsanti (delegate)
 document.addEventListener('click', act(async (ev) => {
   const go = ev.target.closest('[data-goto]');
-  if (go) { const msgs = [...document.querySelectorAll(`[data-msg-req="${CSS.escape(go.dataset.goto)}"]`)]; const m = msgs.filter((x) => !x.classList.contains('stale')).pop() || msgs.pop(); if (m) { m.scrollIntoView({ behavior: 'smooth', block: 'center' }); m.classList.add('flash'); setTimeout(() => m.classList.remove('flash'), 1600); } return; }
+  if (go) { ev.preventDefault(); gotoReq(go.dataset.goto); return; }
+  const hook = ev.target.closest('[data-hook]');
+  if (hook) { setReplyTo(hook.dataset.hook); return; }
+  if (ev.target.closest('[data-hook-clear]')) { setReplyTo(null); return; }
+  const pd = ev.target.closest('[data-pd]');
+  if (pd) { if (pd.dataset.pd === 'toggle') { S.pdOpen = !S.pdOpen; renderDecisions(); } else stepPending(pd.dataset.pd === 'next' ? 1 : -1); return; }
   const el = ev.target.closest('[data-act],[data-task],[data-open],[data-example],[data-tab]');
   if (!el) return;
   if (el.dataset.example !== undefined) { $('#msg').value = 'Analizza il gioco attuale e dimmi un piccolo miglioramento che valga la pena implementare come test. Implementalo e testalo.'; $('#msg').focus(); return; }

@@ -209,6 +209,7 @@ export class Orchestrator {
     await this.syncMerged().catch(() => {});
     this.store.save();
     this.schedule();
+    this.wakeFollowups();
   }
 
   // ─── chat ──────────────────────────────────────────────────────────────────────────────────────
@@ -221,13 +222,28 @@ export class Orchestrator {
     return m;
   }
 
-  async handleUserMessage(text, { attachments = [] } = {}) {
+  async handleUserMessage(text, { attachments = [], replyTo = null } = {}) {
     text = String(text || '').trim();
     if (!text && !attachments.length) throw new Error('messaggio vuoto');
+    // «R-12: …» o «su R-12 …» all'inizio del messaggio (anche dettato) = aggancio a quella richiesta
+    if (!replyTo) {
+      const m = text.match(/^(?:su |per |riguardo (?:a |alla )?)?(?:la )?R[- ]?0*(\d{1,4})\b\s*[:,.\-–—]?\s+/i);
+      const id = m && `R-${m[1].padStart(4, '0')}`;
+      if (id && this.S.requests[id]) { replyTo = id; text = text.slice(m[0].length).trim(); }
+    }
     if (!text) text = '(vedi allegati)';
-    this.chat('user', text, attachments.length ? { attachments } : {});
+    const target = replyTo ? this.S.requests[replyTo] : null;
+    if (replyTo && !target) throw new Error(`richiesta sconosciuta: ${replyTo}`);
+    this.chat('user', text, { ...(attachments.length ? { attachments } : {}), ...(target ? { requestId: target.id, replyTo: target.id } : {}) });
+    if (target) {
+      const cmd = text.toLowerCase().trim().replace(/[.!]+$/, '');
+      if (target.status === 'NEEDS_USER' && !target.quotePending && /^(riprova|riprovaci|ritenta|vai di nuovo)$/.test(cmd)) return this.retry(target.id);
+      if (['NEEDS_USER', 'RUNNING', 'PLANNING', 'QUEUED'].includes(target.status) && /^(ferma|fermala|annulla|lascia stare|lascia perdere|stop)$/.test(cmd)) return this.cancel(target.id);
+      // agganciato a una richiesta che aspetta la risposta a una domanda / a un preventivo: è quella risposta
+      if (!(target.status === 'NEEDS_USER' && target.question && !target.answeredBy)) return this.followUp(target, text, attachments);
+    }
     // se la Regia aveva fatto una domanda, questo messaggio è la risposta: la richiesta originale continua qui
-    const asked = Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
+    const asked = target || Object.values(this.S.requests).filter((r) => r.status === 'NEEDS_USER' && r.question && !r.answeredBy).sort((a, b) => b.id.localeCompare(a.id))[0];
     const startM = text.match(/^(?:avvia|fai|esegui|parti con|lavora (?:a|su))\s+(?:la\s+|l')?\b(b-?\d+)\b[.!]?$/i);
     if (startM) return this.startBacklogItem(startM[1].replace(/^b-?/i, 'B-'), { echoed: true });
     // "riprova" / "ferma" detti in chat valgono come i pulsanti sulla richiesta che aspetta una decisione
@@ -257,6 +273,58 @@ export class Orchestrator {
     return req;
   }
 
+  // ─── Seguiti: un nuovo messaggio agganciato a una richiesta (finita o no) ──────────────────────────
+  //   - ancora in lavorazione (o in coda per l'unione) → il seguito aspetta e parte appena finisce;
+  //   - finita ma non unita (branch vivo) → continua SULLO STESSO BRANCH: poi si unisce solo il seguito, che contiene tutto;
+  //   - unita, scartata o senza file → nuova richiesta dal gioco attuale, con il contesto di quella vecchia.
+  lastOf(r) { const seen = new Set(); while (r?.followedBy && this.S.requests[r.followedBy] && !seen.has(r.id)) { seen.add(r.id); r = this.S.requests[r.followedBy]; } return r; }
+  mustWait(r) { return this.isBusy(r) || (r.status === 'NEEDS_USER' && !!r.quotePending); }
+  isBusy(r) { return ['PLANNING', 'RUNNING', 'QUEUED'].includes(r.status) || !!r.mergeQueued || this.planning.has(r.id); }
+
+  followUp(target, text, attachments = []) {
+    const t = this.lastOf(target);
+    const req = { id: this.store.nextId('request', 'R'), text, status: 'QUEUED', createdAt: now(), taskIds: [], attachments: [...attachments], parent: t.id, parentText: clip(t.originalText ? `${t.originalText} — ${t.text}` : t.text, 600) };
+    this.S.requests[req.id] = req;
+    this.store.save();
+    this.events.emit('request.created', { request: req });
+    if (this.mustWait(t)) {
+      req.waitingFor = t.id; this.store.save();
+      this.chat('director', `${req.id} agganciata a ${t.id}${t.id !== target.id ? ` (che ha proseguito ${target.id})` : ''}. ${t.status === 'NEEDS_USER' ? `${t.id} aspetta il tuo ok al preventivo: appena decidi parto` : `${t.id} è ancora in lavorazione: parto appena finisce`}, sullo stesso branch, così non si perde niente.`, { agentId: 'director', requestId: req.id, kind: 'plan' });
+      return req;
+    }
+    this.startFollowup(req).catch((e) => this.fail(req, e));
+    return req;
+  }
+
+  async startFollowup(req) {
+    const t = this.lastOf(this.S.requests[req.parent]);
+    req.parent = t.id;
+    const same = !!(t.branch && !t.discarded && !t.merged && t.worktree && fs.existsSync(t.worktree));
+    req.parentOutcome = clip(t.report?.prose || t.report?.summaries?.join('\n') || t.question || '', 1200);
+    if (same) {
+      Object.assign(req, { branch: t.branch, worktree: t.worktree, baseBranch: t.baseBranch, baseCommit: t.baseCommit, baseDirty: t.baseDirty, sameBranch: true });
+      if (t.studio?.branch && !t.studio.mergeCommit) req.studio = { ...t.studio, id: `${req.id}-studio` };
+    }
+    req.waitingFor = null;
+    if (t.status === 'NEEDS_USER') for (const x of this.tasksOf(t.id)) if (x.status === 'PENDING') this.setTask(x, { status: 'CANCELLED' }, `superato dal seguito ${req.id}`);
+    this.setRequest(t, { followedBy: req.id, ...(t.status === 'NEEDS_USER' ? { status: 'ANSWERED' } : {}) });
+    this.chat('director', same ? `${req.id} continua ${t.id} sullo stesso branch (\`${t.branch}\`): alla fine unirai solo ${req.id}, che contiene anche il lavoro di ${t.id}.` : `${req.id} parte dal gioco attuale con il contesto di ${t.id}${t.merged ? ' (già unita)' : ''}.`, { agentId: 'director', requestId: req.id, kind: 'agent-update' });
+    this.setRequest(req, { status: 'PLANNING' });
+    return this.plan(req);
+  }
+
+  // i seguiti in attesa partono quando la richiesta a cui sono agganciati si libera
+  wakeFollowups() {
+    clearTimeout(this.wakeTimer);
+    this.wakeTimer = setTimeout(() => {
+      for (const r of Object.values(this.S.requests)) {
+        if (r.status !== 'QUEUED') continue;
+        const t = this.lastOf(this.S.requests[r.waitingFor || r.parent]);
+        if (!t || !this.mustWait(t) || t.discarded) this.startFollowup(r).catch((e) => this.fail(r, e));
+      }
+    }, 0);
+  }
+
   // avvia un'attività della lavagna DA FARE: diventa una richiesta normale (piano, preventivo, task…)
   async startBacklogItem(id, { echoed = false } = {}) {
     const it = this.backlog.get(id);
@@ -281,6 +349,7 @@ export class Orchestrator {
     this.events.emit('request.updated', { request: req });
     if (['CANCELLED', 'DONE', 'ANSWERED'].includes(req.status) || (req.status === 'RUNNING' && patch.status)) this.clearStaleStatus(req);
     if (['CANCELLED', 'DONE', 'FAILED'].includes(req.status)) this.backlog?.onRequest(req);
+    if (Object.values(this.S.requests).some((r) => r.status === 'QUEUED')) this.wakeFollowups();
   }
 
   // un ERRORE o un BLOCCO che riguarda una richiesta ormai chiusa (o ripartita) non deve restare appeso agli agenti
@@ -1336,6 +1405,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     if (req.merged) { this.setRequest(req, { mergeError: null }); return req; }
     // "Unisci comunque": hai visto l'elenco del Notaio e hai deciso tu. Conflitti e versione all'indietro fermano lo stesso.
     if (force) req.forceMerge = true;
+    if (req.followedBy && this.S.requests[req.followedBy]?.sameBranch) throw new Error(`${req.id} è proseguita in ${this.lastOf(req).id} sullo stesso branch: unisci quella, contiene anche questo lavoro`);
     if (!(req.branch && req.report?.commits?.length) && !(req.studio?.branch && req.report?.studioCommits?.length)) throw new Error('niente da unire');
     const q = this.release.ledger.queue;
     if (!q.includes(req.id)) q.push(req.id);
@@ -1419,6 +1489,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     if (!this.gitOk) return;
     for (const r of list) {
       if (!r?.branch || r.merged || r.discarded || !r.report?.commits?.length) continue;
+      if (r.followedBy && this.S.requests[r.followedBy]?.sameBranch) continue;   // si unisce il seguito, non lei
       const g = (args) => this.git.git(args, this.projectRoot, { allowFail: true });
       const tip = (await g(['rev-parse', '--verify', '--quiet', `refs/heads/${r.branch}`])).stdout.trim();
       if (!tip || tip === r.baseCommit) continue;
@@ -1474,6 +1545,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
   async discard(reqId) {
     const req = this.S.requests[reqId];
     if (!req) throw new Error('richiesta sconosciuta');
+    if (req.followedBy && this.S.requests[req.followedBy]?.sameBranch && !this.S.requests[req.followedBy].discarded) throw new Error(`${req.id} è proseguita in ${this.lastOf(req).id} sullo stesso branch: scarta quella`);
     if ([...this.running.keys()].some((id) => this.S.tasks[id]?.requestId === reqId)) this.cancel(reqId);
     if (req.branch) await this.git.removeWorktree(req, { deleteBranch: !req.merged });
     if (req.studio?.branch) await this.studioGit.removeWorktree(req.studio, { deleteBranch: !req.merged });
