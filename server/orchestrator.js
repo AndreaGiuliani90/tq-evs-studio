@@ -208,7 +208,10 @@ export class Orchestrator {
     }
     await this.syncMerged().catch(() => {});
     this.releaseOrphans();
-    for (const r of Object.values(this.S.requests)) if (r.merged && r.sameBranch) this.markChainMerged(r);
+    for (const r of Object.values(this.S.requests)) {
+      if (r.merged && r.sameBranch) this.markChainMerged(r);
+      if (r.discarded && (r.mergeDecision || r.mergeQueued)) Object.assign(r, { mergeDecision: false, mergeError: null, mergeQueued: false });
+    }
     this.store.save();
     this.schedule();
     this.wakeFollowups();
@@ -1473,6 +1476,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
   async merge(reqId, { force = false } = {}) {
     const req = this.S.requests[reqId];
     if (!req) throw new Error('richiesta sconosciuta');
+    if (req.discarded) { this.setRequest(req, { mergeDecision: false, mergeError: null }); throw new Error(`${req.id} è stata scartata: non c'è più niente da unire`); }
     await this.syncMerged([req]).catch(() => {});
     if (req.merged) { this.setRequest(req, { mergeError: null }); return req; }
     // "Unisci comunque": hai visto l'elenco del Notaio e hai deciso tu. Conflitti e versione all'indietro fermano lo stesso.
@@ -1688,7 +1692,9 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     if ([...this.running.keys()].some((id) => this.S.tasks[id]?.requestId === reqId)) this.cancel(reqId);
     if (req.branch) await this.git.removeWorktree(req, { deleteBranch: !req.merged });
     if (req.studio?.branch) await this.studioGit.removeWorktree(req.studio, { deleteBranch: !req.merged });
-    this.setRequest(req, { discarded: true, worktree: null, status: req.status === 'RUNNING' ? 'CANCELLED' : req.status });
+    const q = this.release.ledger.queue, qi = q.indexOf(req.id);
+    if (qi >= 0) q.splice(qi, 1);
+    this.setRequest(req, { discarded: true, worktree: null, status: req.status === 'RUNNING' ? 'CANCELLED' : req.status, mergeDecision: false, mergeError: null, mergeQueued: false, remergeAfterIntegrate: false });
     this.chat('system', `Scartato il lavoro di ${req.id}${req.merged ? ' (la parte già unita resta: usa "Annulla unione")' : ` (branch ${req.branch} eliminato)`}.`, { requestId: req.id });
     return req;
   }

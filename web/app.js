@@ -253,6 +253,7 @@ function canMerge(r) { return r.status === 'DONE' && !r.mergeDecision && !r.merg
 const clipT = (t, n) => { t = String(t || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const usd = (n) => `≈ $${Number(n || 0).toFixed(2)}`;
 function card(r) {
+  if (r.discarded || r.merged) return null;
   const T = `<b>${esc(r.id)}</b> «${esc(title(r))}»`;
   const goto = `<button class="tt-link" data-goto="${esc(r.id)}">vedi in chat</button>`;
   const play = r.worktree && !r.discarded ? `<a class="btn sm" href="/play/${esc(r.id)}/" target="_blank" rel="noopener">▶ Prova questa versione</a>` : '';

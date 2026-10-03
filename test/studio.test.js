@@ -1100,6 +1100,14 @@ test('Notaio: conta solo quello che si perde risolvendo i conflitti; i file di l
   const q = await s.orch.handleUserMessage('non capisco, spiegami', { replyTo: a.id });
   await waitFor(() => q.status === 'ANSWERED', 15000, 'risposta');
   assert.equal(a.followedBy, null, 'il seguito di sola risposta non si tiene l\'unione');
+  // scartata mentre aspettava una decisione: niente più scheda, e «unisci» dice che non c'è niente da unire
+  answerOnly = false;
+  const b2 = await s.orch.handleUserMessage('Fai x');
+  await waitFor(() => b2.status === 'DONE', 15000, 'B2 DONE');
+  b2.mergeDecision = true;
+  await s.orch.discard(b2.id);
+  assert.equal(b2.mergeDecision, false);
+  await assert.rejects(() => s.orch.merge(b2.id), /scartata/);
   await s.orch.merge(a.id);
   assert.ok(a.merged && fs.existsSync(path.join(root2, 'src/x.js')));
 });
