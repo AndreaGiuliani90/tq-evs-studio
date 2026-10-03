@@ -197,7 +197,8 @@ function requestActions(req) {
   else if (req.followedBy && S.requests[req.followedBy]?.sameBranch) { /* si unisce il seguito */ }
   else if (req.status === 'DONE' && !req.merged && !req.discarded && req.mergeDecision) b.push(`<button class="btn sm primary" data-act="merge-force" data-req="${req.id}">Unisci comunque</button>`, `<button class="btn sm" data-act="merge-repair" data-req="${req.id}">Rimanda allo sviluppo</button>`);
   else if (req.status === 'DONE' && !req.merged && !req.discarded && (req.report?.commits?.length || req.report?.studioCommits?.length)) b.push(`<button class="btn sm primary" data-act="merge" data-req="${req.id}">Unisci in ${esc(req.baseBranch || 'main')}</button>`);
-  if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
+  if (req.merged && req.mergedVia) b.push(`<span class="muted">✔ unita al gioco insieme a ${esc(req.mergedVia)}</span>`);
+  else if (req.merged) b.push(`<button class="btn sm" data-act="revert-merge" data-req="${req.id}">Annulla unione</button>`);
   const failed = Object.values(S.tasks).some((t) => t.requestId === req.id && ['FAILED', 'CANCELLED'].includes(t.status) && !t.superseded);
   if (['NEEDS_USER', 'FAILED'].includes(req.status) && !req.quotePending && (req.worktree || failed || req.planFailed)) {
     b.push(`<button class="btn sm primary" data-act="retry" data-req="${req.id}">Riprova</button>`);

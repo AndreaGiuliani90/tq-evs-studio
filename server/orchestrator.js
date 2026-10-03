@@ -208,6 +208,7 @@ export class Orchestrator {
     }
     await this.syncMerged().catch(() => {});
     this.releaseOrphans();
+    for (const r of Object.values(this.S.requests)) if (r.merged && r.sameBranch) this.markChainMerged(r);
     this.store.save();
     this.schedule();
     this.wakeFollowups();
@@ -1557,6 +1558,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     }
     req.forceMerge = false;
     this.setRequest(req, { merged: true, mergedAt: now(), mergeError: null, mergeDecision: false });
+    this.markChainMerged(req);
     this.say(lines.join('\n'), req, 'text');
   }
 
@@ -1603,6 +1605,17 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     for (const r of Object.values(this.S.requests)) {
       const f = r.followedBy && this.S.requests[r.followedBy];
       if (f && f.sameBranch && ['ANSWERED', 'CANCELLED', 'FAILED'].includes(f.status) && !this.tasksOf(f.id).some((t) => t.result?.commit)) { r.followedBy = null; this.events.emit('request.updated', { request: r }); }
+    }
+  }
+
+  // un seguito sullo stesso branch è stato unito: dentro c'erano anche le richieste che continuava, unite anche loro
+  markChainMerged(req) {
+    const seen = new Set([req.id]);
+    let p = req.sameBranch && this.S.requests[req.parent];
+    while (p && !seen.has(p.id)) {
+      seen.add(p.id);
+      if (!p.merged && !p.discarded && p.followedBy) this.setRequest(p, { merged: true, mergedAt: req.mergedAt || now(), mergedVia: req.id, mergeDecision: false, mergeError: null });
+      p = p.sameBranch && this.S.requests[p.parent];
     }
   }
 

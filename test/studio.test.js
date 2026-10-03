@@ -996,6 +996,7 @@ test('seguiti: un messaggio agganciato a una richiesta continua sul suo branch, 
   await assert.rejects(() => o.merge(a.id), /proseguita/);
   await o.merge(b.id);
   assert.ok(fs.existsSync(path.join(root, 'alfa.txt')) && fs.existsSync(path.join(root, 'beta.txt')), 'il seguito porta con sé anche il lavoro di A');
+  assert.ok(a.merged && a.mergedVia === b.id, 'A risulta unita (dentro B)');
   // 2. agganciata a una richiesta unita (anche passando dalla vecchia A) → nuova richiesta dal gioco attuale
   const c = await o.handleUserMessage('ancora PAROLA gamma', { replyTo: a.id });
   await waitFor(() => c.status === 'DONE', 15000, 'C DONE');
