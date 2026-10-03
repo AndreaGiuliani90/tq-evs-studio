@@ -1130,3 +1130,34 @@ test('Stratega: una risposta secca a una scelta («1-b 2-a») va alla domanda ap
   s.orch.closeQuestion(q2.id);
   assert.equal(q2.status, 'ANSWERED');
 });
+
+test('limiti d\'uso di un abbonamento: lo Stratega passa a un altro modello incluso; se non c\'è, il lavoro riparte da solo al rinnovo', async () => {
+  const root = makeFixtureRepo();
+  const codex = new ScriptedProvider('codex', async () => ({ ok: false, error: 'You\'ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Oct 4th, 2099 1:23 AM.' }));
+  const claude = new ScriptedProvider('claude-code', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: 'x', dependsOn: [] }]);
+    if (o.agent.id === 'dev') { fs.writeFileSync(path.join(o.cwd, 'src/x.js'), 'export const x = 1;\n'); return { text: '{"summary":"fatto con claude"}' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const reg = registryWith(claude, codex);
+  const s = await studioFor(root, reg);
+  const o = s.orch;
+  const lim = o.planLimitOf('You\'ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Oct 4th, 2099 1:23 AM.');
+  assert.equal(lim.provider, 'codex'); assert.equal(new Date(lim.until).getFullYear(), 2099);
+  s.agents.update('dev', { provider: 'codex' });
+  const r = await o.handleUserMessage('Fai x');
+  await waitFor(() => r.status === 'DONE', 15000, 'DONE con l\'altro modello');
+  const t = Object.values(s.store.data.tasks).find((x) => x.requestId === r.id && x.kind === 'implement');
+  assert.equal(t.ranWith, 'claude-code');
+  assert.ok(o.isLimited('codex'));
+  assert.ok(s.store.data.chat.some((m) => m.agentId === 'strategist' && /limiti d'uso[\s\S]*Niente da fare per te/.test(m.text)));
+  assert.ok(!Object.values(s.store.data.requests).some((x) => x.status === 'NEEDS_USER'), 'nessuna decisione per te');
+  // senza alternative gratuite: aspetta il rinnovo e non chiede niente
+  const t2 = { id: 'T-x', requestId: r.id, agentId: 'art', kind: 'art', title: 'immagini', dependsOn: [], status: 'FAILED', attempt: 1, log: [] };
+  s.store.data.tasks[t2.id] = t2;
+  r.imageChoice = 'plan';
+  await o.handlePlanLimit(t2, r, s.agents.get('art'), lim, 'usage limit');
+  assert.equal(t2.status, 'PENDING'); assert.ok(t2.notBefore);
+  assert.equal(r.waitingLimit.provider, 'codex');
+  o.cancel(r.id);
+});

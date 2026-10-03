@@ -300,7 +300,8 @@ function renderDecisions() {
   cards.sort((a, b) => order[a.c.u] - order[b.c.u] || a.r.id.localeCompare(b.r.id));
   const running = all.filter((r) => ['RUNNING', 'PLANNING'].includes(r.status) || r.mergeQueued);
   const waiting = all.filter((r) => r.status === 'QUEUED');
-  const quiet = [...running.map((r) => `⚙ ${esc(r.id)} ${r.mergeQueued ? 'si sta unendo al gioco' : 'in lavorazione'}`), ...waiting.map((r) => `⏳ ${esc(r.id)} parte dopo ${esc(r.waitingFor || r.parent)}`)];
+  const later = (iso) => { const d = new Date(iso), n = new Date(), t = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }); return d.toDateString() === n.toDateString() ? `alle ${t}` : `${d.getHours() < 6 && d - n < 864e5 ? 'stanotte' : d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} alle ${t}`; };
+  const quiet = [...running.map((r) => r.waitingLimit && Date.parse(r.waitingLimit.until) > Date.now() ? `⏳ ${esc(r.id)} riparte da sola ${esc(later(r.waitingLimit.until))} (piano ${esc(r.waitingLimit.label)} esaurito)` : `⚙ ${esc(r.id)} ${r.mergeQueued ? 'si sta unendo al gioco' : 'in lavorazione'}`), ...waiting.map((r) => `⏳ ${esc(r.id)} parte dopo ${esc(r.waitingFor || r.parent)}`)];
   box.hidden = !cards.length && !quiet.length;
   if (box.hidden) return;
   const nStop = cards.filter((x) => x.c.u !== 'later').length, nLater = cards.length - nStop;

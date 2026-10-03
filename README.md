@@ -241,6 +241,14 @@ Sulla parete destra ci sono altre due lavagne (passaci sopra col cursore per il 
 - **SQUADRA**: chi lavora di più (task completati, tempo) e chi lavora meglio (qualità = completati ÷ completati +
   falliti + rifatti perché il QA ha trovato problemi; per il QA trovare bug conta come lavoro ben fatto).
 
+### Limiti d'uso degli abbonamenti
+
+Se un abbonamento (ChatGPT/Codex, Claude, Gemini) finisce i limiti d'uso, non ti chiede niente. Lo Stratega passa
+a un altro modello incluso in un abbonamento che ha ancora margine, e te lo scrive in chat. Se non c'è
+un'alternativa gratuita (per esempio immagini disegnate con il piano ChatGPT), il lavoro aspetta il rinnovo e
+riparte da solo all'ora indicata dal fornitore. In «Tocca a te» lo vedi nella riga tranquilla: «riparte da sola
+alle …».
+
 ### Preventivo prima di spendere
 
 Le immagini via API (GPT Image, Nano Banana) si pagano a consumo, **a parte** rispetto agli abbonamenti. Il lavoro

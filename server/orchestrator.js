@@ -175,6 +175,89 @@ export class Orchestrator {
 
   modelLabel(s) { return s ? `${s.provider}${s.model ? ` · ${s.model}` : ''}` : ''; }
 
+  // ─── Limiti d'uso degli abbonamenti (Codex/ChatGPT, Claude Code, Gemini) ───────────────────────
+  // Quando un piano finisce i limiti d'uso non è una decisione per te: lo Stratega passa a un altro modello incluso
+  // nell'abbonamento, oppure (se non ce n'è uno adatto) il lavoro aspetta il rinnovo e riparte da solo.
+  get limits() { return (this.S.limits ??= {}); }
+  isLimited(pid) { const l = pid && this.limits[pid]; return !!(l && Date.parse(l.until) > Date.now()); }
+  planLimitOf(err) {
+    const e = String(err || '');
+    if (/API (402|429)/.test(e)) return null;   // generatori di immagini a credito: gestiti a parte
+    if (!/usage limit|limit reached|hit your .{0,20}limit|rate.?limit|quota exceeded|too many requests|limite d'uso/i.test(e)) return null;
+    const provider = /chatgpt|codex|openai/i.test(e) ? 'codex' : /gemini|google/i.test(e) ? 'gemini' : /claude|anthropic/i.test(e) ? 'claude-code' : null;
+    let until = null;
+    const m = e.match(/try again (?:at|after) ([A-Z][a-z]{2,8}) (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})(?:,| at)? (\d{1,2}):(\d{2}) ?([AP]M)?/i);
+    if (m) { const d = new Date(`${m[1]} ${m[2]}, ${m[3]} ${m[4]}:${m[5]} ${m[6] || ''}`.trim()); if (!isNaN(d)) until = d; }
+    const ep = !until && e.match(/limit reached\|(\d{10})/i);
+    if (ep) until = new Date(Number(ep[1]) * 1000);
+    const rs = !until && e.match(/resets? (?:at )?(\d{1,2})(?::(\d{2}))? ?(am|pm)/i);
+    if (rs) { const d = new Date(); let h = Number(rs[1]) % 12 + (/pm/i.test(rs[3]) ? 12 : 0); d.setHours(h, Number(rs[2] || 0), 0, 0); if (d < new Date()) d.setDate(d.getDate() + 1); until = d; }
+    const inM = !until && e.match(/try again in (\d+) ?(minute|min|hour|ora|ore)/i);
+    if (inM) until = new Date(Date.now() + Number(inM[1]) * (/h|or/i.test(inM[2]) ? 3600e3 : 60e3));
+    return { provider, until: (until && until > new Date() ? until : new Date(Date.now() + 60 * 60e3)).toISOString() };
+  }
+  whenText(iso) {
+    const d = new Date(iso), n = new Date(), t = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    const day = (x) => x.toDateString();
+    const tom = new Date(n); tom.setDate(n.getDate() + 1);
+    return day(d) === day(n) ? `oggi alle ${t}` : day(d) === day(tom) ? `${d.getHours() < 6 ? 'stanotte' : 'domani'} alle ${t}` : `il ${d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })} alle ${t}`;
+  }
+  planLabel(pid) { return { codex: 'ChatGPT (Codex)', 'claude-code': 'Claude', gemini: 'Gemini' }[pid] || pid || 'dell\'abbonamento'; }
+  // un altro modello incluso nell'abbonamento, di un fornitore che non ha finito i limiti
+  async freeAlternative(t, req, from) {
+    const tier = t.strategy?.tier || req?.strategy?.byKind?.[t.kind]?.tier || 'media';
+    const opts = [];
+    for (const id of Object.keys(this.catalog.text)) {
+      const c = this.catalog.text[id];
+      if (!c?.included || id === from || this.isLimited(id)) continue;
+      const p = this.providers.get(id);
+      if (!p || !(await p.available()).ok) continue;
+      for (const m of c.models || []) if (m.id !== 'fable') opts.push({ provider: id, model: m.id || '', tier: m.tier || 'media', included: true });
+    }
+    if (!opts.length) return null;
+    const o = pickByTier(opts, tier);
+    return { provider: o.provider, model: o.model, tier: o.tier, why: `il piano ${this.planLabel(from)} ha finito i limiti d'uso` };
+  }
+  async handlePlanLimit(t, req, agent, lim, err) {
+    const from = lim.provider || t.ranWith || agent.provider;
+    this.limits[from] = { until: lim.until, since: now() };
+    this.store.save();
+    const imgPlan = ['art', 'avatars', 'office_paint'].includes(t.kind) && req.imageChoice === 'plan';
+    const alt = imgPlan ? null : await this.freeAlternative(t, req, from).catch(() => null);
+    const when = this.whenText(lim.until);
+    const say = (text) => this.chat('agent', text, { agentId: 'strategist', requestId: req.id, taskId: t.id, kind: 'agent-update' });
+    if (alt) {
+      req.providerSwap = { from, to: alt };
+      this.setTask(t, { status: 'PENDING', strategy: alt, lastError: truncate(err, 600), attempt: Math.max(0, t.attempt - 1) }, `piano ${this.planLabel(from)} esaurito: passo a ${this.modelLabel(alt)}`);
+      this.agents.setStatus(agent.id, 'IDLE', { task: null, text: 'cambio modello e riparto' });
+      say(`Il piano ${this.planLabel(from)} ha finito i limiti d'uso (si rinnova ${when}). ${agent.name} continua «${t.title}» con ${this.modelLabel(alt)}, incluso nel tuo abbonamento. Niente da fare per te.`);
+    } else {
+      this.setTask(t, { status: 'PENDING', notBefore: lim.until, lastError: truncate(err, 600), attempt: Math.max(0, t.attempt - 1) }, `aspetta il rinnovo del piano ${this.planLabel(from)} (${when})`);
+      this.setRequest(req, { status: 'RUNNING', escalation: null, waitingLimit: { provider: from, label: this.planLabel(from), until: lim.until } });
+      this.agents.setStatus(agent.id, 'WAITING', { task: t, text: `riparto ${when}: piano ${this.planLabel(from)} esaurito`, semantic: 'agent.waiting' });
+      say(`Il piano ${this.planLabel(from)} ha finito i limiti d'uso. «${t.title}» ${imgPlan ? 'usa le immagini disegnate con quel piano e ' : ''}non ha un'alternativa gratuita: riparte da sola ${when}. Niente da fare per te${imgPlan ? ' (se non vuoi aspettare: «Riprova» con un generatore a pagamento)' : ''}.`);
+      this.armWake(lim.until);
+    }
+    this.schedule();
+  }
+  armWake(iso) {
+    const ms = Math.max(1000, Date.parse(iso) - Date.now() + 5000);
+    setTimeout(() => this.schedule(), Math.min(ms, 2 ** 31 - 1)).unref?.();
+  }
+  // all'avvio: le richieste fermate in passato per i limiti d'uso si sistemano da sole
+  async recoverPlanLimits() {
+    for (const req of Object.values(this.S.requests)) {
+      if (req.status !== 'NEEDS_USER' || !req.escalation || req.quotePending) continue;
+      const failed = this.tasksOf(req.id).filter((t) => t.status === 'FAILED' && this.planLimitOf(t.lastError));
+      if (!failed.length) continue;
+      this.setRequest(req, { status: 'RUNNING', escalation: null });
+      // i task che erano stati annullati solo perché dipendevano da quello fermo tornano in coda
+      for (const x of this.tasksOf(req.id)) if (x.status === 'CANCELLED' && /da cui dipende|passata all'utente/.test((x.log || []).at(-1)?.text || '')) this.setTask(x, { status: 'PENDING' }, 'di nuovo in coda: il task da cui dipende riparte');
+      for (const t of failed) await this.handlePlanLimit(t, req, this.agents.get(t.agentId), this.planLimitOf(t.lastError), t.lastError).catch(() => {});
+    }
+    for (const t of Object.values(this.S.tasks)) if (t.status === 'PENDING' && t.notBefore) this.armWake(t.notBefore);
+  }
+
   get S() { return this.store.data; }
   get uploadsDir() { return path.join(this.dataDir, 'uploads'); }
   attachOpts(req) {
@@ -216,6 +299,7 @@ export class Orchestrator {
     this.schedule();
     this.wakeFollowups();
     setTimeout(() => this.recheckStuck(), 1500);
+    this.recoverPlanLimits().catch(() => {});
   }
 
   // ─── chat ──────────────────────────────────────────────────────────────────────────────────────
@@ -760,7 +844,7 @@ export class Orchestrator {
       // nello stesso worktree: chi scrive lavora da solo; chi legge (analisi, QA) può stare in parallelo con altri lettori
       let writeBusy = tasks.some((t) => t.status === 'RUNNING' && t.writes);
       let readBusy = tasks.some((t) => t.status === 'RUNNING' && !t.writes);
-      for (const t of tasks.filter((x) => x.status === 'PENDING')) {
+      for (const t of tasks.filter((x) => x.status === 'PENDING' && !(x.notBefore && Date.parse(x.notBefore) > Date.now()))) {
         const deps = t.dependsOn.map((d) => this.S.tasks[d]).filter(Boolean);
         if (deps.some((d) => d.status === 'CANCELLED' || (d.status === 'FAILED' && !d.superseded))) {
           this.setTask(t, { status: 'CANCELLED' }, 'annullato: un task da cui dipende è fallito');
@@ -803,7 +887,13 @@ export class Orchestrator {
     // secondo tentativo dopo un errore, o giro di correzione dopo un test fallito: si sale di un gradino (sonnet → opus → fable)
     const LADDER = { haiku: 'sonnet', sonnet: 'opus', opus: 'fable' };
     if (s && s.provider === 'claude-code' && LADDER[s.model] && (t.attempt >= 1 || (t.kind === 'fix' && (t.loop || 0) >= 2))) s = { ...s, model: LADDER[s.model], why: 'sale di livello dopo un tentativo non riuscito' };
+    // un fornitore che ha finito i limiti d'uso: si usa l'alternativa già scelta dallo Stratega per questa richiesta
+    const sw = req?.providerSwap;
+    if (sw && this.isLimited(sw.from) && (s?.provider || base.provider) === sw.from) s = sw.to;
+    if (req?.waitingLimit) this.setRequest(req, { waitingLimit: null });
+    if (t.notBefore) t.notBefore = null;
     const agent = s ? { ...base, provider: s.provider || base.provider, model: s.model ?? base.model } : base;
+    t.ranWith = agent.provider;
     const ctrl = new AbortController();
     this.setTask(t, { status: 'RUNNING', startedAt: now(), attempt: t.attempt + 1, usedModel: s ? this.modelLabel(s) : null }, `avviato (tentativo ${t.attempt + 1})${s ? ` · ${this.modelLabel(s)}` : ''}`);
     clearTimeout(this.idleTimers.get(agent.id));
@@ -1278,6 +1368,9 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
         this.escalate(req, res.error, false, t, { ask: true });
         return;
       }
+      const lim = !res.blocked && t.kind !== 'sfx' && this.planLimitOf(res.error);
+      if (lim && !lim.provider && this.catalog.text[t.ranWith]?.included) lim.provider = t.ranWith;
+      if (lim && lim.provider) { this.handlePlanLimit(t, req, agent, lim, res.error).catch((e) => this.escalate(req, `${agent.name}: ${truncate(String(e), 300)}`, false)); return; }
       const canRetry = !res.blocked && !noCredit && t.attempt <= (this.config.maxTaskRetries ?? 1);
       if (canRetry) {
         this.setTask(t, { status: 'PENDING', lastError: truncate(res.error, 2000) }, `errore, riprovo: ${truncate(res.error, 300)}`);
