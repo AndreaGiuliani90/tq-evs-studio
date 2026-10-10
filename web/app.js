@@ -96,7 +96,7 @@ function onEvent(e) {
   if (t === 'studio.warning') toast(e.text, true);
   if (t === 'office.updated') loadOffice().catch(() => {});
   if (t === 'releases.updated' && $('#modal-box')?.querySelector('h2')?.textContent === 'Registro delle unioni') openModal('releases');
-  if (t === 'backlog.updated') { S.backlog = e.backlog; S.office?.setBoards({ backlog: e.backlog }); if ($('#backlog-box')) openModal('backlog'); }
+  if (t === 'backlog.updated') { S.backlog = e.backlog; S.office?.setBoards({ backlog: e.backlog }); if ($('#backlog-box') && !document.activeElement?.closest('#backlog-box form')) { const sl = $('.fl-wrap')?.scrollLeft || 0; openModal('backlog').then?.(() => { const w = $('.fl-wrap'); if (w) w.scrollLeft = sl; }); } }
   if ((t === 'task.updated' && ['DONE', 'FAILED'].includes(e.task?.status)) || t === 'agent.updated') refreshTeam();
   if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
   if (!['agent.status', 'task.updated', 'agent.updated'].includes(t)) { S.log.unshift(e); if (S.log.length > 300) S.log.pop(); renderLog(); }
@@ -629,6 +629,109 @@ function drawerLive(a) {
 }
 
 // ─── finestre ────────────────────────────────────────────────────────────────────────────────────
+// ─── LAVAGNA DA FARE come diagramma: un ramo per riga, le attività in fila da sinistra a destra ─────
+// Nello stesso ramo si va in sequenza (una alla volta, sullo stesso branch); rami diversi vanno in parallelo.
+// Ogni blocco dice se si può avviare adesso e, se no, perché.
+const LANE_HUES = [330, 190, 45, 140, 265, 15, 95, 210];
+function flowLayout(g) {
+  const nodes = g.nodes.map((n) => ({ ...n }));
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  // per ramo si tengono le ultime 2 fatte; le altre diventano un contatore all'inizio della riga
+  const hiddenDone = {};
+  for (const lane of g.lanes) {
+    const done = nodes.filter((n) => n.lane === lane && n.status === 'fatto');
+    for (const n of done.slice(0, Math.max(0, done.length - 2))) { n.hidden = true; hiddenDone[lane] = (hiddenDone[lane] || 0) + 1; }
+  }
+  const vis = nodes.filter((n) => !n.hidden);
+  const lanes = g.lanes.filter((l) => vis.some((n) => n.lane === l)).sort((a, b) => {
+    const score = (l) => { const ns = vis.filter((n) => n.lane === l); return ns.some((n) => n.status === 'in corso') ? 0 : ns.some((n) => n.canStart) ? 1 : ns.some((n) => n.status === 'da fare') ? 2 : 3; };
+    return score(a) - score(b);
+  });
+  const level = {};
+  const lv = (n, seen = new Set()) => { if (level[n.id] != null) return level[n.id]; if (seen.has(n.id)) return 0; seen.add(n.id); const ds = n.deps.map((d) => byId[d]).filter((d) => d && !d.hidden); return (level[n.id] = ds.length ? Math.max(...ds.map((d) => lv(d, seen))) + 1 : 0); };
+  vis.forEach((n) => lv(n));
+  const NW = 214, NH = 112, CW = 248, RH = 144, LW = 132, PAD = 14;
+  for (const n of vis) { n.x = LW + PAD + level[n.id] * CW; n.y = PAD + lanes.indexOf(n.lane) * RH; }
+  const W = LW + PAD * 2 + (Math.max(0, ...vis.map((n) => level[n.id])) + 1) * CW, H = PAD * 2 + lanes.length * RH - (RH - NH);
+  return { vis, byId, lanes, hiddenDone, NW, NH, RH, LW, PAD, W, H };
+}
+function flowState(n) {
+  if (n.status === 'fatto') return n.merged ? ['done', '✔ fatta · nel gioco'] : ['done pending', '✔ fatta · da unire'];
+  if (n.status === 'in corso') return ['doing', `⚙ in corso${n.lastRequestId ? ' · ' + n.lastRequestId : ''}`];
+  return n.canStart ? ['ready', '▶ si può avviare'] : ['blocked', '🔒 non ancora'];
+}
+function flowHTML(g) {
+  if (!g.nodes.length) return `<p class="muted">Lavagna vuota. Chiedi alla Regia, per esempio «programmate le prossime attività per il secondo rione»: le organizza in rami (filoni che vanno avanti in parallelo) con le loro dipendenze.</p>`;
+  const L = flowLayout(g);
+  const hue = (lane) => LANE_HUES[g.lanes.indexOf(lane) % LANE_HUES.length];
+  const ready = g.nodes.filter((n) => n.canStart);
+  const doing = g.nodes.filter((n) => n.status === 'in corso');
+  const toMerge = [...new Map(g.nodes.filter((n) => n.status === 'fatto' && !n.merged && n.lastRequestId && S.requests[n.lastRequestId] && !S.requests[n.lastRequestId].merged && !S.requests[n.lastRequestId].discarded).map((n) => [n.lastRequestId, n])).values()];
+  const head = `<div class="fl-sum">
+    ${ready.length ? `<div><b>Puoi avviare adesso ${ready.length === 1 ? 'questa' : `queste ${ready.length}`}</b>${ready.length > 1 ? ' — vanno in parallelo, ognuna sul suo branch' : ''}: ${ready.map((n) => `<button class="fl-chip" data-fl-sel="${esc(n.id)}" style="--h:${hue(n.lane)}">${esc(n.id)} · ${esc(n.lane)}</button>`).join(' ')}
+      ${ready.length > 1 ? `<button class="btn sm primary" data-fl-all>▶ Avvia tutte (${ready.length})</button>` : `<button class="btn sm primary" data-fl-start="${esc(ready[0].id)}">▶ Avvia ${esc(ready[0].id)}</button>`}</div>`
+      : `<div><b>Niente da avviare adesso.</b> ${doing.length ? `In corso: ${doing.map((n) => esc(n.id)).join(', ')}.` : ''}</div>`}
+    ${toMerge.length ? `<div class="muted">Fatte ma non ancora nel gioco: ${toMerge.map((n) => `${esc(n.id)} (${esc(n.lastRequestId)})`).join(', ')}. Le attività di altri rami che dipendono da loro partono dopo l'unione.</div>` : ''}
+    <div class="fl-legend"><span class="lg done">✔ fatta</span><span class="lg doing">⚙ in corso</span><span class="lg ready">▶ si può avviare</span><span class="lg blocked">🔒 non ancora</span><span class="lg"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="currentColor" stroke-width="2"/></svg> stesso ramo, in fila</span><span class="lg"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="5 4"/></svg> serve il risultato di un altro ramo</span></div></div>`;
+  const edges = [];
+  for (const n of L.vis) for (const d of n.deps) {
+    const a = L.byId[d]; if (!a || a.hidden) continue;
+    const x1 = a.x + L.NW, y1 = a.y + L.NH / 2, x2 = n.x, y2 = n.y + L.NH / 2, mx = (x1 + x2) / 2;
+    const cross = a.lane !== n.lane;
+    edges.push(`<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 6},${y2}" class="fe ${cross ? 'cross' : ''} ${a.status === 'fatto' ? 'ok' : ''}" marker-end="url(#fa${cross ? 'c' : ''})"/>`);
+  }
+  const bands = L.lanes.map((l, i) => `<div class="fl-lane" style="top:${L.PAD + i * L.RH - 10}px;height:${L.NH + 20}px;--h:${hue(l)}"><div class="fl-lname">${esc(l)}${L.hiddenDone[l] ? `<span>+${L.hiddenDone[l]} già fatte</span>` : ''}</div></div>`).join('');
+  const nodes = L.vis.map((n) => {
+    const [cls, label] = flowState(n);
+    const who = n.agent && S.agents[n.agent] ? esc(S.agents[n.agent].name) : '';
+    const foot = n.status === 'da fare' && n.canStart ? `<button class="btn sm primary" data-fl-start="${esc(n.id)}">▶ Avvia</button><span class="fl-mode">${n.mode === 'seguito' ? `continua il branch di ${esc(n.from)}` : 'branch nuovo'}</span>`
+      : n.status === 'da fare' ? `<span class="fl-why" title="${esc(n.why || '')}">${esc(n.why || '')}</span>`
+      : n.status === 'in corso' ? `<button class="tt-link" data-goto="${esc(n.lastRequestId || n.requestId || '')}">segui in chat</button>`
+      : !n.merged && n.lastRequestId && S.requests[n.lastRequestId] && !S.requests[n.lastRequestId].discarded ? `<button class="btn sm" data-act="merge" data-req="${esc(n.lastRequestId)}">Unisci ${esc(n.lastRequestId)}</button>` : '';
+    return `<div class="fn ${cls}" data-fl-sel="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${L.NW}px;height:${L.NH}px;--h:${hue(n.lane)}">
+      <div class="fn-top"><b>${esc(n.id)}</b><span class="fn-st">${esc(label)}</span></div>
+      <div class="fn-title" title="${esc(n.title)}">${esc(n.title)}</div>
+      <div class="fn-foot">${foot}${who ? `<span class="fn-who">${who}${n.priority === 'alta' ? ' · ❗' : ''}</span>` : ''}</div></div>`;
+  }).join('');
+  return `${head}<div class="fl-wrap"><div class="fl" style="width:${L.W}px;height:${L.H}px">${bands}
+    <svg class="fl-svg" width="${L.W}" height="${L.H}"><defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9d92c2"/></marker><marker id="fac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#3fe0d0"/></marker></defs>${edges.join('')}</svg>${nodes}</div></div>`;
+}
+function flowForm(n = null) {
+  const g = S.backlog?.graph || { lanes: [], nodes: [] };
+  const agentOpts = (sel) => `<option value="">—</option>${Object.values(S.agents).filter((a) => a.enabled !== false && a.id !== 'director').map((a) => `<option value="${esc(a.id)}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}`;
+  return `<form class="form fl-form" data-fl-form="${esc(n?.id || '')}">
+    <label>Attività <input name="title" value="${esc(n?.title || '')}" required></label>
+    <div class="row-wrap"><label>Ramo <input name="lane" list="fl-lanes" value="${esc(n?.lane || '')}" placeholder="es. Grafica, Audio"></label>
+    <label>Dopo (altri rami) <input name="after" value="${esc((n?.after || []).join(', '))}" placeholder="es. B-3, B-5"></label>
+    <label>Chi <select name="agent">${agentOpts(n?.agent)}</select></label>
+    <label>Priorità <select name="priority">${['alta', 'media', 'bassa'].map((p) => `<option ${(n?.priority || 'media') === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label></div>
+    <label>Dettagli <textarea name="details" rows="2">${esc(n?.details || '')}</textarea></label>
+    <datalist id="fl-lanes">${g.lanes.map((l) => `<option value="${esc(l)}">`).join('')}</datalist>
+    <div class="row-wrap"><button class="btn primary">${n ? 'Salva' : 'Aggiungi'}</button>${n && n.status !== 'fatto' && n.status !== 'in corso' ? `<button type="button" class="btn danger" data-fl-drop="${esc(n.id)}">Togli dalla lavagna</button>` : ''}</div></form>`;
+}
+function showFlowDetail(id) {
+  const n = (S.backlog?.graph?.nodes || []).find((x) => x.id === id); const box = $('#fl-detail'); if (!n || !box) return;
+  S.flSel = id;
+  for (const el of document.querySelectorAll('.fn')) el.classList.toggle('sel', el.dataset.flSel === id);
+  const [, label] = flowState(n);
+  box.innerHTML = `<div class="fl-det"><div class="fl-det-h"><b>${esc(n.id)}</b> · ramo «${esc(n.lane)}» · ${esc(label)}${n.why && n.status === 'da fare' ? ` — <span class="muted">${esc(n.why)}</span>` : ''}</div>
+    ${n.status === 'da fare' && n.canStart ? `<p>Si può avviare: ${n.mode === 'seguito' ? `continua il branch di <b>${esc(n.from)}</b> (parte dal suo risultato; alla fine unisci solo l'ultima)` : 'parte su un <b>branch nuovo</b> dal gioco attuale, in parallelo agli altri rami'}. <button class="btn sm primary" data-fl-start="${esc(n.id)}">▶ Avvia ${esc(n.id)}</button></p>` : ''}
+    ${flowForm(n)}</div>`;
+  wireFlow(box);
+}
+function wireFlow(root = document) {
+  for (const x of root.querySelectorAll('[data-fl-start]')) x.onclick = act(async (ev) => { ev.stopPropagation(); await api('POST', `/api/backlog/${x.dataset.flStart}/start`); toast(`${x.dataset.flStart} avviata: segui la Regia in chat.`); });
+  for (const x of root.querySelectorAll('[data-fl-all]')) x.onclick = act(async () => { const r = await api('POST', '/api/backlog/start-ready'); toast(`Avviate: ${r.started.join(', ') || 'nessuna'}.`); });
+  for (const x of root.querySelectorAll('[data-fl-sel]')) x.onclick = (ev) => { if (ev.target.closest('button,a')) return; showFlowDetail(x.dataset.flSel); };
+  for (const x of root.querySelectorAll('[data-fl-drop]')) x.onclick = act(async () => { if (confirm(`Togliere ${x.dataset.flDrop} dalla lavagna?`)) await api('DELETE', `/api/backlog/${x.dataset.flDrop}`); });
+  for (const f of root.querySelectorAll('[data-fl-form]')) f.onsubmit = act(async (ev) => {
+    ev.preventDefault(); const d = Object.fromEntries(new FormData(f));
+    const body = { title: d.title, lane: d.lane, after: d.after, agent: d.agent || null, priority: d.priority, details: d.details };
+    if (f.dataset.flForm) await api('PUT', `/api/backlog/${f.dataset.flForm}`, body); else { await api('POST', '/api/backlog', body); f.reset(); }
+  });
+  if (root === document && S.flSel) showFlowDetail(S.flSel);
+}
+
 function modal(html) { $('#modal-box').innerHTML = `<button class="btn sm close" data-act="close">✕</button>${html}`; paintPortraits($('#modal-box')); $('#modal').classList.remove('hidden'); }
 function closeModal() { $('#modal').classList.add('hidden'); }
 $('#modal').onclick = (ev) => { if (ev.target.id === 'modal') closeModal(); };
@@ -670,17 +773,11 @@ async function openModal(which) {
     return;
   }
   if (which === 'backlog') {
-    const b = S.backlog || { open: [], done: [] };
-    const ag = (id) => (id && S.agents[id] ? esc(S.agents[id].name) : '<span class="muted">—</span>');
-    const agentOpts = (sel) => `<option value="">—</option>${Object.values(S.agents).filter((a) => a.enabled !== false && a.id !== 'director').map((a) => `<option value="${esc(a.id)}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}`;
-    modal(`<div id="backlog-box"><h2>Lavagna DA FARE</h2><p class="muted">Le attività concordate con la squadra. Per riempirla chiedi alla Regia, per esempio «programmate le prossime attività per il secondo rione». Non partono da sole: le avvii tu.</p>
-      <table class="costs backlog"><tbody>${b.open.map((i) => `<tr class="${i.status === 'in corso' ? 'doing' : ''}"><td><b>${esc(i.id)}</b></td><td>${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details.slice(0, 220))}</div>` : ''}</td><td>${ag(i.agent)}</td><td><span class="prio p-${esc(i.priority)}">${esc(i.priority)}</span></td>
-        <td class="num">${i.status === 'in corso' ? `<span class="muted">in corso · ${esc(i.requestId || '')}</span>` : `<button class="btn sm primary" data-bl-start="${esc(i.id)}">Avvia</button> <button class="btn sm" data-bl-drop="${esc(i.id)}" title="Togli dalla lista">✕</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Lista vuota.</td></tr>'}</tbody></table>
-      <form id="bl-add" class="form row-wrap"><input name="title" placeholder="Nuova attività" required style="flex:1"><select name="agent">${agentOpts()}</select><select name="priority"><option>alta</option><option selected>media</option><option>bassa</option></select><button class="btn">Aggiungi</button></form>
-      ${b.done.length ? `<h3>Fatte di recente</h3><ul class="muted small">${b.done.map((i) => `<li>✔ ${esc(i.id)} ${esc(i.title)}</li>`).join('')}</ul>` : ''}</div>`);
-    for (const x of document.querySelectorAll('[data-bl-start]')) x.onclick = act(async () => { await api('POST', `/api/backlog/${x.dataset.blStart}/start`); closeModal(); toast(`${x.dataset.blStart} avviata: segui la Regia in chat.`); });
-    for (const x of document.querySelectorAll('[data-bl-drop]')) x.onclick = act(async () => { if (confirm(`Togliere ${x.dataset.blDrop} dalla lista?`)) await api('DELETE', `/api/backlog/${x.dataset.blDrop}`); });
-    $('#bl-add').onsubmit = act(async (ev) => { ev.preventDefault(); const f = new FormData(ev.target); await api('POST', '/api/backlog', { title: f.get('title'), agent: f.get('agent') || null, priority: f.get('priority') }); });
+    const b = S.backlog || { open: [], done: [], graph: { lanes: [], nodes: [] } };
+    modal(`<div id="backlog-box"><h2>Lavagna DA FARE</h2>${flowHTML(b.graph || { lanes: [], nodes: [] })}
+      <div id="fl-detail"></div>
+      <details class="fl-add"><summary>＋ Aggiungi un'attività</summary>${flowForm()}</details></div>`);
+    wireFlow();
     return;
   }
   if (which === 'team') {

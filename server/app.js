@@ -245,10 +245,15 @@ export function createServer(studio) {
     ['GET', /^\/api\/git$/, async () => ({ available: await git.available(), status: await git.status(), commits: await git.recentCommits(15) })],
     ['GET', /^\/api\/costs$/, async () => orch.costs.summary()],
     ['GET', /^\/api\/backlog$/, async () => orch.backlog.summary()],
-    ['POST', /^\/api\/backlog$/, async (m, b) => orch.backlog.add({ title: b.title, agent: b.agent, priority: b.priority, details: b.details, source: 'utente' })],
+    ['POST', /^\/api\/backlog$/, async (m, b) => orch.backlog.add({ title: b.title, agent: b.agent, priority: b.priority, details: b.details, lane: b.lane, after: b.after, source: 'utente' })],
     ['PUT', /^\/api\/backlog\/(B-\d+)$/, async (m, b) => orch.backlog.update(m[1], b || {})],
     ['DELETE', /^\/api\/backlog\/(B-\d+)$/, async (m) => orch.backlog.remove(m[1])],
     ['POST', /^\/api\/backlog\/(B-\d+)\/start$/, async (m) => orch.startBacklogItem(m[1])],
+    ['POST', /^\/api\/backlog\/start-ready$/, async () => {
+      const started = [];
+      for (const n of orch.backlog.graph().nodes) { const it = orch.backlog.get(n.id); if (it && orch.backlog.canStart(it).ok) { await orch.startBacklogItem(it.id); started.push(it.id); } }
+      return { started };
+    }],
     ['GET', /^\/api\/team$/, async () => orch.performance()],
     ['GET', /^\/api\/releases$/, async () => orch.release.summary()],
     ['GET', /^\/api\/client-log$/, async (m, b, q) => { try { fs.appendFileSync(path.join(dataDir, 'client-errors.log'), `${new Date().toISOString()} ${String(q?.get?.('m') || '').slice(0, 800).replace(/\n/g, ' ')}\n`); } catch { /* niente */ } return { ok: true }; }],

@@ -489,8 +489,18 @@ export class Orchestrator {
     const it = this.backlog.get(id);
     if (!it) throw new Error(`attività sconosciuta: ${id}`);
     if (it.status === 'in corso' && it.requestId) throw new Error(`${it.id} è già in corso (${it.requestId})`);
-    const text = `Esegui l'attività ${it.id} della lavagna DA FARE: ${it.title}.${it.details ? `\n${it.details}` : ''}${it.agent ? `\n(concordata con ${this.agentName(it.agent)})` : ''}`;
+    const can = this.backlog.canStart(it);
+    if (!can.ok) throw new Error(`${it.id} non si può ancora avviare: ${can.why}`);
+    const text = `Esegui l'attività ${it.id} della lavagna DA FARE (ramo «${this.backlog.laneOf(it)}»): ${it.title}.${it.details ? `\n${it.details}` : ''}${it.agent ? `\n(concordata con ${this.agentName(it.agent)})` : ''}`;
     if (!echoed) this.chat('user', `▶ Avvia ${it.id}: ${it.title}`);
+    // stesso ramo, l'attività prima è finita ma non ancora unita: si continua il suo branch (parte dal suo risultato)
+    if (can.mode === 'seguito' && this.S.requests[can.from]) {
+      const fr = this.followUp(this.S.requests[can.from], text, []);
+      fr.backlogId = it.id;
+      this.store.save();
+      this.backlog.update(it.id, { status: 'in corso', requestId: fr.id });
+      return fr;
+    }
     const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [], backlogId: it.id };
     this.S.requests[req.id] = req;
     this.store.save();
@@ -509,6 +519,7 @@ export class Orchestrator {
     if (['CANCELLED', 'DONE', 'ANSWERED'].includes(req.status) || (req.status === 'RUNNING' && patch.status)) this.clearStaleStatus(req);
     if (['CANCELLED', 'DONE', 'FAILED'].includes(req.status)) this.backlog?.onRequest(req);
     if (Object.values(this.S.requests).some((r) => r.status === 'QUEUED')) this.wakeFollowups();
+    if ('merged' in patch && this.backlog?.list().some((i) => i.requestId)) this.backlog.emit();
     if (req.sameBranch && ['ANSWERED', 'CANCELLED', 'FAILED'].includes(req.status)) this.releaseOrphans();
   }
 
@@ -560,9 +571,11 @@ export class Orchestrator {
   async startPlan(req, plan) {
     {
       if (plan.backlog?.length || plan.backlogDone?.length) {
-        const added = plan.backlog.map((b) => this.backlog.add({ ...b, source: req.id }));
+        // "after" può citare chiavi di questo stesso piano (k1, k2…) o attività già in lavagna (B-3)
+        const keyTo = {};
+        const added = plan.backlog.map((b) => { const it = this.backlog.add({ ...b, after: b.after.map((a) => keyTo[a] || a), source: req.id }); keyTo[b.key] = it.id; return it; });
         const dropped = plan.backlogDone.map((id) => { try { return this.backlog.remove(id); } catch { return null; } }).filter(Boolean);
-        const lines = [...added.map((i) => `• **${i.id}** ${i.title}${i.agent ? ` — ${this.agentName(i.agent)}` : ''} _(${i.priority})_`), ...dropped.map((i) => `• ~~${i.id} ${i.title}~~ tolta`)];
+        const lines = [...added.map((i) => `• **${i.id}** ${i.title}${i.agent ? ` — ${this.agentName(i.agent)}` : ''} _(ramo ${i.lane}${i.after?.length ? `, dopo ${i.after.join(', ')}` : ''})_`), ...dropped.map((i) => `• ~~${i.id} ${i.title}~~ tolta`)];
         if (!plan.tasks.length) plan.reply = `${plan.reply || 'Ho aggiornato la lista.'}\n\n**Lavagna DA FARE:**\n${lines.join('\n')}\n\nPer avviarne una: pulsante sulla lavagna oppure scrivi «avvia ${added[0]?.id || 'B-1'}».`;
       }
       if (!plan.tasks.length) {
@@ -758,7 +771,7 @@ export class Orchestrator {
 
   normalizePlan(plan, raw) {
     const out = { reply: String(plan.reply || ''), needsUser: !!plan.needsUser, tasks: [] };
-    out.backlog = (Array.isArray(plan.backlog) ? plan.backlog : []).slice(0, 20).filter((b) => b && b.title).map((b) => ({ title: clip(b.title, 160), agent: this.agents.get(b.agent) ? b.agent : null, priority: b.priority, details: String(b.details || b.instructions || '') }));
+    out.backlog = (Array.isArray(plan.backlog) ? plan.backlog : []).slice(0, 20).filter((b) => b && b.title).map((b, i) => ({ key: String(b.key || `k${i + 1}`), title: clip(b.title, 160), agent: this.agents.get(b.agent) ? b.agent : null, priority: b.priority, details: String(b.details || b.instructions || ''), lane: b.lane ? clip(String(b.lane), 40) : null, after: Array.isArray(b.after) ? b.after.map(String) : [] }));
     out.backlogDone = (Array.isArray(plan.backlogRemove) ? plan.backlogRemove : []).map(String);
     const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
     const keys = new Set();

@@ -237,7 +237,16 @@ Sulla parete destra ci sono altre due lavagne (passaci sopra col cursore per il 
 - **DA FARE**: chiedi alla Regia di *programmare le prossime attività* (es. «programmate il lavoro per il secondo
   rione»): la squadra concorda una lista di attività piccole e concrete, con chi le fa e la priorità, e le appende come
   post-it. Non partono da sole: premi **Avvia** sulla lavagna o scrivi «avvia B-3». Quando la richiesta finisce
-  l'attività si spunta da sola. Puoi anche aggiungerne o toglierne a mano.
+  l'attività si spunta da sola. Puoi anche aggiungerne o toglierne a mano. Si apre anche dal pulsante **Attività**.
+  La lavagna è un diagramma a **rami**: un ramo per riga, le attività in fila da sinistra a destra.
+  - **Stesso ramo = in fila.** Si avvia un'attività alla volta. La successiva continua il branch della precedente
+    (parte dal suo risultato), così alla fine unisci una volta sola.
+  - **Rami diversi = in parallelo.** Ognuno sul suo branch dal gioco attuale. Il Notaio li unisce al gioco uno alla
+    volta. **Avvia tutte** le fa partire insieme.
+  - **Frecce tratteggiate = serve il risultato di un altro ramo.** Quell'attività parte solo quando l'altra è entrata
+    nel gioco (unita).
+  - Ogni blocco dice se è fatta (nel gioco o da unire), in corso, avviabile, oppure perché non ancora. Cliccandolo
+    puoi cambiare ramo, dipendenze, chi la fa e la priorità.
 - **SQUADRA**: chi lavora di più (task completati, tempo) e chi lavora meglio (qualità = completati ÷ completati +
   falliti + rifatti perché il QA ha trovato problemi; per il QA trovare bug conta come lavoro ben fatto).
 

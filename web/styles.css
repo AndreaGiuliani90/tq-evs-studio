@@ -328,3 +328,46 @@ b.good { color: #5fd38a; } b.mid { color: #e0b050; } b.bad { color: #ff7a6a; }
 .out code { word-break: break-all; }
 .out-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .out-btns a.btn { text-decoration: none; }
+
+/* ─── Lavagna DA FARE: diagramma a rami ─── */
+#modal-box:has(#backlog-box) { width: min(1280px, 100%); }
+.fl-sum { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.fl-sum .btn { margin-left: 6px; }
+.fl-chip { border: 1px solid hsl(var(--h) 80% 60%); color: hsl(var(--h) 85% 72%); background: hsl(var(--h) 60% 50% / .12); border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+.fl-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); align-items: center; }
+.fl-legend .lg { display: inline-flex; gap: 5px; align-items: center; }
+.fl-legend .lg.done::before, .fl-legend .lg.doing::before, .fl-legend .lg.ready::before, .fl-legend .lg.blocked::before { content: ''; width: 12px; height: 12px; border-radius: 3px; border: 2px solid; }
+.lg.done::before { border-color: var(--green); background: rgba(123,216,143,.15); } .lg.doing::before { border-color: var(--yellow); background: rgba(255,209,102,.18); }
+.lg.ready::before { border-color: var(--pink); background: rgba(255,79,163,.2); } .lg.blocked::before { border-color: #5a5270; border-style: dashed; }
+.fl-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); max-height: 60vh; }
+.fl { position: relative; }
+.fl-svg { position: absolute; inset: 0; pointer-events: none; }
+.fe { fill: none; stroke: #6c6388; stroke-width: 2; }
+.fe.ok { stroke: #8a80ad; }
+.fe.cross { stroke: var(--cyan); stroke-dasharray: 6 5; opacity: .85; }
+.fl-lane { position: absolute; left: 0; right: 0; background: linear-gradient(90deg, hsl(var(--h) 60% 50% / .14), hsl(var(--h) 60% 50% / .03) 40%, transparent); border-top: 1px solid hsl(var(--h) 60% 50% / .25); }
+.fl-lname { position: sticky; left: 0; width: 124px; padding: 10px 10px; font-weight: 800; font-size: 13px; color: hsl(var(--h) 85% 74%); text-transform: uppercase; letter-spacing: .04em; line-height: 1.25; }
+.fl-lname span { display: block; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+.fn { position: absolute; box-sizing: border-box; border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; background: var(--panel2); border: 2px solid #4a4260; cursor: pointer; transition: transform .12s, box-shadow .12s; box-shadow: inset 4px 0 0 hsl(var(--h) 70% 60%); }
+.fn:hover { transform: translateY(-2px); }
+.fn.sel { outline: 2px solid #fff; outline-offset: 2px; }
+.fn-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; align-items: center; }
+.fn-st { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.fn-title { font-size: 13px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex: 1; }
+.fn-foot { display: flex; align-items: center; gap: 6px; font-size: 11.5px; min-height: 24px; }
+.fn-who { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.fn-why { color: var(--muted); }
+.fl-why { color: #b9b0d6; font-size: 11px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fl-mode { font-size: 10.5px; color: var(--muted); }
+.fn.done { border-color: var(--green); background: #1d2a26; opacity: .9; } .fn.done .fn-st { color: var(--green); }
+.fn.done.pending { border-style: dashed; } .fn.done.pending .fn-st { color: var(--yellow); }
+.fn.doing { border-color: var(--yellow); background: #2e2716; animation: fl-pulse 1.8s ease-in-out infinite; } .fn.doing .fn-st { color: var(--yellow); }
+.fn.ready { border-color: var(--pink); background: #2f1830; box-shadow: inset 4px 0 0 hsl(var(--h) 70% 60%), 0 0 0 4px rgba(255,79,163,.15), 0 6px 18px rgba(255,79,163,.18); } .fn.ready .fn-st { color: var(--pink); }
+.fn.blocked { border-style: dashed; border-color: #5a5270; background: #1c1828; color: #b4acd0; } .fn.blocked .fn-st { color: #8f86ad; }
+@keyframes fl-pulse { 50% { box-shadow: inset 4px 0 0 hsl(var(--h) 70% 60%), 0 0 0 5px rgba(255,209,102,.18); } }
+#fl-detail .fl-det { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; background: var(--panel2); }
+.fl-det-h { margin-bottom: 6px; }
+.fl-add { margin-top: 12px; } .fl-add summary { cursor: pointer; color: var(--pink); font-weight: 700; }
+.fl-form .row-wrap { gap: 8px; } .fl-form label { flex: 1; min-width: 140px; }
+.fn-foot .btn { white-space: nowrap; flex: none; padding: 3px 9px; }
+.fl-mode { line-height: 1.15; }

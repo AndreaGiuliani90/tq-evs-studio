@@ -62,8 +62,8 @@ Puoi leggere i file del repository (sei nella cartella del gioco) se ti serve pe
 - Una richiesta con più cose diverse va divisa fra gli agenti giusti: personaggi → Art (avatars, SOLO per gli agenti indicati), pianta/arredo/orientamento dei mobili → tipo office (Cosetta), comportamenti e animazioni del programma Studio → studio_ui, stile dello sfondo → Art (office_paint). Domande o decisioni che spettano all'utente (es. licenziare un agente) → fai tu la domanda in "reply" con needsUser, senza task per quella parte.
 - Se l'utente chiede un preventivo o quanto costa un lavoro, pianifica comunque i task come se dovessi farlo: lo Studio calcola il costo e chiede conferma PRIMA di eseguirli (non serve che tu stimi i costi).
 - Se invece è chiara (o l'utente ti ha detto di decidere tu), procedi senza domande.
-- PROGRAMMAZIONE: se l'utente ti chiede di programmare / pianificare / mettere in lista le prossime attività (e NON di eseguirle subito), confrontati con la squadra (in pratica: scegli tu, pensando a cosa direbbe ognuno) e NON creare tasks: metti le attività concordate in "backlog" (5-10 al massimo, ognuna piccola e concreta, con l'agente principale e la priorità alta|media|bassa) e riassumile in "reply". Se l'utente chiede di togliere attività dalla lista, mettine gli id in "backlogRemove".
-${backlog.length ? `Lavagna DA FARE attuale (non duplicare):\n${backlog.map((b) => `- ${b.id} [${b.status}, ${b.priority}] ${b.title}${b.agent ? ` (${b.agent})` : ''}`).join('\n')}` : 'Lavagna DA FARE attuale: vuota.'}
+- PROGRAMMAZIONE: se l'utente ti chiede di programmare / pianificare / mettere in lista le prossime attività (e NON di eseguirle subito), confrontati con la squadra (in pratica: scegli tu, pensando a cosa direbbe ognuno) e NON creare tasks: metti le attività concordate in "backlog" (5-10 al massimo, ognuna piccola e concreta, con l'agente principale e la priorità alta|media|bassa) e riassumile in "reply". Organizzale in RAMI ("lane"): un ramo è un filone che tocca file e sistemi suoi (es. "Grafica rione 2", "Audio", "Guardie"); nello stesso ramo le attività vanno in fila, nell'ordine in cui le scrivi; rami diversi devono poter procedere IN PARALLELO senza toccare gli stessi file. Se un'attività ha bisogno del risultato di un altro ramo, mettilo in "after" (la "key" di un'attività di questo piano, o l'id B-n di una già in lavagna). Non inventare dipendenze: meno ce ne sono, più si lavora in parallelo. Se l'utente chiede di togliere attività dalla lista, mettine gli id in "backlogRemove".
+${backlog.length ? `Lavagna DA FARE attuale (non duplicare):\n${backlog.map((b) => `- ${b.id} [${b.status}, ${b.priority}, ramo ${b.lane || 'Generale'}${b.after?.length ? `, dopo ${b.after.join(',')}` : ''}] ${b.title}${b.agent ? ` (${b.agent})` : ''}`).join('\n')}` : 'Lavagna DA FARE attuale: vuota.'}
 - Le richieste in parallelo lavorano in copie separate del gioco: non serve aspettare le altre. Se la nuova richiesta dipende da una in corso o la contraddice, dillo nella "reply".
 - "reply" è il messaggio breve (italiano, asciutto) che l'utente legge subito.
 
@@ -73,7 +73,7 @@ Rispondi con UN SOLO blocco JSON:
   {"key": "t1", "agent": "<id>", "kind": "implement", "title": "titolo breve", "instructions": "…", "dependsOn": []},
   {"key": "t2", "agent": "<id>", "kind": "test", "title": "…", "instructions": "cosa verificare", "dependsOn": ["t1"]}
 ]}
-(per la programmazione: "tasks": [] e "backlog": [{"title": "…", "agent": "<id>", "priority": "alta", "details": "cosa fare in pratica"}])
+(per la programmazione: "tasks": [] e "backlog": [{"key": "k1", "title": "…", "agent": "<id>", "priority": "alta", "lane": "nome del ramo", "after": [], "details": "cosa fare in pratica"}])
 \`\`\``;
 }
 

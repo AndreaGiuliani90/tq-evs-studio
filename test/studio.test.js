@@ -1200,3 +1200,56 @@ test('risultati da consegnare: export nel rapporto, scaricabile (cartella in zip
     assert.ok(rv.ok && rv.path.endsWith(path.join('export', 'pacco')));
   } finally { server.close(); }
 });
+
+test('lavagna a rami: nello stesso ramo una alla volta (continua il branch), rami diversi in parallelo, le dipendenze fra rami aspettano l\'unione', async () => {
+  const root = makeFixtureRepo();
+  let hold = {};
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') {
+      if (/programma/i.test(o.prompt) && !/Esegui l'attività/.test(o.prompt)) return { text: '```json\n' + JSON.stringify({ reply: 'Programmate.', tasks: [], backlog: [
+        { key: 'k1', title: 'Mappa rione 2', agent: 'level', lane: 'Rione 2' },
+        { key: 'k2', title: 'Arredi rione 2', agent: 'art', lane: 'Rione 2' },
+        { key: 'k3', title: 'Suoni rione 2', agent: 'audio', lane: 'Audio' },
+        { key: 'k4', title: 'Dialoghi nel rione 2', agent: 'narrative', lane: 'Testi', after: ['k1'] },
+      ] }) + '\n```' };
+      const w = ([...o.prompt.matchAll(/Esegui l'attività (B-\d+)/g)].pop() || [])[1] || 'x';
+      return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: `fai ${w}`, instructions: `ATTIVITA ${w}`, dependsOn: [] }]);
+    }
+    if (o.agent.id === 'dev') {
+      const w = (o.prompt.match(/ATTIVITA (B-\d+)/g) || []).pop().split(' ')[1];
+      if (hold[w] === true) await new Promise((r) => { hold[w] = r; });
+      fs.writeFileSync(path.join(o.cwd, `${w}.txt`), w);
+      return { text: '{"summary":"ok"}' };
+    }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov), { parallelPerAgent: 3 });
+  const o = s.orch, B = o.backlog;
+  await o.handleUserMessage('programma le prossime attività');
+  await waitFor(() => B.list().length === 4, 15000, 'lavagna');
+  const g0 = Object.fromEntries(B.graph().nodes.map((n) => [n.id, n]));
+  assert.deepEqual(g0['B-2'].deps, ['B-1']); assert.deepEqual(g0['B-4'].after, ['B-1']);
+  assert.ok(g0['B-1'].canStart && g0['B-3'].canStart, 'due rami diversi: si avviano insieme');
+  assert.ok(!g0['B-2'].canStart && /prima va fatta B-1/.test(g0['B-2'].why));
+  assert.ok(!g0['B-4'].canStart && /B-1/.test(g0['B-4'].why));
+  hold['B-1'] = true;
+  const started = await (async () => { const out = []; for (const n of B.graph().nodes) if (B.canStart(B.get(n.id)).ok) { await o.startBacklogItem(n.id); out.push(n.id); } return out; })();
+  assert.deepEqual(started, ['B-1', 'B-3']);
+  await waitFor(() => typeof hold['B-1'] === 'function', 15000, 'B-1 al lavoro');
+  assert.ok(/in corso B-1/.test(B.canStart(B.get('B-2')).why), 'stesso ramo occupato');
+  await assert.rejects(() => o.startBacklogItem('B-2'), /non si può ancora avviare/);
+  hold['B-1']();
+  await waitFor(() => B.get('B-1').status === 'fatto' && B.get('B-3').status === 'fatto', 20000, 'B-1 e B-3 fatte');
+  // B-2 continua il branch di B-1 (finita, non unita); B-4 (altro ramo) aspetta che B-1 entri nel gioco
+  const c2 = B.canStart(B.get('B-2'));
+  assert.equal(c2.mode, 'seguito');
+  assert.match(B.canStart(B.get('B-4')).why, /entri nel gioco/);
+  const r2 = await o.startBacklogItem('B-2');
+  const r1 = s.store.data.requests[B.get('B-1').requestId];
+  await waitFor(() => r2.status === 'DONE', 15000, 'B-2 DONE');
+  assert.equal(r2.branch, r1.branch, 'stesso branch');
+  assert.ok(fs.existsSync(path.join(r2.worktree, 'B-1.txt')) && fs.existsSync(path.join(r2.worktree, 'B-2.txt')));
+  await o.merge(r2.id);
+  assert.ok(B.graph().nodes.find((n) => n.id === 'B-1').merged, 'B-1 nel gioco (unita con B-2)');
+  assert.equal(B.canStart(B.get('B-4')).ok, true, 'ora il ramo Testi può partire, dal gioco che contiene B-1');
+});
