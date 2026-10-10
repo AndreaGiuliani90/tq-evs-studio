@@ -650,6 +650,12 @@ function flowLayout(g) {
   const level = {};
   const lv = (n, seen = new Set()) => { if (level[n.id] != null) return level[n.id]; if (seen.has(n.id)) return 0; seen.add(n.id); const ds = n.deps.map((d) => byId[d]).filter((d) => d && !d.hidden); return (level[n.id] = ds.length ? Math.max(...ds.map((d) => lv(d, seen))) + 1 : 0); };
   vis.forEach((n) => lv(n));
+  // nello stesso ramo i blocchi non si sovrappongono (le attività senza ramo stanno affiancate)
+  const lastCol = {};
+  for (const n of [...vis].sort((a, b) => level[a.id] - level[b.id] || a.id.localeCompare(b.id, undefined, { numeric: true }))) {
+    if (lastCol[n.lane] != null && level[n.id] <= lastCol[n.lane]) level[n.id] = lastCol[n.lane] + 1;
+    lastCol[n.lane] = level[n.id];
+  }
   const NW = 214, NH = 112, CW = 248, RH = 144, LW = 132, PAD = 14;
   for (const n of vis) { n.x = LW + PAD + level[n.id] * CW; n.y = PAD + lanes.indexOf(n.lane) * RH; }
   const W = LW + PAD * 2 + (Math.max(0, ...vis.map((n) => level[n.id])) + 1) * CW, H = PAD * 2 + lanes.length * RH - (RH - NH);
@@ -661,6 +667,7 @@ function flowState(n) {
   return n.canStart ? ['ready', '▶ si può avviare'] : ['blocked', '🔒 non ancora'];
 }
 function flowHTML(g) {
+  const legacy = g.nodes.some((n) => n.lane === 'Da organizzare' && n.status !== 'fatto');
   if (!g.nodes.length) return `<p class="muted">Lavagna vuota. Chiedi alla Regia, per esempio «programmate le prossime attività per il secondo rione»: le organizza in rami (filoni che vanno avanti in parallelo) con le loro dipendenze.</p>`;
   const L = flowLayout(g);
   const hue = (lane) => LANE_HUES[g.lanes.indexOf(lane) % LANE_HUES.length];
@@ -693,7 +700,7 @@ function flowHTML(g) {
       <div class="fn-title" title="${esc(n.title)}">${esc(n.title)}</div>
       <div class="fn-foot">${foot}${who ? `<span class="fn-who">${who}${n.priority === 'alta' ? ' · ❗' : ''}</span>` : ''}</div></div>`;
   }).join('');
-  return `${head}<div class="fl-wrap"><div class="fl" style="width:${L.W}px;height:${L.H}px">${bands}
+  return `${head}${legacy ? '<p class="muted small">Le attività «Da organizzare» sono nate prima dei rami e restano indipendenti. Per ordinarle scrivi alla Regia «organizza la lavagna in rami».</p>' : ''}<div class="fl-wrap"><div class="fl" style="width:${L.W}px;height:${L.H}px">${bands}
     <svg class="fl-svg" width="${L.W}" height="${L.H}"><defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9d92c2"/></marker><marker id="fac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#3fe0d0"/></marker></defs>${edges.join('')}</svg>${nodes}</div></div>`;
 }
 function flowForm(n = null) {

@@ -570,6 +570,8 @@ export class Orchestrator {
 
   async startPlan(req, plan) {
     {
+      const moved = (plan.backlogUpdate || []).map((u) => { try { return this.backlog.update(u.id, u); } catch { return null; } }).filter(Boolean);
+      if (moved.length && !plan.backlog?.length && !plan.backlogDone?.length && !plan.tasks.length) plan.reply = `${plan.reply || 'Ho riorganizzato la lavagna.'}\n\n${moved.map((i) => `• **${i.id}** → ramo ${i.lane}${i.after?.length ? `, dopo ${i.after.join(', ')}` : ''}`).join('\n')}`;
       if (plan.backlog?.length || plan.backlogDone?.length) {
         // "after" può citare chiavi di questo stesso piano (k1, k2…) o attività già in lavagna (B-3)
         const keyTo = {};
@@ -773,6 +775,7 @@ export class Orchestrator {
     const out = { reply: String(plan.reply || ''), needsUser: !!plan.needsUser, tasks: [] };
     out.backlog = (Array.isArray(plan.backlog) ? plan.backlog : []).slice(0, 20).filter((b) => b && b.title).map((b, i) => ({ key: String(b.key || `k${i + 1}`), title: clip(b.title, 160), agent: this.agents.get(b.agent) ? b.agent : null, priority: b.priority, details: String(b.details || b.instructions || ''), lane: b.lane ? clip(String(b.lane), 40) : null, after: Array.isArray(b.after) ? b.after.map(String) : [] }));
     out.backlogDone = (Array.isArray(plan.backlogRemove) ? plan.backlogRemove : []).map(String);
+    out.backlogUpdate = (Array.isArray(plan.backlogUpdate) ? plan.backlogUpdate : []).filter((u) => u && u.id).slice(0, 40).map((u) => ({ id: String(u.id).toUpperCase(), ...(u.lane ? { lane: clip(String(u.lane), 40) } : {}), ...(Array.isArray(u.after) ? { after: u.after.map(String) } : {}) }));
     const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
     const keys = new Set();
     for (const [i, t] of tasks.entries()) {

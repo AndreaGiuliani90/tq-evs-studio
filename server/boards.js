@@ -7,6 +7,7 @@ import { now } from './util.js';
 export const PRIORITIES = ['alta', 'media', 'bassa'];
 
 export const DEFAULT_LANE = 'Generale';
+export const LEGACY_LANE = 'Da organizzare';   // attività nate prima dei rami: restano indipendenti
 
 // RAMI E DIPENDENZE. Un ramo è un filone di lavoro: nello stesso ramo le attività vanno in fila (ognuna parte dal
 // risultato della precedente, sullo stesso branch); rami diversi lavorano in parallelo su branch separati e il Notaio
@@ -61,9 +62,10 @@ export class Backlog {
     else if (['CANCELLED', 'FAILED'].includes(req.status) && it.status === 'in corso') this.update(it.id, { status: 'da fare', requestId: null });
   }
 
-  laneOf(it) { return it.lane || DEFAULT_LANE; }
+  laneOf(it) { return it.lane || LEGACY_LANE; }
   // l'attività prima di questa nello stesso ramo (le scartate non contano)
   prevInLane(it) {
+    if (!it.lane) return null;
     const same = this.data.items.filter((x) => this.laneOf(x) === this.laneOf(it) && x.status !== 'scartato');
     const i = same.indexOf(it);
     return i > 0 ? same[i - 1] : null;
@@ -78,7 +80,7 @@ export class Backlog {
   canStart(it) {
     if (it.status !== 'da fare') return { ok: false, why: it.status === 'in corso' ? 'è già in corso' : it.status === 'fatto' ? 'è già fatta' : 'è stata tolta' };
     const lane = this.laneOf(it);
-    const busy = this.data.items.find((x) => x !== it && this.laneOf(x) === lane && x.status === 'in corso');
+    const busy = it.lane && this.data.items.find((x) => x !== it && this.laneOf(x) === lane && x.status === 'in corso');
     if (busy) return { ok: false, why: `nel ramo «${lane}» è in corso ${busy.id}: si parte quando finisce`, waitFor: busy.id };
     const prev = this.prevInLane(it);
     if (prev && prev.status !== 'fatto') return { ok: false, why: `prima va fatta ${prev.id} (stesso ramo)`, waitFor: prev.id };
