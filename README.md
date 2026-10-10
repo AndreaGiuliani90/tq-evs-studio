@@ -258,6 +258,17 @@ solo i limiti d'uso). Prima di un lavoro che supera la soglia (Impostazioni, pre
 pulsanti. Il preventivo elenca anche i **generatori alternativi** (GPT Image alta/media, Nano Banana 2, Nano Banana Pro e, se Cosetta lavora con Codex, il **piano ChatGPT**, sperimentale) con il loro costo: scegli dal menu sotto il preventivo o scrivi, per esempio, «leggera con Nano Banana». Scrivi «preventivo» nel messaggio per averlo sempre, anche per lavori piccoli. I prezzi sono indicativi
 e si aggiornano in `config/studio.default.json` → `imagePrices`.
 
+## File da scaricare (export)
+
+Quando chiedi un export o un file, nel rapporto della richiesta e nella sua scheda compare **📦 Da scaricare**:
+
+- **⬇ Scarica (zip)**: la cartella intera in uno zip. Un file singolo si scarica così com'è.
+- **👁 Apri**: una pagina con tutti i file e le anteprime delle immagini, ognuno scaricabile.
+- **📂 Mostra nel Finder**: apre la cartella sul tuo Mac.
+
+Gli agenti mettono queste cose in `export/<nome>/` e le dichiarano. Funziona anche con i rapporti vecchi che
+hanno toccato una cartella `export/`.
+
 ## Cambiare l'avatar
 
 Nello stesso pannello, riquadro **Avatar**:

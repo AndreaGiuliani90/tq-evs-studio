@@ -11,6 +11,7 @@ import { directorPlanPrompt, taskPrompt, qaPrompt, reportPrompt, strategistPromp
 import { CostBook, INCLUDED_PROVIDERS } from './costs.js';
 import { Backlog, teamPerformance } from './boards.js';
 import { ReleaseDesk, isJunk } from './release.js';
+import { detectOutputs } from './outputs.js';
 import { layoutHash } from '../web/layout-hash.js';
 import { SfxStore, SFX_CATEGORIES, JSFXR_PRESETS, elevenCredits, jsfxrVariants, jsfxrRender, postProcess, hasFfmpeg, slug } from './sfx.js';
 
@@ -974,7 +975,7 @@ export class Orchestrator {
     const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode, model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
     if (!r.ok) return { ok: false, error: r.error, blocked: r.code === 'PROVIDER_UNAVAILABLE' };
     const j = extractJSON(r.text) || extractJSON(r.allText) || {};
-    const result = { summary: j.summary || truncate(r.text, 600), handoff: j.handoff || '', notes: j.notes || '', output: truncate(r.text, 6000), provider: provider.id, costUsd: r.costUsd ?? null, durationMs: r.durationMs };
+    const result = { summary: j.summary || truncate(r.text, 600), outputs: Array.isArray(j.outputs) ? j.outputs.filter((x) => typeof x === 'string' || x?.path).slice(0, 12) : [], handoff: j.handoff || '', notes: j.notes || '', output: truncate(r.text, 6000), provider: provider.id, costUsd: r.costUsd ?? null, durationMs: r.durationMs };
     if (t.kind === 'art') {
       const made = provider.id === 'codex' ? this.collectCodexImages(cwd, startedAt) : [];
       const pending = (j.imageRequests || []).filter((ir) => !made.includes(String(ir.file || '').replace(/^\/+/, '')));
@@ -1503,7 +1504,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     }
     if (!prose) prose = [`Richiesta completata: ${result}.`, ...facts.summaries].join('\n');
     if (result === 'PASS' && req.knownIssueLogged) await this.resolveKnownIssue(req).catch(() => {});
-    const report = { ...facts, prose, stat: diff.stat, createdAt: now() };
+    const report = { ...facts, prose, stat: diff.stat, createdAt: now(), outputs: detectOutputs(diff.files, tasks.filter((t) => t.status === 'DONE').flatMap((t) => t.result?.outputs || [])) };
     this.setRequest(req, { status: 'DONE', result, report, finishedAt: now() });
     if (req.remergeAfterIntegrate && !req.merged) { req.remergeAfterIntegrate = false; this.chat('agent', `${req.id} è allineata e il QA ha riprovato: la rimetto in coda per l'unione che avevi già approvato.`, { agentId: this.notaio(), requestId: req.id, kind: 'agent-update' }); this.merge(req.id).catch((e) => this.chat('system', `Unione di ${req.id} non riuscita: ${e.message}`, { requestId: req.id })); }
     let mergeNote = `Le modifiche sono nel branch \`${req.branch}\`: provale con "Gioca questa versione", poi "Unisci" per portarle nel tuo ${req.baseBranch}.`;

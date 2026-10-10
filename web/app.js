@@ -211,6 +211,25 @@ function requestActions(req) {
   return b.join('');
 }
 
+// ─── risultati da consegnare (export, file richiesti): scarica, apri, mostra nel Finder ──────────
+const OUT_DIRS = ['export', 'exports', 'out', 'output', 'outputs', 'deliverables', 'consegne', 'download', 'downloads'];
+function outputsOf(rep) {
+  if (!rep) return [];
+  if (rep.outputs?.length) return rep.outputs;
+  // rapporti vecchi: si ricavano dalle cartelle di export toccate
+  const names = (rep.filesChanged || []).map((f) => String(f.file || f));
+  const dirs = {};
+  for (const n of names) { const p = n.split('/'); if (p.length > 2 && OUT_DIRS.includes(p[0].toLowerCase())) { const k = `${p[0]}/${p[1]}/`; dirs[k] = (dirs[k] || 0) + 1; } }
+  return Object.entries(dirs).map(([path, count]) => ({ path, kind: 'dir', count }));
+}
+function outputsHTML(reqId, rep) {
+  const outs = outputsOf(rep);
+  if (!outs.length || !S.requests[reqId] || S.requests[reqId].discarded && !S.requests[reqId].merged) return '';
+  const u = (p) => `/out/${encodeURIComponent(reqId)}/${p.split('/').map(encodeURIComponent).join('/')}`;
+  return `<div class="outs"><div class="outs-h">📦 Da scaricare</div>${outs.map((o) => `<div class="out"><code>${esc(o.path)}</code>${o.kind === 'dir' ? ` <span class="muted">${o.count} file</span>` : ''}
+    <span class="out-btns">${o.kind === 'dir' ? `<a class="btn sm primary" href="${u(o.path)}?zip=1">⬇ Scarica (zip)</a><a class="btn sm" href="${u(o.path)}" target="_blank" rel="noopener">👁 Apri</a>` : `<a class="btn sm primary" href="${u(o.path)}?dl=1">⬇ Scarica</a><a class="btn sm" href="${u(o.path)}" target="_blank" rel="noopener">👁 Apri</a>`}<button class="btn sm" data-act="reveal" data-req="${esc(reqId)}" data-path="${esc(o.path)}">📂 Mostra nel Finder</button></span></div>`).join('')}</div>`;
+}
+
 function reportHTML(rep) {
   if (!rep) return '';
   return `<details class="report"><summary>Dettagli: ${rep.filesChanged?.length || 0} file · ${rep.commits?.length || 0} commit · ${rep.tests?.length || 0} test · esito <b class="v-${esc(rep.result)}">${esc(rep.result)}</b></summary>
@@ -285,7 +304,8 @@ function card(r) {
   }
   if (canMerge(r)) {
     return { u: 'later', html: `<div class="tt-what">${T} è finita${r.result === 'FAIL' ? ', ma l\'ultimo test NON è passato' : ' e testata'}.</div>
-      <div class="tt-ask">Provala; se ti piace, uniscila al gioco.</div>
+      ${outputsHTML(r.id, r.report)}
+      <div class="tt-ask">${outputsOf(r.report).length ? 'Scarica i file qui sopra; se vuoi che restino anche nel gioco, uniscila.' : 'Provala; se ti piace, uniscila al gioco.'}</div>
       <div class="tt-btns">${play}<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci al gioco</button><button class="btn sm danger" data-act="discard" data-req="${esc(r.id)}">Scarta</button>${goto}</div>` };
   }
   return null;
@@ -350,7 +370,7 @@ function msgHTML(m) {
   return `<div class="msg m-${esc(m.role)} k-${esc(m.kind || 'text')}${st ? ' stale' : ''}" data-id="${esc(m.id)}" ${m.requestId ? `data-msg-req="${esc(m.requestId)}"` : ''}>
     ${m.role !== 'user' && a ? `<div class="mav">${avatarHTML(a, { size: 30 })}</div>` : ''}
     <div class="mbody"><div class="mhead"><b>${esc(who)}</b> <span class="muted">${time(m.ts)}${m.replyTo ? ' · ↪ ' : m.requestId ? ' · ' : ''}${m.requestId ? esc(m.requestId) : ''}</span>${st ? ` <span class="stale-tag">${esc(st)}</span>` : ''}${m.requestId && S.requests[m.requestId] ? `<button class="mhook" data-hook="${esc(m.requestId)}" title="Aggancia un nuovo messaggio a ${esc(m.requestId)}">↪</button>` : ''}</div>
-    <div class="mtext">${md(m.text)}</div>${m.attachments?.length ? `<div class="msg-att">${m.attachments.map((a) => /^image\//.test(a.type) ? `<a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="${esc(a.name)}"></a>` : `<a class="file" href="${esc(a.url)}" target="_blank">📄 ${esc(a.name)}</a>`).join('')}</div>` : ''}${chips}${m.kind === 'report' ? reportHTML(m.report) : ''}${m.kind === 'question' ? '<div class="muted qhint">↳ Rispondi qui sotto (anche a voce): la richiesta riparte da dove era.</div>' : ''}${actions}</div></div>`;
+    <div class="mtext">${md(m.text)}</div>${m.attachments?.length ? `<div class="msg-att">${m.attachments.map((a) => /^image\//.test(a.type) ? `<a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="${esc(a.name)}"></a>` : `<a class="file" href="${esc(a.url)}" target="_blank">📄 ${esc(a.name)}</a>`).join('')}</div>` : ''}${chips}${m.kind === 'report' ? outputsHTML(m.requestId, m.report) + reportHTML(m.report) : ''}${m.kind === 'question' ? '<div class="muted qhint">↳ Rispondi qui sotto (anche a voce): la richiesta riparte da dove era.</div>' : ''}${actions}</div></div>`;
 }
 
 function renderChat() {
@@ -468,6 +488,7 @@ document.addEventListener('click', act(async (ev) => {
     case 'retry-choice': await api('POST', `/api/requests/${req}/retry`, { choice: document.querySelector(`[data-retry-choice="${req}"]`)?.value }); return;
     case 'cancel': await api('POST', `/api/requests/${req}/cancel`); return;
     case 'unlink': await api('POST', `/api/requests/${req}/unlink`); return;
+    case 'reveal': await api('POST', `/api/requests/${req}/reveal`, { path: el.dataset.path }); toast('Aperto nel Finder.'); return;
     case 'close-q': await api('POST', `/api/requests/${req}/close`); return;
     case 'quote-approve': await api('POST', `/api/requests/${req}/quote`, { action: 'approve' }); return;
     case 'quote-light': await api('POST', `/api/requests/${req}/quote`, { action: 'light' }); return;

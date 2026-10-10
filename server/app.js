@@ -1,4 +1,6 @@
 // Costruisce lo Studio (tutti i pezzi collegati) e il server HTTP. Usato da index.js e dai test.
+import { safeRel } from './outputs.js';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -69,7 +71,56 @@ export async function createStudio({ projectRoot, dataDir, providers, qaRunner, 
   return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch, office };
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.webmanifest': 'application/manifest+json', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2' };
+const MIME = { '.zip': 'application/zip', '.txt': 'text/plain; charset=utf-8', '.pdf': 'application/pdf', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.webmanifest': 'application/manifest+json', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2' };
+
+// ─── risultati da consegnare: /out/R-0111/export/x/ (pagina con l'elenco), ?zip=1 (cartella in zip), ?dl=1 (scarica) ──
+// I file si leggono da git (il branch della richiesta, o il gioco se è già unita): niente percorsi fuori dal repository.
+function outRef(r) { return r?.branch && !r.discarded ? r.branch : r?.mergeCommit || 'HEAD'; }
+const gitRun = (args, cwd) => new Promise((resolve) => { const c = spawn('git', args, { cwd }); const out = []; c.stdout.on('data', (d) => out.push(d)); c.on('close', (code) => resolve({ code, buf: Buffer.concat(out) })); c.on('error', () => resolve({ code: 1, buf: Buffer.alloc(0) })); });
+async function serveOutput(req, res, p, url, { projectRoot, store }) {
+  const [, , id, ...rest] = p.split('/');
+  const r = store.data.requests[id];
+  const rel = safeRel(decodeURIComponent(rest.join('/')));
+  if (!r || !rel) { res.writeHead(404); res.end('non trovato'); return; }
+  const ref = outRef(r);
+  const isDir = rel.endsWith('/') || (await gitRun(['cat-file', '-t', `${ref}:${rel.replace(/\/$/, '')}`], projectRoot)).buf.toString().trim() === 'tree';
+  const dir = rel.replace(/\/$/, '');
+  if (isDir && url.searchParams.get('zip')) {
+    const name = `${id}-${dir.split('/').pop()}.zip`;
+    const z = spawn('git', ['archive', '--format=zip', `--prefix=${dir.split('/').pop()}/`, `${ref}:${dir}`], { cwd: projectRoot });
+    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' });
+    z.stdout.pipe(res); z.on('error', () => res.end());
+    return;
+  }
+  if (isDir) {
+    const list = (await gitRun(['ls-tree', '-r', '--name-only', ref, '--', `${dir}/`], projectRoot)).buf.toString().split('\n').filter(Boolean);
+    const e = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const href = (f) => `/out/${id}/${f.split('/').map(encodeURIComponent).join('/')}`;
+    const img = (f) => /\.(png|gif|jpe?g|webp|svg)$/i.test(f);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(`<!doctype html><meta charset="utf-8"><title>${e(id)} · ${e(dir)}</title><style>body{font:14px system-ui;background:#16121f;color:#ece6ff;margin:24px}a{color:#ff4fa3}h1{font-size:18px}.bar a{display:inline-block;margin-right:12px;padding:6px 12px;border:1px solid #ff4fa3;border-radius:8px;text-decoration:none}.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:16px}.c{background:#221b30;border-radius:8px;padding:8px;font-size:12px;word-break:break-all}.c img{width:100%;height:110px;object-fit:contain;image-rendering:pixelated;background:repeating-conic-gradient(#2c2440 0 25%,#221b30 0 50%) 50%/16px 16px}</style>
+<h1>${e(id)} · ${e(dir)}/ <small>(${list.length} file)</small></h1><div class="bar"><a href="${href(dir)}/?zip=1">⬇ Scarica tutto (zip)</a></div>
+<div class="g">${list.map((f) => `<div class="c">${img(f) ? `<a href="${href(f)}" target="_blank"><img src="${href(f)}" loading="lazy" alt=""></a>` : ''}<a href="${href(f)}" target="_blank">${e(f.slice(dir.length + 1))}</a> · <a href="${href(f)}?dl=1">⬇</a></div>`).join('')}</div>`);
+    return;
+  }
+  const g = await gitRun(['show', `${ref}:${rel}`], projectRoot);
+  if (g.code !== 0) { res.writeHead(404); res.end('file non trovato in questa versione'); return; }
+  const h = { 'Content-Type': MIME[path.extname(rel).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' };
+  if (url.searchParams.get('dl')) h['Content-Disposition'] = `attachment; filename="${path.basename(rel).replace(/"/g, '')}"`;
+  res.writeHead(200, h); res.end(g.buf);
+}
+// "Mostra nel Finder": apre la cartella sul tuo computer (lo Studio gira lì)
+function revealOutput(r, p, projectRoot) {
+  const rel = safeRel(p);
+  if (!r || !rel) throw new Error('percorso non valido');
+  const base = r.worktree && fs.existsSync(r.worktree) ? r.worktree : r.merged ? projectRoot : null;
+  if (!base) throw new Error('i file di questa richiesta non sono più sul disco: usa «Scarica»');
+  const abs = path.join(base, rel.replace(/\/$/, ''));
+  if (!abs.startsWith(path.resolve(base)) || !fs.existsSync(abs)) throw new Error('non trovo il file sul disco: usa «Scarica»');
+  const cmd = process.platform === 'darwin' ? ['open', fs.statSync(abs).isDirectory() ? [abs] : ['-R', abs]] : process.platform === 'win32' ? ['explorer', [`/select,${abs}`]] : ['xdg-open', [fs.statSync(abs).isDirectory() ? abs : path.dirname(abs)]];
+  try { spawn(cmd[0], cmd[1], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); } catch { /* niente */ }
+  return { ok: true, path: abs };
+}
 
 function sendFile(res, file, root) {
   const f = path.resolve(file);
@@ -165,6 +216,7 @@ export function createServer(studio) {
     ['GET', /^\/api\/tasks$/, async () => Object.values(store.data.tasks)],
     ['GET', /^\/api\/tasks\/([\w-]+)$/, async (m) => store.data.tasks[m[1]] || null],
     ['POST', /^\/api\/requests\/([\w-]+)\/unlink$/, async (m) => orch.unlink(m[1])],
+    ['POST', /^\/api\/requests\/([\w-]+)\/reveal$/, async (m, b) => revealOutput(store.data.requests[m[1]], b.path, projectRoot)],
     ['POST', /^\/api\/requests\/([\w-]+)\/close$/, async (m) => orch.closeQuestion(m[1])],
     ['POST', /^\/api\/requests\/([\w-]+)\/retry$/, async (m, b) => orch.retry(m[1], { choice: b?.choice })],
     ['POST', /^\/api\/requests\/([\w-]+)\/cancel$/, async (m) => orch.cancel(m[1])],
@@ -246,6 +298,7 @@ export function createServer(studio) {
         }
         return json(res, 404, { error: 'rotta sconosciuta' });
       }
+      if (p.startsWith('/out/')) return serveOutput(req, res, p, url, { projectRoot, store, git });
       if (p.startsWith('/play/')) {
         // /play/main/… = cartella del gioco · /play/R-0001/… = worktree di quella richiesta
         const [, , which, ...rest] = p.split('/');

@@ -1161,3 +1161,42 @@ test('limiti d\'uso di un abbonamento: lo Stratega passa a un altro modello incl
   assert.equal(r.waitingLimit.provider, 'codex');
   o.cancel(r.id);
 });
+
+test('risultati da consegnare: export nel rapporto, scaricabile (cartella in zip, file singolo), pagina con anteprime, "Mostra nel Finder"', async () => {
+  const { detectOutputs } = await import('../server/outputs.js');
+  assert.deepEqual(detectOutputs([{ file: 'export/kevin/a.png' }, { file: 'export/kevin/b/c.png' }, { file: 'src/x.js' }]).map((o) => [o.path, o.kind, o.count]), [['export/kevin/', 'dir', 2]]);
+  assert.deepEqual(detectOutputs([{ file: 'docs/x.pdf' }], ['docs/x.pdf']).map((o) => o.kind), ['file']);
+  const root = makeFixtureRepo();
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: 'esporta', dependsOn: [] }]);
+    if (o.agent.id === 'dev') {
+      fs.mkdirSync(path.join(o.cwd, 'export/pacco/frames'), { recursive: true });
+      fs.writeFileSync(path.join(o.cwd, 'export/pacco/frames/a.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+      fs.writeFileSync(path.join(o.cwd, 'export/pacco/LEGGIMI.md'), '# leggimi\n');
+      return { text: '{"summary":"esportato","outputs":["export/pacco/"]}' };
+    }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const r = await s.orch.handleUserMessage('Esportami il pacco');
+  await waitFor(() => r.status === 'DONE', 15000, 'DONE');
+  assert.deepEqual(r.report.outputs.map((o) => [o.path, o.count]), [['export/pacco/', 2]]);
+  const server = createServer(s);
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const z = await fetch(`${base}/out/${r.id}/export/pacco/?zip=1`);
+    assert.equal(z.headers.get('content-type'), 'application/zip');
+    const buf = Buffer.from(await z.arrayBuffer());
+    assert.equal(buf.slice(0, 2).toString(), 'PK');
+    assert.ok(buf.includes(Buffer.from('pacco/frames/a.png')), 'lo zip contiene la cartella');
+    const page = await (await fetch(`${base}/out/${r.id}/export/pacco/`)).text();
+    assert.match(page, /2 file/); assert.match(page, /<img src="\/out\/R-\d+\/export\/pacco\/frames\/a\.png"/);
+    const f = await fetch(`${base}/out/${r.id}/export/pacco/LEGGIMI.md?dl=1`);
+    assert.match(f.headers.get('content-disposition'), /attachment; filename="LEGGIMI.md"/);
+    assert.equal(await f.text(), '# leggimi\n');
+    assert.equal((await fetch(`${base}/out/${r.id}/../../etc/passwd`)).status, 404);
+    const rv = await (await fetch(`${base}/api/requests/${r.id}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'export/pacco/' }) })).json();
+    assert.ok(rv.ok && rv.path.endsWith(path.join('export', 'pacco')));
+  } finally { server.close(); }
+});
