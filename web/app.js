@@ -633,15 +633,14 @@ function drawerLive(a) {
 // Nello stesso ramo si va in sequenza (una alla volta, sullo stesso branch); rami diversi vanno in parallelo.
 // Ogni blocco dice se si può avviare adesso e, se no, perché.
 const LANE_HUES = [330, 190, 45, 140, 265, 15, 95, 210];
+// "Comprimi le chiuse": le attività fatte spariscono (restano contate accanto al nome del ramo) e i rami tutti fatti
+// diventano una riga sola in fondo; altrimenti si vedono tutte, ma attenuate
+try { S.flCollapse = localStorage.getItem('studio:fl-collapse') !== '0'; } catch { S.flCollapse = true; }
 function flowLayout(g) {
   const nodes = g.nodes.map((n) => ({ ...n }));
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  // per ramo si tengono le ultime 2 fatte; le altre diventano un contatore all'inizio della riga
   const hiddenDone = {};
-  for (const lane of g.lanes) {
-    const done = nodes.filter((n) => n.lane === lane && n.status === 'fatto');
-    for (const n of done.slice(0, Math.max(0, done.length - 2))) { n.hidden = true; hiddenDone[lane] = (hiddenDone[lane] || 0) + 1; }
-  }
+  if (S.flCollapse) for (const n of nodes) if (n.status === 'fatto') { n.hidden = true; hiddenDone[n.lane] = (hiddenDone[n.lane] || 0) + 1; }
   const vis = nodes.filter((n) => !n.hidden);
   const lanes = g.lanes.filter((l) => vis.some((n) => n.lane === l)).sort((a, b) => {
     const score = (l) => { const ns = vis.filter((n) => n.lane === l); return ns.some((n) => n.status === 'in corso') ? 0 : ns.some((n) => n.canStart) ? 1 : ns.some((n) => n.status === 'da fare') ? 2 : 3; };
@@ -659,7 +658,8 @@ function flowLayout(g) {
   const NW = 214, NH = 112, CW = 248, RH = 144, LW = 132, PAD = 14;
   for (const n of vis) { n.x = LW + PAD + level[n.id] * CW; n.y = PAD + lanes.indexOf(n.lane) * RH; }
   const W = LW + PAD * 2 + (Math.max(0, ...vis.map((n) => level[n.id])) + 1) * CW, H = PAD * 2 + lanes.length * RH - (RH - NH);
-  return { vis, byId, lanes, hiddenDone, NW, NH, RH, LW, PAD, W, H };
+  const doneLanes = g.lanes.filter((l) => !lanes.includes(l));
+  return { vis, byId, lanes, hiddenDone, doneLanes, NW, NH, RH, LW, PAD, W, H };
 }
 function flowState(n) {
   if (n.status === 'fatto') return n.merged ? ['done', '✔ fatta · nel gioco'] : ['done pending', '✔ fatta · da unire'];
@@ -670,6 +670,7 @@ function flowHTML(g) {
   const legacy = g.nodes.some((n) => n.lane === 'Da organizzare' && n.status !== 'fatto');
   if (!g.nodes.length) return `<p class="muted">Lavagna vuota. Chiedi alla Regia, per esempio «programmate le prossime attività per il secondo rione»: le organizza in rami (filoni che vanno avanti in parallelo) con le loro dipendenze.</p>`;
   const L = flowLayout(g);
+  const nDone = g.nodes.filter((n) => n.status === 'fatto').length;
   const hue = (lane) => LANE_HUES[g.lanes.indexOf(lane) % LANE_HUES.length];
   const ready = g.nodes.filter((n) => n.canStart);
   const doing = g.nodes.filter((n) => n.status === 'in corso');
@@ -679,7 +680,7 @@ function flowHTML(g) {
       ${ready.length > 1 ? `<button class="btn sm primary" data-fl-all>▶ Avvia tutte (${ready.length})</button>` : `<button class="btn sm primary" data-fl-start="${esc(ready[0].id)}">▶ Avvia ${esc(ready[0].id)}</button>`}</div>`
       : `<div><b>Niente da avviare adesso.</b> ${doing.length ? `In corso: ${doing.map((n) => esc(n.id)).join(', ')}.` : ''}</div>`}
     ${toMerge.length ? `<div class="muted">Fatte ma non ancora nel gioco: ${toMerge.map((n) => `${esc(n.id)} (${esc(n.lastRequestId)})`).join(', ')}. Le attività di altri rami che dipendono da loro partono dopo l'unione.</div>` : ''}
-    <div class="fl-legend"><span class="lg done">✔ fatta</span><span class="lg doing">⚙ in corso</span><span class="lg ready">▶ si può avviare</span><span class="lg blocked">🔒 non ancora</span><span class="lg"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="currentColor" stroke-width="2"/></svg> stesso ramo, in fila</span><span class="lg"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="5 4"/></svg> serve il risultato di un altro ramo</span></div></div>`;
+    <div class="fl-legend">${nDone ? `<button class="btn sm fl-toggle" data-fl-collapse>${S.flCollapse ? `👁 Mostra le chiuse (${nDone})` : '▾ Comprimi le chiuse'}</button>` : ''}<span class="lg done">✔ fatta</span><span class="lg doing">⚙ in corso</span><span class="lg ready">▶ si può avviare</span><span class="lg blocked">🔒 non ancora</span><span class="lg"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="currentColor" stroke-width="2"/></svg> stesso ramo, in fila</span><span class="lg"><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="var(--cyan)" stroke-width="2" stroke-dasharray="5 4"/></svg> serve il risultato di un altro ramo</span></div></div>`;
   const edges = [];
   for (const n of L.vis) for (const d of n.deps) {
     const a = L.byId[d]; if (!a || a.hidden) continue;
@@ -687,7 +688,7 @@ function flowHTML(g) {
     const cross = a.lane !== n.lane;
     edges.push(`<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2 - 6},${y2}" class="fe ${cross ? 'cross' : ''} ${a.status === 'fatto' ? 'ok' : ''}" marker-end="url(#fa${cross ? 'c' : ''})"/>`);
   }
-  const bands = L.lanes.map((l, i) => `<div class="fl-lane" style="top:${L.PAD + i * L.RH - 10}px;height:${L.NH + 20}px;--h:${hue(l)}"><div class="fl-lname">${esc(l)}${L.hiddenDone[l] ? `<span>+${L.hiddenDone[l]} già fatte</span>` : ''}</div></div>`).join('');
+  const bands = L.lanes.map((l, i) => `<div class="fl-lane" style="top:${L.PAD + i * L.RH - 10}px;height:${L.NH + 20}px;--h:${hue(l)}"><div class="fl-lname">${esc(l)}${L.hiddenDone[l] ? `<span>✔ ${L.hiddenDone[l]} ${L.hiddenDone[l] === 1 ? 'fatta' : 'fatte'}</span>` : ''}</div></div>`).join('');
   const nodes = L.vis.map((n) => {
     const [cls, label] = flowState(n);
     const who = n.agent && S.agents[n.agent] ? esc(S.agents[n.agent].name) : '';
@@ -695,13 +696,15 @@ function flowHTML(g) {
       : n.status === 'da fare' ? `<span class="fl-why" title="${esc(n.why || '')}">${esc(n.why || '')}</span>`
       : n.status === 'in corso' ? `<button class="tt-link" data-goto="${esc(n.lastRequestId || n.requestId || '')}">segui in chat</button>`
       : !n.merged && n.lastRequestId && S.requests[n.lastRequestId] && !S.requests[n.lastRequestId].discarded ? `<button class="btn sm" data-act="merge" data-req="${esc(n.lastRequestId)}">Unisci ${esc(n.lastRequestId)}</button>` : '';
-    return `<div class="fn ${cls}" data-fl-sel="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${L.NW}px;height:${L.NH}px;--h:${hue(n.lane)}">
+    return `<div class="fn ${cls}${n.status === 'fatto' ? ' closed' : ''}" data-fl-sel="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${L.NW}px;height:${L.NH}px;--h:${hue(n.lane)}">
       <div class="fn-top"><b>${esc(n.id)}</b><span class="fn-st">${esc(label)}</span></div>
       <div class="fn-title" title="${esc(n.title)}">${esc(n.title)}</div>
       <div class="fn-foot">${foot}${who ? `<span class="fn-who">${who}${n.priority === 'alta' ? ' · ❗' : ''}</span>` : ''}</div></div>`;
   }).join('');
+  const tail = L.doneLanes.length ? `<div class="fl-donelanes">✔ Rami chiusi: ${L.doneLanes.map((l) => `<span>${esc(l)} <i>${L.hiddenDone[l] || 0}</i></span>`).join(' ')}</div>` : '';
+  if (!L.vis.length) return `${head}<p class="muted">Tutte le attività sono chiuse.</p>${tail}`;
   return `${head}${legacy ? '<p class="muted small">Le attività «Da organizzare» sono nate prima dei rami e restano indipendenti. Per ordinarle scrivi alla Regia «organizza la lavagna in rami».</p>' : ''}<div class="fl-wrap"><div class="fl" style="width:${L.W}px;height:${L.H}px">${bands}
-    <svg class="fl-svg" width="${L.W}" height="${L.H}"><defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9d92c2"/></marker><marker id="fac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#3fe0d0"/></marker></defs>${edges.join('')}</svg>${nodes}</div></div>`;
+    <svg class="fl-svg" width="${L.W}" height="${L.H}"><defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#9d92c2"/></marker><marker id="fac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#3fe0d0"/></marker></defs>${edges.join('')}</svg>${nodes}</div></div>${tail}`;
 }
 function flowForm(n = null) {
   const g = S.backlog?.graph || { lanes: [], nodes: [] };
@@ -728,6 +731,7 @@ function showFlowDetail(id) {
 }
 function wireFlow(root = document) {
   for (const x of root.querySelectorAll('[data-fl-start]')) x.onclick = act(async (ev) => { ev.stopPropagation(); await api('POST', `/api/backlog/${x.dataset.flStart}/start`); toast(`${x.dataset.flStart} avviata: segui la Regia in chat.`); });
+  for (const x of root.querySelectorAll('[data-fl-collapse]')) x.onclick = () => { S.flCollapse = !S.flCollapse; try { localStorage.setItem('studio:fl-collapse', S.flCollapse ? '1' : '0'); } catch { /* niente */ } openModal('backlog'); };
   for (const x of root.querySelectorAll('[data-fl-all]')) x.onclick = act(async () => { const r = await api('POST', '/api/backlog/start-ready'); toast(`Avviate: ${r.started.join(', ') || 'nessuna'}.`); });
   for (const x of root.querySelectorAll('[data-fl-sel]')) x.onclick = (ev) => { if (ev.target.closest('button,a')) return; showFlowDetail(x.dataset.flSel); };
   for (const x of root.querySelectorAll('[data-fl-drop]')) x.onclick = act(async () => { if (confirm(`Togliere ${x.dataset.flDrop} dalla lavagna?`)) await api('DELETE', `/api/backlog/${x.dataset.flDrop}`); });
