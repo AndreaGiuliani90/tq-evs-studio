@@ -418,9 +418,37 @@ export class Office {
     if (!img && stage) { img = document.createElement('img'); img.className = 'office-paint'; img.alt = ''; stage.insertBefore(img, this.canvas); }
     if (!img) return;
     img.hidden = false;
+    const key = `${paint.url}|${LW}x${LH}`;
+    if (this.paintMaskKey !== key) { this.paintMask = null; this.paintMaskKey = key; }
+    img.onload = () => { try { this.paintMask = this.buildPaintMask(img, paint); } catch { this.paintMask = null; } };
     if (img.getAttribute('src') !== paint.url) img.src = paint.url;
+    else if (img.complete && img.naturalWidth && !this.paintMask) img.onload();
     const k = 1 / (paint.scale || 2);
     Object.assign(img.style, { left: `${-paint.ox * k}px`, top: `${-paint.oy * k}px`, width: `${paint.W * k}px`, height: `${paint.H * k}px` });
+  }
+
+  // la sagoma vera della stanza nel dipinto: il dipinto è fatto dall'AI e i suoi bordi non coincidono al pixel con la
+  // geometria, quindi le luci si ritagliano su questa maschera (tutto ciò che non è lo sfondo scuro attorno alla stanza)
+  buildPaintMask(img, paint) {
+    const k = 1 / (paint.scale || 2);
+    const [c, x] = tela(LW, LH);
+    x.imageSmoothingEnabled = true;
+    x.drawImage(img, -paint.ox * k, -paint.oy * k, paint.W * k, paint.H * k);
+    const id = x.getImageData(0, 0, LW, LH), d = id.data, N = LW * LH;
+    // colore dello sfondo: la media degli angoli
+    let br = 0, bg = 0, bb = 0, n = 0;
+    for (const [sx, sy] of [[2, 2], [LW - 3, 2], [2, LH - 3], [LW - 3, LH - 3]]) { const i = (sy * LW + sx) * 4; if (d[i + 3] > 0) { br += d[i]; bg += d[i + 1]; bb += d[i + 2]; n++; } }
+    if (n) { br /= n; bg /= n; bb /= n; }
+    const isBg = (p) => { const i = p * 4; if (d[i + 3] < 20) return true; const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb; return dr * dr + dg * dg + db * db < 40 * 40; };
+    // riempimento dai bordi: è "fuori" solo lo sfondo collegato al bordo (le cose scure dentro la stanza restano dentro)
+    const out = new Uint8Array(N), q = new Int32Array(N); let h = 0, tl = 0;
+    const push = (p) => { if (!out[p] && isBg(p)) { out[p] = 1; q[tl++] = p; } };
+    for (let xx = 0; xx < LW; xx++) { push(xx); push((LH - 1) * LW + xx); }
+    for (let yy = 0; yy < LH; yy++) { push(yy * LW); push(yy * LW + LW - 1); }
+    while (h < tl) { const p = q[h++], px = p % LW; if (px > 0) push(p - 1); if (px < LW - 1) push(p + 1); if (p >= LW) push(p - LW); if (p < N - LW) push(p + LW); }
+    for (let p = 0; p < N; p++) { const i = p * 4; d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = out[p] ? 0 : 255; }
+    x.putImageData(id, 0, 0);
+    return c;
   }
 
   drawStatic(sky, date) {
@@ -1323,9 +1351,24 @@ export class Office {
   // ombre di foglie che ondeggiano sul pavimento, una gradazione calda e una vignettatura morbida. Solo di giorno e al
   // tramonto (più caldo e radente); di notte resta la luce delle lampade.
   drawDaylight(sky, t, date) {
+    // col dipinto: gli effetti si disegnano a parte e si ritagliano sulla sagoma della stanza nel dipinto
+    if (this.painted && this.paintMask) {
+      if (!this.fxC || this.fxC.width !== LW || this.fxC.height !== LH) [this.fxC, this.fxX] = tela(LW, LH);
+      const fx = this.fxX;
+      fx.globalCompositeOperation = 'source-over'; fx.clearRect(0, 0, LW, LH);
+      if (!this.drawDaylightOn(fx, sky, t, date, false)) return;
+      fx.globalCompositeOperation = 'destination-in'; fx.drawImage(this.paintMask, 0, 0);
+      fx.globalCompositeOperation = 'source-over';
+      this.ctx.drawImage(this.fxC, 0, 0);
+      return;
+    }
+    this.drawDaylightOn(this.ctx, sky, t, date, true);
+  }
+
+  drawDaylightOn(ctx, sky, t, date, clipToRoom) {
     const gw = (this.layout.decor || []).find((d) => d.type === 'glasswall');
-    if (!gw || sky.night > 0.7) return;
-    const ctx = this.ctx, iso = this.iso, H = this.layout.room.wallH;
+    if (!gw || sky.night > 0.7) return false;
+    const iso = this.iso, H = this.layout.room.wallH;
     const dusk = sky.night > 0;
     const h = date.getHours() + date.getMinutes() / 60;
     const wall = gw.wall || 'L';
@@ -1341,7 +1384,7 @@ export class Office {
     // tutti gli effetti restano dentro la stanza (pareti + pavimento), mai sullo sfondo scuro
     const { w: RW, d: RD } = this.layout.room;
     ctx.save();
-    ctx.beginPath(); [iso(0, RD, 0), iso(RW, RD, 0), iso(RW, 0, 0), iso(RW, 0, H), iso(0, 0, H), iso(0, RD, H)].forEach((p, i) => (i ? ctx.lineTo(...p) : ctx.moveTo(...p))); ctx.closePath(); ctx.clip();
+    if (clipToRoom) { ctx.beginPath(); [iso(0, RD, 0), iso(RW, RD, 0), iso(RW, 0, 0), iso(RW, 0, H), iso(0, 0, H), iso(0, RD, H)].forEach((p, i) => (i ? ctx.lineTo(...p) : ctx.moveTo(...p))); ctx.closePath(); ctx.clip(); }
     // 1) fasci di luce: dal bordo alto di ogni vetro al riquadro sul pavimento
     const beams = [];
     for (let i = 0; i < n; i++) {
@@ -1404,6 +1447,7 @@ export class Office {
     ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
     ctx.restore();
     ctx.restore();   // fine del ritaglio sulla stanza
+    return true;
   }
 
   destroy() { clearInterval(this.timer); }
