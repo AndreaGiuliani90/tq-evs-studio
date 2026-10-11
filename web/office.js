@@ -58,6 +58,18 @@ function mapFace(ctx, img, p0, pu, pv) {
 function tela(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.imageSmoothingEnabled = false; return [c, x]; }
 
 // pseudo-casuale stabile (le mattonelle non "ballano" a ogni frame)
+// trasformazione affine (per ctx.setTransform) che porta 3 punti su altri 3
+function affine3(src, dst) {
+  const [[x1, y1], [x2, y2], [x3, y3]] = src;
+  const det = x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2);
+  if (Math.abs(det) < 1e-9) return [1, 0, 0, 1, 0, 0];
+  const inv = [[(y2 - y3) / det, (x3 - x2) / det, (x2 * y3 - x3 * y2) / det], [(y3 - y1) / det, (x1 - x3) / det, (x3 * y1 - x1 * y3) / det], [(y1 - y2) / det, (x2 - x1) / det, (x1 * y2 - x2 * y1) / det]];
+  const row = (k) => [0, 1, 2].map((j) => dst[0][k] * inv[0][j] + dst[1][k] * inv[1][j] + dst[2][k] * inv[2][j]);
+  const [a, c, e] = row(0), [b, d, f] = row(1);
+  return [a, b, c, d, e, f];
+}
+const lerpM = (m, f) => [1 + (m[0] - 1) * f, m[1] * f, m[2] * f, 1 + (m[3] - 1) * f, m[4] * f, m[5] * f];
+const applyM = (m, [x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 function rnd(i) { const s = Math.sin(i * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
 
 // ── ora del giorno → luce ──────────────────────────────────────────────────────────────────────
@@ -439,16 +451,67 @@ export class Office {
     let br = 0, bg = 0, bb = 0, n = 0;
     for (const [sx, sy] of [[2, 2], [LW - 3, 2], [2, LH - 3], [LW - 3, LH - 3]]) { const i = (sy * LW + sx) * 4; if (d[i + 3] > 0) { br += d[i]; bg += d[i + 1]; bb += d[i + 2]; n++; } }
     if (n) { br /= n; bg /= n; bb /= n; }
-    const isBg = (p) => { const i = p * 4; if (d[i + 3] < 20) return true; const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb; return dr * dr + dg * dg + db * db < 40 * 40; };
+    const isBg = (p) => { const i = p * 4; if (d[i + 3] < 20) return true; const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb; return dr * dr + dg * dg + db * db < 28 * 28; };
+    this.paintWin = this.buildWindowLight(d);
     // riempimento dai bordi: è "fuori" solo lo sfondo collegato al bordo (le cose scure dentro la stanza restano dentro)
     const out = new Uint8Array(N), q = new Int32Array(N); let h = 0, tl = 0;
     const push = (p) => { if (!out[p] && isBg(p)) { out[p] = 1; q[tl++] = p; } };
     for (let xx = 0; xx < LW; xx++) { push(xx); push((LH - 1) * LW + xx); }
     for (let yy = 0; yy < LH; yy++) { push(yy * LW); push(yy * LW + LW - 1); }
     while (h < tl) { const p = q[h++], px = p % LW; if (px > 0) push(p - 1); if (px < LW - 1) push(p + 1); if (p >= LW) push(p - LW); if (p < N - LW) push(p + LW); }
-    for (let p = 0; p < N; p++) { const i = p * 4; d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = out[p] ? 0 : 255; }
+    // apertura (erosione + dilatazione di 2 px) del "fuori": spariscono i puntini e i canalini entrati nei bordi scuri
+    const R = 2, er = new Uint8Array(N), op = new Uint8Array(N);
+    for (let y = 0; y < LH; y++) for (let x0 = 0; x0 < LW; x0++) { let all = 1; for (let dy = -R; dy <= R && all; dy++) for (let dx = -R; dx <= R; dx++) { const yy = y + dy, xx = x0 + dx; if (yy < 0 || yy >= LH || xx < 0 || xx >= LW) continue; if (!out[yy * LW + xx]) { all = 0; break; } } er[y * LW + x0] = all; }
+    for (let y = 0; y < LH; y++) for (let x0 = 0; x0 < LW; x0++) { let any = 0; for (let dy = -R; dy <= R && !any; dy++) for (let dx = -R; dx <= R; dx++) { const yy = y + dy, xx = x0 + dx; if (yy < 0 || yy >= LH || xx < 0 || xx >= LW) continue; if (er[yy * LW + xx]) { any = 1; break; } } op[y * LW + x0] = any; }
+    for (let p = 0; p < N; p++) { const i = p * 4; d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = op[p] ? 0 : 255; }
     x.putImageData(id, 0, 0);
     return c;
+  }
+
+  // LA LUCE VIENE DALLE FINESTRE DIPINTE: dalla parete con la vetrata si prendono i vetri (chiari) e non i telai
+  // (scuri); questa "sagoma della luce" poi si proietta sul pavimento. Così fasci e ombre dei montanti coincidono
+  // per forza con le finestre del dipinto, qualunque cosa abbia disegnato l'AI.
+  buildWindowLight(d) {
+    const gw = (this.layout.decor || []).find((x) => x.type === 'glasswall');
+    if (!gw) return null;
+    const iso = this.iso, H = this.layout.room.wallH, wall = gw.wall || 'L';
+    const a0 = gw.from ?? 0.3, a1 = gw.to ?? ((wall === 'L' ? this.layout.room.d : this.layout.room.w) - 0.3);
+    const z0 = 24, z1 = H - 6;
+    const P = (x, y, z) => (wall === 'L' ? iso(x, y, z) : iso(y, x, z));
+    const quad = [P(0, a0, z0), P(0, a1, z0), P(0, a1, z1), P(0, a0, z1)];
+    const inQ = (px, py) => { let ins = false; for (let i = 0, j = 3; i < 4; j = i++) { const [xi, yi] = quad[i], [xj, yj] = quad[j]; if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) ins = !ins; } return ins; };
+    const xs = quad.map((q) => q[0]), ys = quad.map((q) => q[1]);
+    const bx0 = Math.max(0, Math.floor(Math.min(...xs))), bx1 = Math.min(LW - 1, Math.ceil(Math.max(...xs))), by0 = Math.max(0, Math.floor(Math.min(...ys))), by1 = Math.min(LH - 1, Math.ceil(Math.max(...ys)));
+    // coordinate sulla parete (a lungo il muro, z in altezza) di ogni pixel: inversa della proiezione del muro
+    const toWall = affine3([quad[0], quad[1], quad[3]], [[a0, z0], [a1, z0], [a0, z1]]);
+    // profili: per ogni striscia verticale (lungo a) e orizzontale (lungo z), quanto è telaio (scuro) e quanto vetro
+    const NA = Math.max(40, Math.round((a1 - a0) * 24)), NZ = Math.max(20, Math.round((z1 - z0) / 2));
+    const fa = new Float32Array(NA), ca = new Float32Array(NA), fz = new Float32Array(NZ), cz = new Float32Array(NZ);
+    for (let py = by0; py <= by1; py++) for (let px = bx0; px <= bx1; px++) {
+      if (!inQ(px + 0.5, py + 0.5)) continue;
+      const i = (py * LW + px) * 4, lum = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
+      const [a, z] = applyM(toWall, [px + 0.5, py + 0.5]);
+      const ia = Math.min(NA - 1, Math.max(0, Math.floor(((a - a0) / (a1 - a0)) * NA))), iz = Math.min(NZ - 1, Math.max(0, Math.floor(((z - z0) / (z1 - z0)) * NZ)));
+      const dark = lum < 95 ? 1 : 0;
+      fa[ia] += dark; ca[ia]++; fz[iz] += dark; cz[iz]++;
+    }
+    const glassA = Array.from(fa, (v, i) => (ca[i] ? v / ca[i] : 1) < 0.5), glassZ = Array.from(fz, (v, i) => (cz[i] ? v / cz[i] : 1) < 0.62);
+    // la sagoma pulita: vetro dove la striscia verticale E quella orizzontale sono vetro
+    const [c, x] = tela(LW, LH);
+    const fromWall = affine3([[a0, z0], [a1, z0], [a0, z1]], [quad[0], quad[1], quad[3]]);
+    x.fillStyle = '#fff';
+    const pts = [];
+    for (let ia = 0; ia < NA; ia++) {
+      if (!glassA[ia]) continue;
+      for (let iz = 0; iz < NZ; iz++) {
+        if (!glassZ[iz]) continue;
+        const A0 = a0 + ((a1 - a0) * ia) / NA, A1 = a0 + ((a1 - a0) * (ia + 1)) / NA, Z0 = z0 + ((z1 - z0) * iz) / NZ, Z1 = z0 + ((z1 - z0) * (iz + 1)) / NZ;
+        const q = [[A0, Z0], [A1, Z0], [A1, Z1], [A0, Z1]].map((w) => applyM(fromWall, w));
+        x.beginPath(); q.forEach((pp, k) => (k ? x.lineTo(...pp) : x.moveTo(...pp))); x.closePath(); x.fill();
+        if ((ia * 7 + iz * 3) % 5 === 0) pts.push(applyM(fromWall, [(A0 + A1) / 2, (Z0 + Z1) / 2]));
+      }
+    }
+    return { c, pts, a0, a1, z0, z1, wall };
   }
 
   drawStatic(sky, date) {
@@ -1356,13 +1419,77 @@ export class Office {
       if (!this.fxC || this.fxC.width !== LW || this.fxC.height !== LH) [this.fxC, this.fxX] = tela(LW, LH);
       const fx = this.fxX;
       fx.globalCompositeOperation = 'source-over'; fx.clearRect(0, 0, LW, LH);
-      if (!this.drawDaylightOn(fx, sky, t, date, false)) return;
+      if (!(this.paintWin ? this.drawDaylightPainted(fx, sky, t, date) : this.drawDaylightOn(fx, sky, t, date, false))) return;
       fx.globalCompositeOperation = 'destination-in'; fx.drawImage(this.paintMask, 0, 0);
       fx.globalCompositeOperation = 'source-over';
       this.ctx.drawImage(this.fxC, 0, 0);
       return;
     }
     this.drawDaylightOn(this.ctx, sky, t, date, true);
+  }
+
+  // luce del giorno sul dipinto: la sagoma dei vetri dipinti proiettata sul pavimento (riquadri luminosi con le ombre
+  // dei montanti), fasci nell'aria fatti dalla stessa sagoma a metà strada, pulviscolo dentro i fasci, foglie che
+  // ondeggiano davanti ai vetri e quindi anche nelle loro ombre
+  drawDaylightPainted(ctx, sky, t, date) {
+    const W = this.paintWin;
+    if (!W || sky.night > 0.7) return false;
+    const dusk = sky.night > 0, h = date.getHours() + date.getMinutes() / 60;
+    const lean = (h < 13 ? 1 : -1) * (dusk ? 3.2 : 1.6 + Math.abs(h - 13) * 0.25), depth = dusk ? 10.5 : 6.5;
+    const warm = dusk ? '255,150,70' : '255,226,160';
+    const P = (x, y, z) => (W.wall === 'L' ? this.iso(x, y, z) : this.iso(y, x, z));
+    const breath = 0.85 + Math.sin(t * 0.35) * 0.1 + Math.sin(t * 0.13 + 1) * 0.05;
+    // dalla parete al pavimento: (lungo la parete a, altezza z) → (dentro la stanza ∝ z, spostato di lean ∝ z)
+    const src = [P(0, W.a0, W.z0), P(0, W.a1, W.z0), P(0, W.a0, W.z1)];
+    const dst = [P(0.15, W.a0, 0), P(0.15, W.a1, 0), P(depth, W.a0 + lean, 0)];
+    const M = affine3(src, dst);
+    // la sagoma della luce di questo momento: colore caldo + foglie davanti ai vetri
+    if (!this.winT || this.winT.width !== LW || this.winT.height !== LH) [this.winT, this.winX] = tela(LW, LH);
+    const lx = this.winX;
+    lx.globalCompositeOperation = 'source-over'; lx.clearRect(0, 0, LW, LH); lx.drawImage(W.c, 0, 0);
+    lx.globalCompositeOperation = 'source-in'; lx.fillStyle = `rgb(${warm})`; lx.fillRect(0, 0, LW, LH);
+    lx.globalCompositeOperation = 'destination-out';
+    for (let k = 0; k < 26; k++) {
+      if (rnd(k * 9.7) > 0.55) continue;
+      const u = rnd(k * 3.1 + 7), v = rnd(k * 5.3 + 1) * 0.6;
+      const sway = Math.sin(t * 0.9 + k * 0.7) * 0.012 + Math.sin(t * 2.3 + k) * 0.004;
+      const [x, y] = P(0, W.a0 + (W.a1 - W.a0) * Math.min(1, Math.max(0, u + sway)), W.z1 - (W.z1 - W.z0) * v);
+      const r = 3 + rnd(k * 2.2) * 6;
+      lx.fillStyle = `rgba(0,0,0,${0.35 + rnd(k) * 0.3})`;
+      lx.beginPath(); lx.ellipse(x, y, r, r * 0.75, 0, 0, 7); lx.fill();
+    }
+    lx.globalCompositeOperation = 'source-over';
+    const draw = (m, alpha, blur) => { ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = alpha; if (blur) ctx.filter = `blur(${blur}px)`; ctx.setTransform(...m); ctx.drawImage(this.winT, 0, 0); ctx.restore(); };
+    // fasci nell'aria: la stessa sagoma a metà strada fra vetro e pavimento, sempre più tenue
+    for (let i = 1; i <= 7; i++) { const f = i / 8; draw(lerpM(M, f), (dusk ? 0.07 : 0.055) * breath * (1 - f * 0.4), 0); }
+    // riquadri di luce sul pavimento
+    draw(M, (dusk ? 0.55 : 0.48) * breath, 1);
+    // pulviscolo: granelli che scendono piano dentro i fasci (partono da punti chiari dei vetri)
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let k = 0; k < Math.min(110, W.pts.length); k++) {
+      const p = W.pts[Math.floor(rnd(k * 1.37) * W.pts.length)];
+      const v = (rnd(k * 2.9) + t * (0.004 + rnd(k) * 0.006)) % 1;
+      const q = applyM(M, p);
+      const x = p[0] + (q[0] - p[0]) * v + Math.sin(t * (0.8 + rnd(k + 5)) + k * 2) * 1.6, y = p[1] + (q[1] - p[1]) * v;
+      const tw = Math.max(0, Math.sin(t * (1.2 + rnd(k + 9) * 2.4) + k * 3.3));
+      const alpha = (0.25 + 0.75 * tw) * (1 - v) * breath * (dusk ? 0.9 : 0.75);
+      if (alpha < 0.05) continue;
+      ctx.fillStyle = `rgba(${dusk ? '255,200,140' : '255,246,215'},${alpha.toFixed(2)})`;
+      ctx.fillRect(Math.round(x), Math.round(y), tw > 0.9 ? 2 : 1, 1);
+    }
+    ctx.restore();
+    // gradazione calda e vignettatura morbida
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.fillStyle = dusk ? 'rgba(255,140,60,0.28)' : 'rgba(255,214,150,0.18)';
+    ctx.fillRect(0, 0, LW, LH);
+    ctx.globalCompositeOperation = 'multiply';
+    const [cx, cy] = P(depth * 0.45, (W.a0 + W.a1) / 2, 0);
+    const vg = ctx.createRadialGradient(cx, cy, Math.min(LW, LH) * 0.25, LW / 2, LH / 2, Math.max(LW, LH) * 0.75);
+    vg.addColorStop(0, 'rgba(255,255,255,0)'); vg.addColorStop(1, dusk ? 'rgba(130,80,70,0.4)' : 'rgba(170,140,130,0.28)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
+    ctx.restore();
+    return true;
   }
 
   drawDaylightOn(ctx, sky, t, date, clipToRoom) {
