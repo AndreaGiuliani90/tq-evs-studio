@@ -485,7 +485,9 @@ export class Office {
     // coordinate sulla parete (a lungo il muro, z in altezza) di ogni pixel: inversa della proiezione del muro
     const toWall = affine3([quad[0], quad[1], quad[3]], [[a0, z0], [a1, z0], [a0, z1]]);
     // profili: per ogni striscia verticale (lungo a) e orizzontale (lungo z), quanto è telaio (scuro) e quanto vetro
-    const NA = Math.max(40, Math.round((a1 - a0) * 24)), NZ = Math.max(20, Math.round((z1 - z0) / 2));
+    // tante strisce quanti pixel ci sono lungo il muro (più fitte lascerebbero strisce vuote che spezzano i montanti)
+    const len = (p0, p1) => Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    const NA = Math.max(30, Math.round(len(quad[0], quad[1]) / 1.3)), NZ = Math.max(16, Math.round(len(quad[0], quad[3]) / 1.3));
     const fa = new Float32Array(NA), ca = new Float32Array(NA), fz = new Float32Array(NZ), cz = new Float32Array(NZ);
     for (let py = by0; py <= by1; py++) for (let px = bx0; px <= bx1; px++) {
       if (!inQ(px + 0.5, py + 0.5)) continue;
@@ -495,7 +497,10 @@ export class Office {
       const dark = lum < 95 ? 1 : 0;
       fa[ia] += dark; ca[ia]++; fz[iz] += dark; cz[iz]++;
     }
-    const glassA = Array.from(fa, (v, i) => (ca[i] ? v / ca[i] : 1) < 0.5), glassZ = Array.from(fz, (v, i) => (cz[i] ? v / cz[i] : 1) < 0.62);
+    const prof = (f, c) => { const r = Array.from(f, (v, i) => (c[i] ? v / c[i] : null)); for (let i = 0; i < r.length; i++) if (r[i] == null) r[i] = r[i - 1] ?? r.find((x) => x != null) ?? 1; return r; };
+    const pa = prof(fa, ca), pz = prof(fz, cz);
+    // i traversi orizzontali sono sottili: si allargano di una striscia, così la loro ombra si vede
+    const glassA = pa.map((v) => v < 0.5), glassZ = pz.map((v, i) => v < 0.62 && !(pz[i - 1] > 0.8 || pz[i + 1] > 0.8));
     // la sagoma pulita: vetro dove la striscia verticale E quella orizzontale sono vetro
     const [c, x] = tela(LW, LH);
     const fromWall = affine3([[a0, z0], [a1, z0], [a0, z1]], [quad[0], quad[1], quad[3]]);
@@ -1462,8 +1467,22 @@ export class Office {
     const draw = (m, alpha, blur) => { ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = alpha; if (blur) ctx.filter = `blur(${blur}px)`; ctx.setTransform(...m); ctx.drawImage(this.winT, 0, 0); ctx.restore(); };
     // fasci nell'aria: la stessa sagoma a metà strada fra vetro e pavimento, sempre più tenue
     for (let i = 1; i <= 7; i++) { const f = i / 8; draw(lerpM(M, f), (dusk ? 0.07 : 0.055) * breath * (1 - f * 0.4), 0); }
-    // riquadri di luce sul pavimento
-    draw(M, (dusk ? 0.55 : 0.48) * breath, 1);
+    // riquadri di luce sul pavimento, meno le ombre di mobili e persone (la luce che non arriva a terra)
+    if (!this.patchC || this.patchC.width !== LW || this.patchC.height !== LH) [this.patchC, this.patchX] = tela(LW, LH);
+    const px = this.patchX;
+    px.save(); px.setTransform(1, 0, 0, 1, 0, 0); px.globalCompositeOperation = 'source-over'; px.clearRect(0, 0, LW, LH); px.filter = 'blur(1px)'; px.setTransform(...M); px.drawImage(this.winT, 0, 0); px.restore();
+    const sx = depth / (W.z1 - W.z0), sy = lean / (W.z1 - W.z0);   // spostamento dell'ombra per unità d'altezza
+    px.save(); px.globalCompositeOperation = 'destination-out'; px.filter = 'blur(1.2px)'; px.fillStyle = `rgba(0,0,0,${dusk ? 0.8 : 0.72})`;
+    for (const o of this.occluders()) {
+      const fp = o.fp, sh = fp.map(([x, y]) => [x + o.h * sx, y + o.h * sy]);
+      const S = (pts) => pts.map(([x, y]) => P(x, y, 0));
+      const quads = [fp, sh, ...fp.map((p0, i) => [p0, fp[(i + 1) % fp.length], sh[(i + 1) % fp.length], sh[i]])];
+      px.beginPath();
+      for (const q of quads) { const sp = S(q); sp.forEach((pp, k) => (k ? px.lineTo(...pp) : px.moveTo(...pp))); px.closePath(); }
+      px.fill('nonzero');
+    }
+    px.restore();
+    ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = (dusk ? 0.55 : 0.48) * breath; ctx.drawImage(this.patchC, 0, 0); ctx.restore();
     // pulviscolo: granelli che scendono piano dentro i fasci (partono da punti chiari dei vetri)
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
     for (let k = 0; k < Math.min(110, W.pts.length); k++) {
@@ -1490,6 +1509,22 @@ export class Office {
     ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
     ctx.restore();
     return true;
+  }
+
+  // cose che fanno ombra alla luce del sole: impronta sul pavimento (coordinate della stanza, lato parete con la vetrata
+  // = x piccola) e altezza. Scrivanie, tavoli, mobili, piante e le persone sedute.
+  occluders() {
+    const out = [];
+    const box = (x, y, w, d, h) => out.push({ fp: [[x - w / 2, y - d / 2], [x + w / 2, y - d / 2], [x + w / 2, y + d / 2], [x - w / 2, y + d / 2]], h });
+    const H = { plant: [0.7, 0.7, 36], tallplant: [0.9, 0.9, 88], floorlamp: [0.35, 0.35, 70], sofa: [2.4, 1, 26], sideboard: [1.6, 0.7, 34], crates: [1, 1, 30], bench: [1.4, 0.5, 16], coffeetable: [1, 0.8, 14], armchair: [1, 1, 26], chesstable: [0.8, 0.8, 18], arcade: [1, 0.8, 72], coffee: [1.2, 0.6, 34], watercooler: [0.6, 0.6, 50] };
+    for (const d of this.layout.decor || []) { if (d.wall || d.type === 'rug' || d.x == null) continue; const [w, dd, h] = H[d.type] || [0.6, 0.6, 24]; box(d.x, d.y, d.w && d.type === 'sofa' ? d.w : w, dd, h); }
+    for (const st of this.stations({ all: true })) {
+      if (FREE.includes(st.kind)) box(st.x + 1.2, st.y + 0.9, 2.4, 1.4, 26);
+      else { const L = this.local(st); out.push({ fp: [L.xy(0.2, 1.3), L.xy(2.6, 1.3), L.xy(2.6, 2.5), L.xy(0.2, 2.5)], h: 28 }); }
+    }
+    for (const st of this.stations()) { if (this.spotOf(st.agentId)) continue; const [cx, cy] = this.seatOf(st); box(cx, cy, 0.6, 0.6, 50); }
+    for (const id of Object.keys(this.agents || {})) { const sp = this.spotOf(id); if (sp) box(sp.x, sp.y, 0.5, 0.5, 52); }
+    return out;
   }
 
   drawDaylightOn(ctx, sky, t, date, clipToRoom) {
