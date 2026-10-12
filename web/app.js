@@ -97,7 +97,7 @@ function onEvent(e) {
   if (t === 'office.updated') loadOffice().catch(() => {});
   if (t === 'releases.updated' && $('#modal-box')?.querySelector('h2')?.textContent === 'Registro delle unioni') openModal('releases');
   if (t === 'backlog.updated') { S.backlog = e.backlog; S.office?.setBoards({ backlog: e.backlog }); if ($('#backlog-box') && !document.activeElement?.closest('#backlog-box form')) { const sl = $('.fl-wrap')?.scrollLeft || 0; openModal('backlog').then?.(() => { const w = $('.fl-wrap'); if (w) w.scrollLeft = sl; }); } }
-  if ((t === 'task.updated' && ['DONE', 'FAILED'].includes(e.task?.status)) || t === 'agent.updated') refreshTeam();
+  if ((t === 'task.updated' && ['DONE', 'FAILED'].includes(e.task?.status)) || t === 'agent.updated' || t === 'releases.updated' || (t === 'agent.status' && ['strategist', 'release'].includes(e.agentId) && e.status === 'IDLE')) refreshTeam();
   if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
   if (!['agent.status', 'task.updated', 'agent.updated'].includes(t)) { S.log.unshift(e); if (S.log.length > 300) S.log.pop(); renderLog(); }
 }
@@ -817,8 +817,8 @@ async function openModal(which) {
     const q = (r) => (r.quality == null ? '<span class="muted">—</span>' : `<b class="${r.quality >= 80 ? 'good' : r.quality >= 60 ? 'mid' : 'bad'}">${r.quality}%</b>`);
     modal(`<div id="team-box"><h2>Performance della squadra</h2>
       <p>🏆 <b>Lavora di più:</b> ${esc(tm.rows.find((r) => r.id === tm.most)?.name || '—')} &nbsp; ⭐ <b>Lavora meglio:</b> ${esc(tm.rows.find((r) => r.id === tm.best)?.name || '— (servono almeno 3 lavori)')}</p>
-      <table class="costs team"><thead><tr><th></th><th>Task fatti</th><th>Qualità</th><th>Rifatti</th><th>Falliti</th><th>Tempo</th></tr></thead><tbody>${tm.rows.filter((r) => r.enabled !== false || r.done).map((r) => `<tr><td><b>${esc(r.name)}</b><div class="muted small">${esc(r.role || '')}</div></td><td>${bar(r.done, max)} ${r.done}</td><td>${q(r)}</td><td class="num">${r.rework}</td><td class="num">${r.failed}</td><td class="num">${r.minutes ? `${r.minutes} min` : '—'}${r.avgMin ? `<div class="muted small">${r.avgMin} min/task</div>` : ''}</td></tr>`).join('')}</tbody></table>
-      <p class="muted small">Qualità = lavori andati bene al primo colpo: completati ÷ (completati + falliti + rifatti perché il QA ha trovato problemi). Per Tizia un test che trova bug conta come lavoro ben fatto. Tempo = minuti passati a lavorare.</p></div>`);
+      <table class="costs team"><thead><tr><th></th><th>Lavori fatti</th><th>Qualità</th><th>Rifatti</th><th>Falliti</th><th>Tempo</th></tr></thead><tbody>${tm.rows.filter((r) => r.enabled !== false || r.done).map((r) => `<tr><td><b>${esc(r.name)}</b><div class="muted small">${esc(r.role || '')}</div>${r.inStudio && r.kinds ? `<div class="muted small" title="Lavora dentro lo Studio, senza task">⚙ ${esc(r.kinds)}</div>` : ''}</td><td>${bar(r.done, max)} ${r.done}</td><td>${q(r)}</td><td class="num">${r.rework}</td><td class="num">${r.failed}</td><td class="num">${r.minutes ? `${r.minutes} min` : '—'}${r.avgMin ? `<div class="muted small">${r.avgMin} min/lavoro</div>` : ''}</td></tr>`).join('')}</tbody></table>
+      <p class="muted small">Qualità = lavori andati bene al primo colpo: completati ÷ (completati + falliti + rifatti perché il QA ha trovato problemi). Per Tizia un test che trova bug conta come lavoro ben fatto. Stratega e Notaio non ricevono task: contano le scelte dei modelli, i messaggi smistati, le unioni e i problemi fermati prima di unire (il tempo si misura da quando è stato introdotto il conteggio). Tempo = minuti passati a lavorare.</p></div>`);
     return;
   }
   if (which === 'costs') {

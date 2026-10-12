@@ -1290,3 +1290,24 @@ test('lavagna: un\'attività finita con una domanda torna "da fare" e aspetta te
     assert.equal((await (await post({ status: 'scartato' })).json()).status, 'scartato');
   } finally { server.close(); }
 });
+
+test('SQUADRA: il lavoro di Stratega e Notaio (scelte dei modelli, unioni) si conta, anche quello già fatto', async () => {
+  const root = makeFixtureRepo();
+  const s = await studioFor(root, registryWith(studioProvider()));
+  const o = s.orch;
+  s.store.data.requests['R-0901'] = { id: 'R-0901', status: 'DONE', text: 'x', taskIds: [], strategy: { by: 'stratega' } };
+  s.store.data.requests['R-0902'] = { id: 'R-0902', status: 'DONE', text: 'x', taskIds: [], linkedBy: 'stratega' };
+  o.release.ledger.entries.push({ n: 1, requestId: 'R-0901', kind: 'unione' }, { n: 2, requestId: 'R-0902', kind: 'unione' });
+  delete s.store.data.workStats;
+  o.seedWorkStats();
+  let p = o.performance();
+  const st = p.rows.find((r) => r.id === 'strategist'), rl = p.rows.find((r) => r.id === 'release');
+  assert.equal(st.done, 2); assert.match(st.kinds, /scelta dei modelli/);
+  assert.equal(rl.done, 2); assert.match(rl.kinds, /unioni/);
+  // da qui in poi: un'unione vera si conta
+  const req = await o.handleUserMessage('Aggiungi una feature');
+  await waitFor(() => req.status === 'DONE', 15000, 'DONE');
+  await o.merge(req.id);
+  p = o.performance();
+  assert.equal(p.rows.find((r) => r.id === 'release').done, 3);
+});

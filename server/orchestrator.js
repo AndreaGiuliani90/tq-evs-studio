@@ -149,12 +149,14 @@ export class Orchestrator {
       const fast = pickByTier(sopts, 'bassa');
       const provider = this.providers.get(fast.provider)?.run ? this.providers.get(fast.provider) : await this.providers.resolve(strat.provider);
       if (provider.id !== 'mock') {
+        var t0s = Date.now();
         this.agents.setStatus('strategist', 'THINKING', { task: { id: req.id, title: `Valuto: ${clip(req.originalText || req.text, 60)}` }, text: 'scelgo i modelli e controllo i costi', semantic: 'agent.thinking' });
         const r = await provider.run({ agent: strat, system: strat.systemInstructions, prompt: strategistPrompt({ req, tasks: perTask.map(({ pt, agent, options }) => ({ ...pt, agentName: agent.name, options })), images: imgOptions, need }), cwd: this.projectRoot, mode: 'plan', model: strat.model || fast.model, timeoutMs: 4 * 60 * 1000, onEvent: (e) => this.onProviderEvent('strategist', null, e) }).catch((e) => ({ ok: false, error: String(e) }));
         const j = r.ok ? (extractJSON(r.text) || extractJSON(r.allText)) : null;
         if (j) out = this.validateStrategy(j, perTask, imgOptions, rules);
         else if (!r.ok) this.events.emit('studio.warning', { text: `Stratega: ${truncate(r.error, 200)} — uso le regole di base` });
         this.agents.setStatus('strategist', 'IDLE', { task: null, text: out.by === 'stratega' ? 'valutazione fatta' : 'regole di base' });
+        this.work('strategist', { ok: out.by === 'stratega', ms: Date.now() - t0s, kind: 'scelta dei modelli' });
       }
     }
     for (const { pt } of perTask) out.byKind[pt.kind] ??= out.tasks[pt.key];
@@ -227,6 +229,7 @@ export class Orchestrator {
     const alt = imgPlan ? null : await this.freeAlternative(t, req, from).catch(() => null);
     const when = this.whenText(lim.until);
     const say = (text) => this.chat('agent', text, { agentId: 'strategist', requestId: req.id, taskId: t.id, kind: 'agent-update' });
+    this.work('strategist', { ok: true, kind: alt ? 'cambio modello (limiti d\'uso)' : 'attesa del rinnovo (limiti d\'uso)' });
     if (alt) {
       req.providerSwap = { from, to: alt };
       this.setTask(t, { status: 'PENDING', strategy: alt, lastError: truncate(err, 600), attempt: Math.max(0, t.attempt - 1) }, `piano ${this.planLabel(from)} esaurito: passo a ${this.modelLabel(alt)}`);
@@ -293,6 +296,7 @@ export class Orchestrator {
     await this.syncMerged().catch(() => {});
     this.releaseOrphans();
     this.backlog.reconcile();
+    this.seedWorkStats();
     for (const r of Object.values(this.S.requests)) {
       if (r.merged && r.sameBranch) this.markChainMerged(r);
       if (r.discarded && (r.mergeDecision || r.mergeQueued)) Object.assign(r, { mergeDecision: false, mergeError: null, mergeQueued: false });
@@ -429,18 +433,20 @@ export class Orchestrator {
     const STATE = { PLANNING: 'in pianificazione', RUNNING: 'in lavorazione', QUEUED: 'in attesa di un altro lavoro', NEEDS_USER: 'aspetta una decisione dell\'utente', DONE: 'finita, non ancora unita al gioco' };
     const candidates = cands.map((r) => ({ id: r.id, state: r.mergeQueued ? 'in coda per l\'unione' : STATE[r.status] || r.status, text: r.originalText ? `${r.originalText} — ${r.text}` : r.text, question: r.status === 'NEEDS_USER' && !r.answeredBy ? r.question : null, files: (r.report?.filesChanged || []).map((f) => f.file || f), tasks: this.tasksOf(r.id).map((t) => `${this.agentName(t.agentId)}: ${t.title}`) }));
     this.agents.setStatus('strategist', 'THINKING', { task: { id: 'triage', title: `Smisto: ${clip(text, 50)}` }, text: 'controllo se dipende da lavori aperti', semantic: 'agent.thinking' });
+    const t0 = Date.now(); let parsed = false;
     try {
       const r = await provider.run({ agent: strat, system: strat.systemInstructions, prompt: triagePrompt({ text, candidates }), cwd: this.projectRoot, mode: 'plan', model: fast.model, timeoutMs: 90 * 1000, maxTurns: 2, onEvent: () => {} }).catch((e) => ({ ok: false, error: String(e) }));
       const j = r.ok ? (extractJSON(r.text) || extractJSON(r.allText)) : null;
       const dec = String(j?.decision || '').toLowerCase();
       const tgt = j?.request && cands.find((c) => c.id === String(j.request).toUpperCase().trim());
       const why = clip(String(j?.why || ''), 300);
+      parsed = ['nuova', 'seguito', 'risposta'].includes(dec);
       if (!['nuova', 'seguito', 'risposta'].includes(dec)) { if (!r.ok) this.events.emit('studio.warning', { text: `Stratega (smistamento): ${truncate(r.error, 160)} — regole di base` }); return rules; }
       if (dec === 'nuova') return { decision: 'nuova', by: 'stratega', why };
       if (!tgt) return rules;
       if (dec === 'risposta' && pendingQ.includes(tgt)) return { decision: 'risposta', target: tgt, by: 'stratega', why };
       return { decision: 'seguito', target: tgt, by: 'stratega', why };
-    } finally { this.agents.setStatus('strategist', 'IDLE', { task: null, text: 'smistamento fatto' }); }
+    } finally { this.agents.setStatus('strategist', 'IDLE', { task: null, text: 'smistamento fatto' }); this.work('strategist', { ok: parsed, ms: Date.now() - t0, kind: 'smistamento messaggi' }); }
   }
 
   // "Sgancia": il seguito che lo Stratega aveva agganciato (e che ancora aspetta) parte da solo, dal gioco attuale
@@ -520,7 +526,50 @@ export class Orchestrator {
     return req;
   }
 
-  performance() { return teamPerformance(this.S.tasks, this.agents.list().filter((a) => a.id !== 'director')); }
+  // Stratega e Notaio non ricevono task: lavorano dentro lo Studio (scelta dei modelli, smistamento dei messaggi,
+  // unioni). Il loro lavoro si conta qui, così compare nella lavagna SQUADRA come quello degli altri.
+  get workStats() { return (this.S.workStats ??= {}); }
+  work(agentId, { ok = true, ms = 0, kind = 'lavoro' } = {}) {
+    const w = (this.workStats[agentId] ??= { done: 0, failed: 0, ms: 0, kinds: {} });
+    if (ok) w.done++; else w.failed++;
+    w.ms += Math.max(0, ms || 0);
+    w.kinds[kind] = (w.kinds[kind] || 0) + 1;
+    this.store.save();
+  }
+  // la prima volta: si ricostruisce il lavoro già fatto dallo storico (strategie scelte, messaggi agganciati, unioni)
+  seedWorkStats() {
+    if (this.workStats.__seeded) return;
+    const reqs = Object.values(this.S.requests), chat = this.S.chat || [];
+    const st = { done: 0, failed: 0, ms: 0, kinds: {} };
+    const k = (o, name, n) => { if (n) o.kinds[name] = (o.kinds[name] || 0) + n; };
+    const models = reqs.filter((r) => r.strategy?.by === 'stratega').length, linked = reqs.filter((r) => r.linkedBy === 'stratega').length, stErr = reqs.filter((r) => r.strategy?.error).length;
+    st.done = models + linked; st.failed = stErr; k(st, 'scelta dei modelli', models); k(st, 'smistamento messaggi', linked);
+    const rl = { done: 0, failed: 0, ms: 0, kinds: {} };
+    const merges = this.release.ledger.entries.filter((e) => e.kind === 'unione').length, reverts = this.release.ledger.entries.filter((e) => e.kind === 'annullamento').length;
+    const caught = chat.filter((m) => m.agentId === 'release' && /^(Prova generale di|Fermata l'unione)/.test(m.text || '')).length;
+    rl.done = merges + reverts + caught; k(rl, 'unioni', merges); k(rl, 'annullamenti', reverts); k(rl, 'problemi fermati prima di unire', caught);
+    this.S.workStats = { ...this.workStats, strategist: this.workStats.strategist || st, release: this.workStats.release || rl, __seeded: true };
+    this.store.save();
+  }
+  performance() {
+    const p = teamPerformance(this.S.tasks, this.agents.list().filter((a) => a.id !== 'director'));
+    for (const [id, w] of Object.entries(this.workStats)) {
+      if (id.startsWith('__')) continue;
+      const row = p.rows.find((r) => r.id === id); if (!row) continue;
+      row.done += w.done; row.failed += w.failed; row.minutes += Math.round(w.ms / 60000);
+      const tries = row.done + row.failed + row.rework;
+      row.quality = tries ? Math.round((100 * row.done) / tries) : null;
+      row.avgMin = row.done && row.minutes ? Math.round((row.minutes / row.done) * 10) / 10 : row.done ? 0 : null;
+      row.kinds = Object.entries(w.kinds || {}).map(([k, n]) => `${n} ${k}`).join(' · ');
+      row.inStudio = true;
+    }
+    p.rows.sort((a, b) => b.done - a.done || (b.quality ?? -1) - (a.quality ?? -1));
+    const active = p.rows.filter((r) => r.done + r.failed > 0);
+    p.most = [...active].sort((a, b) => b.done - a.done)[0]?.id || null;
+    p.best = [...active].filter((r) => r.done + r.failed + r.rework >= 3).sort((a, b) => b.quality - a.quality || b.done - a.done)[0]?.id || null;
+    p.totals = { done: active.reduce((s, r) => s + r.done, 0), minutes: active.reduce((s, r) => s + r.minutes, 0) };
+    return p;
+  }
 
   setRequest(req, patch) {
     Object.assign(req, patch, { updatedAt: now() });
@@ -1621,8 +1670,9 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
       q.sort();
       const id = q[0];
       const req = this.S.requests[id];
-      try { if (req && !req.merged) await this.mergeNow(req); }
-      catch (e) { if (req) { this.setRequest(req, { mergeError: e.message }); this.say(`Non ho unito ${id}: ${e.message}`, req, 'escalation'); } }
+      const t0 = Date.now();
+      try { if (req && !req.merged) { await this.mergeNow(req); this.work('release', { ok: true, ms: Date.now() - t0, kind: req.merged ? 'unioni' : 'problemi fermati prima di unire' }); } }
+      catch (e) { this.work('release', { ok: !!req?.mergeDecision, ms: Date.now() - t0, kind: req?.mergeDecision ? 'problemi fermati prima di unire' : 'unioni non riuscite' }); if (req) { this.setRequest(req, { mergeError: e.message }); this.say(`Non ho unito ${id}: ${e.message}`, req, 'escalation'); } }
       finally { q.splice(q.indexOf(id), 1); if (req) { req.forceMerge = false; this.setRequest(req, { mergeQueued: false }); } this.store.save(); }
     }
     if (this.agents.get('release')) this.agents.setStatus('release', 'IDLE', { task: null, text: 'coda vuota' });
@@ -1799,6 +1849,7 @@ Nel JSON finale metti "sounds": [{"id", "label" (italiano), "category", "engine"
     const pre = await this.release.revertPreflight(req);
     if (!pre.ok) throw new Error(`togliere ${req.id} romperebbe aggiornamenti entrati dopo${later.length ? ` (${later.join(', ')})` : ''} nei file ${pre.files.join(', ')}. Non ho toccato niente: chiedi alla Regia di togliere a mano le parti di ${req.id} che non vuoi.`);
     const r = await this.git.revertMerge(req);
+    this.work('release', { ok: true, kind: 'annullamenti' });
     this.release.record(req, { kind: 'annullamento', mergeCommit: r.revertCommit, checks: { dopo: later.join(', ') || '—' } });
     this.setRequest(req, { merged: false, revertCommit: r.revertCommit });
     this.chat('system', `Unione di ${req.id} annullata (commit ${r.revertCommit.slice(0, 7)}).`, { requestId: req.id });
