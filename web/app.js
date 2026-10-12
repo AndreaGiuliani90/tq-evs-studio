@@ -466,7 +466,7 @@ document.addEventListener('click', act(async (ev) => {
   const go = ev.target.closest('[data-goto]');
   if (go) { ev.preventDefault(); gotoReq(go.dataset.goto); return; }
   const hook = ev.target.closest('[data-hook]');
-  if (hook) { setReplyTo(hook.dataset.hook); return; }
+  if (hook) { if (hook.closest('#modal-box')) closeModal(); setReplyTo(hook.dataset.hook); return; }
   if (ev.target.closest('[data-hook-clear]')) { setReplyTo(null); return; }
   const pd = ev.target.closest('[data-pd]');
   if (pd) { S.pdOpen = !S.pdOpen; try { localStorage.setItem('studio:tt-open', S.pdOpen ? '1' : '0'); } catch { /* niente */ } renderDecisions(); return; }
@@ -664,6 +664,7 @@ function flowLayout(g) {
 function flowState(n) {
   if (n.status === 'fatto') return n.merged ? ['done', '✔ fatta · nel gioco'] : ['done pending', '✔ fatta · da unire'];
   if (n.status === 'in corso') return ['doing', `⚙ in corso${n.lastRequestId ? ' · ' + n.lastRequestId : ''}`];
+  if (n.waitingAnswer && n.canStart) return ['ready ask', '❓ aspetta una tua risposta'];
   return n.canStart ? ['ready', '▶ si può avviare'] : ['blocked', '🔒 non ancora'];
 }
 function flowHTML(g) {
@@ -692,7 +693,8 @@ function flowHTML(g) {
   const nodes = L.vis.map((n) => {
     const [cls, label] = flowState(n);
     const who = n.agent && S.agents[n.agent] ? esc(S.agents[n.agent].name) : '';
-    const foot = n.status === 'da fare' && n.canStart ? `<button class="btn sm primary" data-fl-start="${esc(n.id)}">▶ Avvia</button><span class="fl-mode">${n.mode === 'seguito' ? `continua il branch di ${esc(n.from)}` : 'branch nuovo'}</span>`
+    const foot = n.status === 'da fare' && n.canStart && n.waitingAnswer ? `<button class="btn sm primary" data-hook="${esc(n.waitingAnswer)}" title="Rispondi alla domanda della Regia in ${esc(n.waitingAnswer)}">↪ Rispondi</button><button class="btn sm" data-fl-start="${esc(n.id)}" title="Riparte da quella domanda, con le scelte che hai fatto">▶ Riparti</button>`
+      : n.status === 'da fare' && n.canStart ? `<button class="btn sm primary" data-fl-start="${esc(n.id)}">▶ Avvia</button><span class="fl-mode">${n.mode === 'seguito' ? `continua il branch di ${esc(n.from)}` : 'branch nuovo'}</span>`
       : n.status === 'da fare' ? `<span class="fl-why" title="${esc(n.why || '')}">${esc(n.why || '')}</span>`
       : n.status === 'in corso' ? `<button class="tt-link" data-goto="${esc(n.lastRequestId || n.requestId || '')}">segui in chat</button>`
       : !n.merged && n.lastRequestId && S.requests[n.lastRequestId] && !S.requests[n.lastRequestId].discarded ? `<button class="btn sm" data-act="merge" data-req="${esc(n.lastRequestId)}">Unisci ${esc(n.lastRequestId)}</button>` : '';
@@ -725,6 +727,8 @@ function showFlowDetail(id) {
   for (const el of document.querySelectorAll('.fn')) el.classList.toggle('sel', el.dataset.flSel === id);
   const [, label] = flowState(n);
   box.innerHTML = `<div class="fl-det"><div class="fl-det-h"><b>${esc(n.id)}</b> · ramo «${esc(n.lane)}» · ${esc(label)}${n.why && n.status === 'da fare' ? ` — <span class="muted">${esc(n.why)}</span>` : ''}</div>
+    ${n.waitingAnswer && n.status === 'da fare' ? `<p>❓ La volta scorsa la Regia ti ha chiesto qualcosa in <b>${esc(n.waitingAnswer)}</b> e l'attività si è fermata lì (il ramo non è bloccato). Rispondi in chat <button class="btn sm" data-hook="${esc(n.waitingAnswer)}">↪ Rispondi a ${esc(n.waitingAnswer)}</button> <button class="tt-link" data-goto="${esc(n.waitingAnswer)}">leggi la domanda</button>, oppure fai le scelte richieste (per i suoni: pannello <b>Suoni</b>) e premi «Riparti».</p>` : ''}
+    ${n.status === 'fatto' ? `<p class="muted">Fatta${n.merged ? ' e nel gioco' : ''}. Se in realtà non è stata fatta come volevi: <button class="btn sm" data-fl-reopen="${esc(n.id)}">↺ Riapri</button></p>` : ''}
     ${n.status === 'da fare' && n.canStart ? `<p>Si può avviare: ${n.mode === 'seguito' ? `continua il branch di <b>${esc(n.from)}</b> (parte dal suo risultato; alla fine unisci solo l'ultima)` : 'parte su un <b>branch nuovo</b> dal gioco attuale, in parallelo agli altri rami'}. <button class="btn sm primary" data-fl-start="${esc(n.id)}">▶ Avvia ${esc(n.id)}</button></p>` : ''}
     ${flowForm(n)}</div>`;
   wireFlow(box);
@@ -734,6 +738,7 @@ function wireFlow(root = document) {
   for (const x of root.querySelectorAll('[data-fl-collapse]')) x.onclick = () => { S.flCollapse = !S.flCollapse; try { localStorage.setItem('studio:fl-collapse', S.flCollapse ? '1' : '0'); } catch { /* niente */ } openModal('backlog'); };
   for (const x of root.querySelectorAll('[data-fl-all]')) x.onclick = act(async () => { const r = await api('POST', '/api/backlog/start-ready'); toast(`Avviate: ${r.started.join(', ') || 'nessuna'}.`); });
   for (const x of root.querySelectorAll('[data-fl-sel]')) x.onclick = (ev) => { if (ev.target.closest('button,a')) return; showFlowDetail(x.dataset.flSel); };
+  for (const x of root.querySelectorAll('[data-fl-reopen]')) x.onclick = act(async () => { await api('PUT', `/api/backlog/${x.dataset.flReopen}`, { status: 'da fare', requestId: null }); toast(`${x.dataset.flReopen} riaperta: torna da fare.`); });
   for (const x of root.querySelectorAll('[data-fl-drop]')) x.onclick = act(async () => { if (confirm(`Togliere ${x.dataset.flDrop} dalla lavagna?`)) await api('DELETE', `/api/backlog/${x.dataset.flDrop}`); });
   for (const f of root.querySelectorAll('[data-fl-form]')) f.onsubmit = act(async (ev) => {
     ev.preventDefault(); const d = Object.fromEntries(new FormData(f));
@@ -781,6 +786,20 @@ async function openModal(which) {
     modal(`<h2>Registro delle unioni</h2><p class="muted">Tenuto dal Notaio: ogni aggiornamento entra nel gioco uno alla volta, dopo una prova in una copia a parte e il controllo che non si perda nessuna riga.</p>
       ${r.queue.length ? `<p>In coda: <b>${r.queue.map(esc).join(' → ')}</b></p>` : ''}
       <table class="costs"><thead><tr><th>N.</th><th>Richiesta</th><th>Quando</th><th>Versione</th><th>Commit</th><th>Controlli</th></tr></thead><tbody>${r.entries.map((e) => `<tr><td>${e.n}</td><td><b>${esc(e.requestId)}</b> ${e.kind === 'annullamento' ? '<span class="prio p-alta">annullata</span>' : ''}<div class="muted small">${esc(e.title)}</div></td><td class="small">${new Date(e.at).toLocaleString('it-IT')}</td><td>${esc(e.version || '—')}</td><td><code>${esc((e.mergeCommit || '').slice(0, 7))}</code></td><td class="small">${Object.entries(e.checks || {}).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(' · ')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Nessuna unione ancora.</td></tr>'}</tbody></table>`);
+    return;
+  }
+  if (which === 'sounds') {
+    const m = await api('GET', '/api/sfx');
+    const list = Object.values(m.sounds || {}).sort((a, b) => (a.status === 'bozza' ? 0 : 1) - (b.status === 'bozza' ? 0 : 1) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    const todo = list.filter((e) => e.status === 'bozza').length;
+    const ST = { bozza: ['da scegliere', 'p-alta'], scelto: ['scelto', 'p-bassa'], scartato: ['scartato', ''] };
+    modal(`<div id="sounds-box"><h2>Suoni</h2><p class="muted">Le bozze di Rumore: ascolta le varianti e scegli quella da usare nel gioco (le richieste che le integrano usano la scelta). ${todo ? `<b>${todo} da scegliere.</b>` : 'Niente da scegliere.'}</p>
+      ${list.map((e) => `<div class="snd ${e.status === 'scartato' ? 'off' : ''}"><div class="snd-h"><b>${esc(e.label || e.id)}</b> <code class="muted">${esc(e.id)}</code> <span class="prio ${ST[e.status]?.[1] || ''}">${esc(ST[e.status]?.[0] || e.status)}</span> <span class="muted small">${esc(e.category || '')} · ${esc(e.engine || '')}${e.request ? ` · ${esc(e.request)}` : ''}${e.license?.commercial === false ? ' · licenza: solo uso non commerciale (piano gratuito)' : ''}</span></div>
+        <div class="snd-v">${(e.variants || []).map((v) => { const src = v.ogg || v.mp3 || v.raw; return `<div class="var ${e.chosen === v.n ? 'chosen' : ''}"><span>v${v.n}</span>${src ? `<audio controls preload="none" src="${esc(src)}"></audio>` : '<span class="muted">file mancante</span>'}<button class="btn sm ${e.chosen === v.n ? 'primary' : ''}" data-snd="${esc(e.id)}" data-n="${v.n}">${e.chosen === v.n ? '✔ scelta' : 'Scegli'}</button></div>`; }).join('')}</div>
+        <div class="snd-a">${e.status !== 'scartato' ? `<button class="btn sm" data-snd-off="${esc(e.id)}">Scarta il suono</button>` : `<button class="btn sm" data-snd-back="${esc(e.id)}">Rimetti in bozza</button>`}</div></div>`).join('') || '<p class="muted">Nessun suono ancora. Chiedi a Rumore, per esempio «fammi le bozze dei suoni per …».</p>'}</div>`);
+    for (const x of document.querySelectorAll('[data-snd]')) x.onclick = act(async () => { await api('POST', `/api/sfx/${x.dataset.snd}`, { chosen: Number(x.dataset.n) }); openModal('sounds'); });
+    for (const x of document.querySelectorAll('[data-snd-off]')) x.onclick = act(async () => { await api('POST', `/api/sfx/${x.dataset.sndOff}`, { status: 'scartato' }); openModal('sounds'); });
+    for (const x of document.querySelectorAll('[data-snd-back]')) x.onclick = act(async () => { await api('POST', `/api/sfx/${x.dataset.sndBack}`, { status: 'bozza' }); openModal('sounds'); });
     return;
   }
   if (which === 'backlog') {

@@ -379,3 +379,13 @@ b.good { color: #5fd38a; } b.mid { color: #e0b050; } b.bad { color: #ff7a6a; }
 .fl-donelanes { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .fl-donelanes span { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
 .fl-donelanes i { font-style: normal; color: var(--green); }
+
+/* ─── Suoni ─── */
+.snd { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 8px 0; background: var(--panel2); }
+.snd.off { opacity: .5; }
+.snd-h { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.snd-v { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; }
+.snd .var { display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 8px; padding: 3px 6px; }
+.snd .var.chosen { border-color: var(--green); background: rgba(123,216,143,.08); }
+.snd audio { height: 30px; width: 220px; }
+.fn.ready.ask { border-color: var(--yellow); } .fn.ready.ask .fn-st { color: var(--yellow); }

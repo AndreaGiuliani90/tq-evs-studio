@@ -1253,3 +1253,40 @@ test('lavagna a rami: nello stesso ramo una alla volta (continua il branch), ram
   assert.ok(B.graph().nodes.find((n) => n.id === 'B-1').merged, 'B-1 nel gioco (unita con B-2)');
   assert.equal(B.canStart(B.get('B-4')).ok, true, 'ora il ramo Testi può partire, dal gioco che contiene B-1');
 });
+
+test('lavagna: un\'attività finita con una domanda torna "da fare" e aspetta te (non blocca il ramo); completata da un seguito si spunta; suoni scelti dal pannello', async () => {
+  const root = makeFixtureRepo();
+  let ask = true;
+  const prov = new ScriptedProvider('scripted', async (o) => {
+    if (o.agent.id === 'director') return ask ? { text: '```json\n' + JSON.stringify({ reply: 'Scegli le varianti v1/v2/v3.', tasks: [] }) + '\n```' } : planJSON([{ key: 'd', agent: 'dev', kind: 'implement', title: 'integra', dependsOn: [] }]);
+    if (o.agent.id === 'dev') { fs.writeFileSync(path.join(o.cwd, 'src/sfx.js'), 'export const s = 1;\n'); return { text: '{"summary":"ok"}' }; }
+    return { text: '{"verdict":"PASS","summary":"ok"}' };
+  });
+  const s = await studioFor(root, registryWith(prov));
+  const o = s.orch, B = o.backlog;
+  B.add({ title: 'Integra i suoni', lane: 'Audio' }); B.add({ title: 'Altri suoni', lane: 'Audio' });
+  const r1 = await o.startBacklogItem('B-1');
+  await waitFor(() => r1.status === 'ANSWERED', 15000, 'risposta con domanda');
+  assert.equal(B.get('B-1').status, 'da fare'); assert.equal(B.get('B-1').waitingAnswer, r1.id);
+  assert.match(B.canStart(B.get('B-2')).why, /prima va fatta B-1/, 'il ramo resta in ordine ma non è "occupato"');
+  ask = false;
+  const r2 = await o.startBacklogItem('B-1');
+  assert.equal(r2.parent, r1.id, 'riparte dalla domanda');
+  await waitFor(() => B.get('B-1').status === 'fatto', 15000, 'fatta');
+  assert.equal(B.get('B-1').waitingAnswer, null);
+  // riapri
+  B.update('B-1', { status: 'da fare', requestId: null });
+  assert.equal(B.get('B-1').status, 'da fare'); assert.ok(B.canStart(B.get('B-1')).ok);
+  // pannello Suoni
+  s.orch.sfx.upsert({ id: 'sfx_prova_01', label: 'Prova', variants: [{ n: 1 }, { n: 2 }], status: 'bozza', chosen: null });
+  const server = createServer(s);
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (b) => fetch(`${base}/api/sfx/sfx_prova_01`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+    assert.equal((await (await post({ chosen: 2 })).json()).chosen, 2);
+    assert.equal(s.orch.sfx.get('sfx_prova_01').status, 'scelto');
+    assert.equal((await post({ chosen: 5 })).status, 400);
+    assert.equal((await (await post({ status: 'scartato' })).json()).status, 'scartato');
+  } finally { server.close(); }
+});

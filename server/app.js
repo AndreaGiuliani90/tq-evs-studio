@@ -258,6 +258,16 @@ export function createServer(studio) {
     ['GET', /^\/api\/releases$/, async () => orch.release.summary()],
     ['GET', /^\/api\/client-log$/, async (m, b, q) => { try { fs.appendFileSync(path.join(dataDir, 'client-errors.log'), `${new Date().toISOString()} ${String(q?.get?.('m') || '').slice(0, 800).replace(/\n/g, ' ')}\n`); } catch { /* niente */ } return { ok: true }; }],
     ['GET', /^\/api\/sfx$/, async () => orch.sfx.manifest()],
+    // pannello Suoni: scegli una variante (diventa quella del gioco), scarta, o rimetti in bozza
+    ['POST', /^\/api\/sfx\/([\w-]+)$/, async (m, b) => {
+      const e = orch.sfx.get(m[1]); if (!e) throw new Error('suono sconosciuto');
+      const n = b.chosen == null ? null : Number(b.chosen);
+      if (n != null && !(e.variants || []).some((v) => v.n === n)) throw new Error('variante inesistente');
+      const status = b.status || (n != null ? 'scelto' : 'bozza');
+      const out = orch.sfx.upsert({ id: e.id, chosen: status === 'scelto' ? n : null, status, decidedAt: new Date().toISOString() });
+      events.emit('sfx.updated', { id: e.id, status: out.status, chosen: out.chosen });
+      return out;
+    }],
     ['POST', /^\/api\/costs\/reset$/, async () => orch.costs.reset()],
     ['GET', /^\/api\/office$/, async () => ({ ...office.get(), paint: office.paint() })],
     ['DELETE', /^\/api\/office\/paint$/, async () => { office.snapshot(agents); office.setPaint(null); return { ok: true }; }],

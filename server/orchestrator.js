@@ -292,6 +292,7 @@ export class Orchestrator {
     }
     await this.syncMerged().catch(() => {});
     this.releaseOrphans();
+    this.backlog.reconcile();
     for (const r of Object.values(this.S.requests)) {
       if (r.merged && r.sameBranch) this.markChainMerged(r);
       if (r.discarded && (r.mergeDecision || r.mergeQueued)) Object.assign(r, { mergeDecision: false, mergeError: null, mergeQueued: false });
@@ -493,6 +494,15 @@ export class Orchestrator {
     if (!can.ok) throw new Error(`${it.id} non si può ancora avviare: ${can.why}`);
     const text = `Esegui l'attività ${it.id} della lavagna DA FARE (ramo «${this.backlog.laneOf(it)}»): ${it.title}.${it.details ? `\n${it.details}` : ''}${it.agent ? `\n(concordata con ${this.agentName(it.agent)})` : ''}`;
     if (!echoed) this.chat('user', `▶ Avvia ${it.id}: ${it.title}`);
+    // la volta scorsa la Regia ti aveva fatto una domanda: si riparte da lì (col contesto della domanda e delle tue scelte)
+    const asked = it.waitingAnswer && this.S.requests[it.waitingAnswer];
+    if (asked && can.mode !== 'seguito') {
+      const fr = this.followUp(asked, `${text}\nLa volta scorsa mi hai chiesto delle scelte: le trovi nello Studio (per i suoni: varianti scelte nel pannello Suoni, sfx_manifest.json) o nella chat. Procedi con quelle.`, []);
+      fr.backlogId = it.id;
+      this.store.save();
+      this.backlog.update(it.id, { status: 'in corso', requestId: fr.id, waitingAnswer: null });
+      return fr;
+    }
     // stesso ramo, l'attività prima è finita ma non ancora unita: si continua il suo branch (parte dal suo risultato)
     if (can.mode === 'seguito' && this.S.requests[can.from]) {
       const fr = this.followUp(this.S.requests[can.from], text, []);
@@ -517,7 +527,7 @@ export class Orchestrator {
     this.store.save();
     this.events.emit('request.updated', { request: req });
     if (['CANCELLED', 'DONE', 'ANSWERED'].includes(req.status) || (req.status === 'RUNNING' && patch.status)) this.clearStaleStatus(req);
-    if (['CANCELLED', 'DONE', 'FAILED'].includes(req.status)) this.backlog?.onRequest(req);
+    if (['CANCELLED', 'DONE', 'FAILED', 'ANSWERED'].includes(req.status)) this.backlog?.onRequest(req);
     if (Object.values(this.S.requests).some((r) => r.status === 'QUEUED')) this.wakeFollowups();
     if ('merged' in patch && this.backlog?.list().some((i) => i.requestId)) this.backlog.emit();
     if (req.sameBranch && ['ANSWERED', 'CANCELLED', 'FAILED'].includes(req.status)) this.releaseOrphans();

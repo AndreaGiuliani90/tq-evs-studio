@@ -43,7 +43,8 @@ export class Backlog {
   }
   update(id, patch) {
     const it = this.get(id); if (!it) throw new Error(`attività sconosciuta: ${id}`);
-    for (const k of ['title', 'priority', 'details', 'agent', 'status', 'requestId']) if (k in patch) it[k] = patch[k];
+    for (const k of ['title', 'priority', 'details', 'agent', 'status', 'requestId', 'waitingAnswer']) if (k in patch) it[k] = patch[k];
+    if (patch.status === 'da fare' && patch.requestId === null) { it.waitingAnswer = null; it.doneAt = null; }
     if ('lane' in patch) it.lane = String(patch.lane || '').trim().slice(0, 40) || DEFAULT_LANE;
     if ('after' in patch) it.after = this.cleanAfter(it, patch.after);
     if (!PRIORITIES.includes(it.priority)) it.priority = 'media';
@@ -54,12 +55,25 @@ export class Backlog {
   }
   remove(id) { const it = this.get(id); if (!it) throw new Error(`attività sconosciuta: ${id}`); return this.update(id, { status: 'scartato' }); }
 
-  // una richiesta collegata è finita: l'attività si spunta (o torna "da fare" se la richiesta è stata fermata)
+  // una richiesta collegata (o il suo ultimo seguito sullo stesso branch) è finita:
+  //   - DONE → l'attività si spunta;
+  //   - fermata o fallita → torna "da fare";
+  //   - la Regia ha risposto con una domanda (nessun lavoro) → torna "da fare" ma ricorda che aspetta una tua
+  //     risposta: così non blocca il ramo e la lavagna lo dice.
   onRequest(req) {
-    const it = this.data.items.find((i) => i.requestId === req.id);
-    if (!it) return;
-    if (req.status === 'DONE' && it.status !== 'fatto') this.update(it.id, { status: 'fatto' });
-    else if (['CANCELLED', 'FAILED'].includes(req.status) && it.status === 'in corso') this.update(it.id, { status: 'da fare', requestId: null });
+    for (const it of this.data.items.filter((i) => i.requestId && (i.requestId === req.id || this.reqOf(i)?.id === req.id))) {
+      if (req.status === 'DONE' && it.status !== 'fatto') this.update(it.id, { status: 'fatto', waitingAnswer: null });
+      else if (['CANCELLED', 'FAILED'].includes(req.status) && it.status === 'in corso') this.update(it.id, { status: 'da fare', requestId: null, waitingAnswer: null });
+      else if (req.status === 'ANSWERED' && it.status === 'in corso' && this.reqOf(it)?.id === req.id) this.update(it.id, { status: 'da fare', waitingAnswer: req.id });
+    }
+  }
+  // all'avvio: attività rimaste "in corso" o "fatte" senza corrispondere più alle loro richieste
+  reconcile() {
+    for (const it of this.data.items) {
+      if (it.status !== 'in corso' || !it.requestId) continue;
+      const r = this.reqOf(it);
+      if (r && ['DONE', 'CANCELLED', 'FAILED', 'ANSWERED'].includes(r.status)) this.onRequest(r);
+    }
   }
 
   laneOf(it) { return it.lane || LEGACY_LANE; }
@@ -101,7 +115,7 @@ export class Backlog {
       nodes: items.map((i) => {
         const r = i.requestId && this.requests[i.requestId], last = this.reqOf(i);
         const c = this.canStart(i);
-        return { id: i.id, title: i.title, details: i.details, agent: i.agent, priority: i.priority, status: i.status, lane: this.laneOf(i), after: i.after || [], deps: this.depsOf(i).map((d) => d.id), requestId: i.requestId, lastRequestId: last?.id || null, merged: this.merged(i), requestStatus: last?.status || r?.status || null, canStart: c.ok, why: c.why || null, mode: c.mode || null, from: c.from || null, needsMerge: c.needsMerge || null };
+        return { id: i.id, title: i.title, details: i.details, agent: i.agent, priority: i.priority, status: i.status, lane: this.laneOf(i), after: i.after || [], deps: this.depsOf(i).map((d) => d.id), requestId: i.requestId, lastRequestId: last?.id || null, merged: this.merged(i), requestStatus: last?.status || r?.status || null, waitingAnswer: i.waitingAnswer || null, canStart: c.ok, why: c.why || null, mode: c.mode || null, from: c.from || null, needsMerge: c.needsMerge || null };
       }),
     };
   }
