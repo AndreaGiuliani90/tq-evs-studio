@@ -1044,7 +1044,12 @@ export class Orchestrator {
     const qaCmd = `node ${this.harness} --root .`;
     let extra = t.kind === 'fix' && t.bugReport ? `## Bug report del QA\n${t.bugReport}` : '';
     if (t.lastError) extra += `\n\n## Il tentativo precedente di questo task è fallito\n${truncate(t.lastError, 2000)}\nTienine conto.`;
-    if (t.kind === 'art' && provider.id === 'codex') extra += `\n\n## Immagini\nPuoi generare le immagini direttamente con il tuo strumento di generazione immagini (gpt-image). Salva ogni immagine finita come PNG in assets/generated/<nome>.png nella cartella di lavoro (sprite su fondo magenta pieno #FF00FF, come da convenzione del progetto). Elenca i file creati nel campo "imageRequests" del JSON finale (con il prompt usato).`;
+    // immagini: se hai approvato un generatore a pagamento (GPT Image, Nano Banana) le fa LUI, anche se l'agente lavora
+    // con Codex; Codex le disegna da sé solo se hai scelto il piano ChatGPT (o non è stato scelto niente)
+    const paidImages = !!(req.imageChoice && req.imageChoice !== 'plan');
+    const codexDraws = provider.id === 'codex' && !paidImages;
+    if (t.kind === 'art' && provider.id === 'codex' && paidImages) extra += `\n\n## Immagini\nNON generare immagini con il tuo strumento: le genera lo Studio con il generatore scelto dall'utente. Per ogni immagine metti nel campo "imageRequests" del JSON finale file, prompt dettagliato in inglese, size e references (immagini di riferimento del progetto).`;
+    if (t.kind === 'art' && codexDraws) extra += `\n\n## Immagini\nPuoi generare le immagini direttamente con il tuo strumento di generazione immagini (gpt-image). Salva ogni immagine finita come PNG in assets/generated/<nome>.png nella cartella di lavoro (sprite su fondo magenta pieno #FF00FF, come da convenzione del progetto). Elenca i file creati nel campo "imageRequests" del JSON finale (con il prompt usato).`;
     const startedAt = Date.now();
     const prompt = taskPrompt({ task: t, req, agent, deps: this.depsOf(t), contextList: this.knowledge.contextFor(agent, cwd, { inline: provider.id === 'anthropic' }), qaCmd, extra });
     const r = await provider.run({ agent, system: agent.systemInstructions, prompt, cwd, mode, model: agent.model, signal, ...this.attachOpts(req), timeoutMs: (this.config.taskTimeoutMin || 25) * 60 * 1000, extraAllowedTools: [`Bash(node ${this.harness}:*)`], onEvent: (e) => this.onProviderEvent(agent.id, t, e) });
@@ -1052,7 +1057,7 @@ export class Orchestrator {
     const j = extractJSON(r.text) || extractJSON(r.allText) || {};
     const result = { summary: j.summary || truncate(r.text, 600), outputs: Array.isArray(j.outputs) ? j.outputs.filter((x) => typeof x === 'string' || x?.path).slice(0, 12) : [], handoff: j.handoff || '', notes: j.notes || '', output: truncate(r.text, 6000), provider: provider.id, costUsd: r.costUsd ?? null, durationMs: r.durationMs };
     if (t.kind === 'art') {
-      const made = provider.id === 'codex' ? this.collectCodexImages(cwd, startedAt) : [];
+      const made = codexDraws ? this.collectCodexImages(cwd, startedAt) : [];
       const pending = (j.imageRequests || []).filter((ir) => !made.includes(String(ir.file || '').replace(/^\/+/, '')));
       result.images = [...made.map((f) => ({ file: f, status: 'generated', provider: 'codex' })), ...(await this.generateImages(pending, req, agent, t))];
       if (made.length) this.recordImages(req, agent, t, made, j.imageRequests || []);
@@ -1197,7 +1202,7 @@ ${selfGen && !imgOk ? `Genera tu le immagini col tuo strumento: per ogni agente 
       let base = null, errors = 0;
       const own = (f) => { const p = path.join(dir, `${item.agent}-${f.anim}-${f.i + 1}.png`); return fs.existsSync(p) ? fs.readFileSync(p) : null; };
       const gen = async (f) => {
-        let png = own(f);
+        let png = imgOk ? null : own(f);   // generatore a pagamento scelto: si usa quello, non i disegni di Codex
         if (!png && imgOk) {
           const isBase = f.anim === 'idle' && f.i === 0;
           const p = isBase ? `${style}${item.prompt}. ${fixed}` : `The SAME character as in the first reference image, identical face, hair, clothes, colors, art style, framing and scale, on the same flat magenta (#FF00FF) background. Change only the pose/expression: ${f.desc}. ${fixed}`;

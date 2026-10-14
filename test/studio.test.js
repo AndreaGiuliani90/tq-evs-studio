@@ -1311,3 +1311,28 @@ test('SQUADRA: il lavoro di Stratega e Notaio (scelte dei modelli, unioni) si co
   p = o.performance();
   assert.equal(p.rows.find((r) => r.id === 'release').done, 3);
 });
+
+test('immagini: se approvi un generatore a pagamento lo usa davvero, anche quando Cosetta lavora con Codex', async () => {
+  const root = makeFixtureRepo();
+  let sawNo = false;
+  const codex = new ScriptedProvider('codex', async (o) => {
+    if (o.agent.id !== 'art') return { text: '{"verdict":"PASS","summary":"ok"}' };
+    sawNo = /NON generare immagini/.test(o.prompt);
+    fs.mkdirSync(path.join(o.cwd, 'assets/generated'), { recursive: true });
+    fs.writeFileSync(path.join(o.cwd, 'assets/generated/kit.png'), 'DISEGNATO-DA-CODEX');   // ci prova lo stesso
+    return { text: '{"summary":"kit","imageRequests":[{"file":"assets/generated/kit.png","prompt":"ui kit"}]}' };
+  });
+  const director = new ScriptedProvider('scripted', async (o) => (o.agent.id === 'director' ? planJSON([{ key: 'a', agent: 'art', kind: 'art', title: 'Kit grafico', dependsOn: [] }]) : { text: '{"verdict":"PASS","summary":"ok"}' }));
+  const reg = registryWith(director, codex);
+  const calls = [];
+  reg.register({ id: 'openai-image', kind: 'image', quality: 'medium', label: 'finto', available: async () => ({ ok: true }), generate: async (o) => { calls.push(o); return { ok: true, png: Buffer.from('PAGATO') }; } });
+  const s = await studioFor(root, reg, { quoteThresholdUsd: 0 });
+  s.agents.update('art', { provider: 'codex' });
+  const r = await s.orch.handleUserMessage('Cosetta, rifai il kit grafico');
+  await waitFor(() => r.quotePending, 5000, 'preventivo');
+  await s.orch.answerQuote(r.id, 'approve', { choice: 'openai-image:medium' });
+  await waitFor(() => r.status === 'DONE', 15000, 'DONE');
+  assert.ok(sawNo, 'a Codex si dice di non disegnare');
+  assert.equal(calls.length, 1, 'l\'immagine la fa il generatore approvato');
+  assert.equal(fs.readFileSync(path.join(r.worktree, 'assets/generated/kit.png'), 'utf8'), 'PAGATO');
+});
