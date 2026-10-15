@@ -302,13 +302,28 @@ function card(r) {
       <div class="tt-ask">Prova il gioco: quello che avevi chiesto in ${esc(r.id)} funziona?</div>
       <div class="tt-btns">${play}<button class="btn sm primary" data-act="merge-force" data-req="${esc(r.id)}">Sì, funziona: uniscila</button><button class="btn sm" data-act="merge-repair" data-req="${esc(r.id)}">No: rimetti il suo codice</button><button class="btn sm danger" data-act="discard" data-req="${esc(r.id)}">Non serve più: scartala</button>${goto}</div>` };
   }
+  // versione temporanea da provare dentro una catena di seguiti ancora aperta: si prova adesso, si unisce l'ultima
+  const nx = r.followedBy && S.requests[r.followedBy];
+  if (r.status === 'DONE' && !r.merged && !r.discarded && r.worktree && nx?.sameBranch && nx.status !== 'DONE' && !nx.merged && !nx.discarded && r.report?.commits?.length) {
+    return { u: 'later', html: `<div class="tt-what">${T}: versione da provare. La catena continua in <b>${esc(nx.id)}</b> (${esc(REQ_IT[nx.status] || nx.status)}); quando finisce, unisci quella.</div>
+      ${changesHTML(r)}
+      <div class="tt-btns">${play}${goto}</div>` };
+  }
   if (canMerge(r)) {
     return { u: 'later', html: `<div class="tt-what">${T} è finita${r.result === 'FAIL' ? ', ma l\'ultimo test NON è passato' : ' e testata'}.</div>
+      ${changesHTML(r)}
       ${outputsHTML(r.id, r.report)}
       <div class="tt-ask">${outputsOf(r.report).length ? 'Scarica i file qui sopra; se vuoi che restino anche nel gioco, uniscila.' : 'Provala; se ti piace, uniscila al gioco.'}</div>
       <div class="tt-btns">${play}<button class="btn sm primary" data-act="merge" data-req="${esc(r.id)}">Unisci al gioco</button><button class="btn sm danger" data-act="discard" data-req="${esc(r.id)}">Scarta</button>${goto}</div>` };
   }
   return null;
+}
+// cosa è cambiato in quella versione (dal rapporto della Regia), da tenere sott'occhio mentre la provi
+function changesHTML(r) {
+  const prose = String(r.report?.prose || '').replace(/\*\*/g, '').trim();
+  if (!prose) return '';
+  const lines = prose.split('\n').map((l) => l.replace(/^[-•]\s*/, '').trim()).filter(Boolean);
+  return `<details class="tt-chg"><summary>Cosa è cambiato${r.report?.filesChanged?.length ? ` · ${r.report.filesChanged.length} file` : ''}</summary><div>${lines.slice(0, 12).map((l) => `<p>${esc(l)}</p>`).join('')}</div></details>`;
 }
 const URG = { stop: ['⏸ Ferma: aspetta te', 'tt-stop'], merge: ['Non entra nel gioco finché non decidi', 'tt-merge'], later: ['Quando vuoi: niente è fermo', 'tt-later'] };
 try { S.pdOpen = localStorage.getItem('studio:tt-open') !== '0'; } catch { S.pdOpen = true; }
@@ -327,7 +342,7 @@ function renderDecisions() {
   const nStop = cards.filter((x) => x.c.u !== 'later').length, nLater = cards.length - nStop;
   box.classList.toggle('calm', !nStop);
   const head = cards.length
-    ? `<button class="pd-toggle" data-pd="toggle">${S.pdOpen ? '▾' : '▸'} <b>Tocca a te</b></button> <span class="pd-counts">${nStop ? `${nStop === 1 ? 'una cosa aspetta' : `${nStop} cose aspettano`} una tua decisione` : ''}${nStop && nLater ? ' · ' : ''}${nLater ? `${nLater === 1 ? 'una pronta' : `${nLater} pronte`} da unire, quando vuoi` : ''}</span>`
+    ? `<button class="pd-toggle" data-pd="toggle">${S.pdOpen ? '▾' : '▸'} <b>Tocca a te</b></button> <span class="pd-counts">${nStop ? `${nStop === 1 ? 'una cosa aspetta' : `${nStop} cose aspettano`} una tua decisione` : ''}${nStop && nLater ? ' · ' : ''}${nLater ? `${nLater === 1 ? 'una versione' : `${nLater} versioni`} da provare, quando vuoi` : ''}</span>`
     : '<span class="pd-counts"><b>Niente da decidere.</b></span>';
   box.innerHTML = `<div class="pd-head">${head}</div>
     ${cards.length && S.pdOpen ? `<div class="tt-cards">${cards.map(({ r, c }) => `<div class="tt-card ${URG[c.u][1]}" data-tt="${esc(r.id)}"><div class="tt-tag">${URG[c.u][0]}</div>${c.html}</div>`).join('')}</div>` : ''}

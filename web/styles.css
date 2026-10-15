@@ -389,3 +389,7 @@ b.good { color: #5fd38a; } b.mid { color: #e0b050; } b.bad { color: #ff7a6a; }
 .snd .var.chosen { border-color: var(--green); background: rgba(123,216,143,.08); }
 .snd audio { height: 30px; width: 220px; }
 .fn.ready.ask { border-color: var(--yellow); } .fn.ready.ask .fn-st { color: var(--yellow); }
+
+.tt-chg summary { cursor: pointer; color: var(--cyan); font-size: 13px; }
+.tt-chg div { font-size: 13px; color: #cfc6ea; max-height: 220px; overflow: auto; padding: 4px 0 0 4px; }
+.tt-chg p { margin: 0 0 4px; }
