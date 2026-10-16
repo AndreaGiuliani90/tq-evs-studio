@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ufficio di Mappo — GAME STUDIO</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23382618'/><path d='M2 4l4-2 4 2 4-2v10l-4 2-4-2-4 2z' fill='%23efe2c4'/><path d='M6 2v10M10 4v10' stroke='%23a0784a'/></svg>" />
+  <style>
+    :root {
+      --wood: #3a2616; --wood2: #4b321d; --wood3: #2a1b10; --brass: #d9a441; --brass2: #a87a2c;
+      --paper: #efe2c4; --paper2: #e4d3ae; --paper3: #d6c193; --ink: #3b2a1a; --ink2: #6e5638; --red: #b8402e; --green: #4f7a3a; --blue: #2f5f86;
+      --table: #22261f;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--wood3); color: var(--ink); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { background: repeating-linear-gradient(92deg, #2c1d11 0 7px, #301f12 7px 15px, #2a1a0f 15px 22px); display: flex; flex-direction: column; }
+    button, select, input, textarea { font: inherit; color: inherit; }
+    .btn { background: var(--paper2); border: 1px solid var(--ink2); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+    .btn:hover { background: var(--paper); border-color: var(--ink); }
+    .btn.primary { background: var(--brass); border-color: var(--brass2); color: #2a1a08; font-weight: 700; }
+    .btn.primary:hover { background: #e6b350; }
+    .btn.sm { padding: 2px 7px; font-size: 12px; }
+    .btn:disabled { opacity: .45; cursor: default; }
+    .btn.on { background: var(--ink); color: var(--paper); }
+    /* testata: la targa sulla porta dell'ufficio */
+    .mp-top { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: linear-gradient(#4b321d, #3a2616); border-bottom: 3px solid var(--wood3); box-shadow: 0 2px 0 #5c3e24 inset; flex-wrap: wrap; }
+    .mp-plate { display: flex; align-items: center; gap: 10px; background: linear-gradient(#e6b350, #b9862f); color: #2a1a08; border: 2px solid #7a5520; border-radius: 6px; padding: 3px 12px 3px 4px; box-shadow: 0 2px 0 rgba(0,0,0,.4); }
+    .mp-plate canvas { width: 40px; height: 40px; image-rendering: pixelated; background: #f3e6c8; border-radius: 4px; border: 1px solid #7a5520; }
+    .mp-plate b { font: 700 16px Georgia, "Times New Roman", serif; letter-spacing: .3px; display: block; }
+    .mp-plate small { display: block; font-size: 11px; opacity: .85; }
+    .mp-top .grp { display: flex; gap: 4px; align-items: center; }
+    .mp-top label { color: var(--paper2); font-size: 12px; }
+    .mp-top select { background: var(--paper2); border: 1px solid var(--ink2); border-radius: 6px; padding: 3px 6px; max-width: 280px; }
+    .mp-rioni .btn { font-family: Georgia, serif; }
+    .mp-spacer { flex: 1; }
+    .mp-main { flex: 1; min-height: 0; display: grid; grid-template-columns: 230px 1fr 320px; gap: 10px; padding: 10px; }
+    .panel { background: var(--paper); background-image: radial-gradient(ellipse at 20% 0%, rgba(255,255,255,.35), transparent 60%), radial-gradient(ellipse at 100% 100%, rgba(120,80,30,.12), transparent 55%); border-radius: 4px; box-shadow: 0 0 0 1px #8f7448, 0 3px 10px rgba(0,0,0,.5); overflow: auto; min-height: 0; padding: 10px 12px; }
+    .panel h3 { font: 700 14px Georgia, serif; margin: 10px 0 6px; color: var(--ink); border-bottom: 1px solid var(--paper3); padding-bottom: 3px; }
+    .panel h3:first-child { margin-top: 0; }
+    .muted { color: var(--ink2); }
+    .bubble { background: #fffaf0; border: 1px solid var(--paper3); border-radius: 8px; padding: 8px 10px; position: relative; margin-bottom: 8px; font-size: 12.5px; }
+    .bubble b { font-family: Georgia, serif; }
+    .layer { display: grid; grid-template-columns: 18px 1fr auto 22px; align-items: center; gap: 4px; padding: 2px 0; }
+    .layer .n { font-size: 11px; color: var(--ink2); }
+    .layer .lock { border: 0; background: transparent; cursor: pointer; padding: 0; font-size: 13px; opacity: .35; }
+    .layer .lock.on { opacity: 1; }
+    .layer .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.3); }
+    .keys { font-size: 11.5px; color: var(--ink2); margin: 0; padding-left: 0; list-style: none; }
+    .keys li { margin: 2px 0; }
+    kbd { font: 11px ui-monospace, Menlo, monospace; background: #fff8e8; border: 1px solid var(--paper3); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; color: var(--ink); }
+    /* il tavolo con la carta */
+    .mp-stage { position: relative; min-height: 0; border-radius: 6px; background: var(--table); box-shadow: 0 0 0 6px #5c3e24, 0 0 0 8px #2a1b10, 0 6px 18px rgba(0,0,0,.6) inset; overflow: hidden; }
+    #mp-map { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; }
+    #mp-map.grab { cursor: grab; } #mp-map.grabbing { cursor: grabbing; } #mp-map.move { cursor: move; } #mp-map.rot { cursor: alias; } #mp-map.place { cursor: copy; }
+    .mp-tip { position: absolute; pointer-events: none; background: rgba(30,20,10,.88); color: var(--paper); padding: 3px 7px; border-radius: 4px; font-size: 12px; white-space: nowrap; display: none; z-index: 3; }
+    .mp-status { position: absolute; left: 10px; bottom: 8px; background: rgba(239,226,196,.92); border: 1px solid #8f7448; border-radius: 4px; padding: 2px 8px; font: 11.5px ui-monospace, Menlo, monospace; color: var(--ink); pointer-events: none; }
+    .mp-banner { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: var(--paper); border: 1px solid #8f7448; border-radius: 6px; padding: 6px 12px; box-shadow: 0 3px 10px rgba(0,0,0,.4); z-index: 4; max-width: 80%; font-size: 13px; }
+    .mp-banner.err { background: #f6d6cc; border-color: var(--red); }
+    .mp-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--paper); font: 16px Georgia, serif; }
+    /* scheda dell'oggetto */
+    .insp-h { display: flex; gap: 8px; align-items: center; }
+    .insp-h .thumb { width: 52px; height: 52px; flex: none; border: 1px solid var(--paper3); border-radius: 4px; background: repeating-conic-gradient(#e9dcbc 0 25%, #f5ecd6 0 50%) 50%/12px 12px; display: grid; place-items: center; overflow: hidden; }
+    .insp-h .thumb img, .insp-h .thumb canvas { max-width: 48px; max-height: 48px; image-rendering: pixelated; }
+    .insp-h b { font: 700 14px Georgia, serif; display: block; word-break: break-word; }
+    .row { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 6px; margin: 5px 0; }
+    .row > span { color: var(--ink2); font-size: 12px; }
+    .row input[type=number], .row input[type=text] { width: 100%; background: #fffaf0; border: 1px solid var(--paper3); border-radius: 4px; padding: 3px 6px; font: 12px ui-monospace, Menlo, monospace; }
+    .row .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .row .btns { display: flex; gap: 3px; flex-wrap: wrap; }
+    .code { font: 11px ui-monospace, Menlo, monospace; color: var(--ink2); word-break: break-all; }
+    .acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+    .cosetta { margin-top: 10px; background: #f6efe0; border: 1px dashed var(--brass2); border-radius: 6px; padding: 8px; }
+    .cosetta .who { display: flex; align-items: center; gap: 6px; font: 700 13px Georgia, serif; margin-bottom: 4px; }
+    .cosetta .who canvas { width: 28px; height: 28px; image-rendering: pixelated; border-radius: 3px; background: #fff; }
+    .cosetta textarea { width: 100%; min-height: 54px; resize: vertical; background: #fffaf0; border: 1px solid var(--paper3); border-radius: 4px; padding: 4px 6px; }
+    .cosetta select { max-width: 100%; background: #fffaf0; border: 1px solid var(--paper3); border-radius: 4px; }
+    .proof { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+    .proof .chk { width: 96px; height: 96px; display: grid; place-items: center; background: repeating-conic-gradient(#e2d3b0 0 25%, #f5ecd6 0 50%) 50%/12px 12px; border: 1px solid var(--paper3); border-radius: 4px; }
+    .proof .chk img { max-width: 92px; max-height: 92px; image-rendering: pixelated; }
+    .chg { display: grid; grid-template-columns: 1fr auto; gap: 4px; align-items: center; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .chg:hover { background: var(--paper2); }
+    .chg .what { color: var(--ink2); font-size: 11px; }
+    .save { margin-top: 8px; display: grid; gap: 6px; }
+    .save input { background: #fffaf0; border: 1px solid var(--paper3); border-radius: 4px; padding: 5px 7px; }
+    .save .btn.primary { justify-content: center; padding: 7px; }
+    .mp-right { display: flex; flex-direction: column; gap: 10px; padding: 0; background: transparent; box-shadow: none; overflow: visible; }
+    .mp-right > .panel { flex: 0 1 auto; }
+    .mp-right > .panel.grow { flex: 1 1 auto; }
+    /* il catalogo delle sprite */
+    dialog { border: 0; border-radius: 6px; padding: 0; background: var(--paper); color: var(--ink); width: min(980px, 94vw); height: min(720px, 90vh); box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+    dialog::backdrop { background: rgba(20,12,6,.6); }
+    .pk { display: flex; flex-direction: column; height: 100%; }
+    .pk-top { display: flex; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--paper3); flex-wrap: wrap; }
+    .pk-top b { font: 700 15px Georgia, serif; margin-right: 6px; }
+    .pk-top input { flex: 1; min-width: 160px; background: #fffaf0; border: 1px solid var(--paper3); border-radius: 4px; padding: 4px 8px; }
+    .pk-grid { flex: 1; overflow: auto; padding: 10px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; align-content: start; }
+    .pk-grid h4 { grid-column: 1 / -1; margin: 6px 0 0; font: 700 13px Georgia, serif; color: var(--ink2); }
+    .pk-it { background: #fffaf0; border: 1px solid var(--paper3); border-radius: 5px; padding: 4px; cursor: pointer; text-align: center; font-size: 10.5px; word-break: break-all; color: var(--ink2); }
+    .pk-it:hover { border-color: var(--brass2); box-shadow: 0 0 0 2px var(--brass) inset; }
+    .pk-it .im { height: 64px; display: grid; place-items: center; background: repeating-conic-gradient(#e9dcbc 0 25%, #f5ecd6 0 50%) 50%/10px 10px; border-radius: 3px; margin-bottom: 3px; overflow: hidden; }
+    .pk-it img { max-width: 96px; max-height: 62px; image-rendering: pixelated; object-fit: contain; }
+    .pk-it .strip { width: 60px; height: 60px; background-repeat: no-repeat; image-rendering: pixelated; }
+    .pk-foot { padding: 8px 12px; border-top: 1px solid var(--paper3); display: flex; gap: 8px; align-items: center; }
+    @media (max-width: 1100px) { .mp-main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .mp-left { display: none; } .mp-right { max-height: 40vh; overflow: auto; } }
+  </style>
+</head>
+<body>
+  <header class="mp-top">
+    <div class="mp-plate"><canvas id="mp-face" width="36" height="36"></canvas><div><b>Ufficio di Mappo</b><small>il cartografo · mappa a rioni del Livello 3</small></div></div>
+    <div class="grp"><label for="mp-src">Lavoro su</label><select id="mp-src"></select></div>
+    <div class="grp mp-rioni" id="mp-rioni"></div>
+    <div class="mp-spacer"></div>
+    <div class="grp">
+      <label for="mp-snap">Passo</label>
+      <select id="mp-snap" title="Di quanto si sposta un oggetto quando lo trascini">
+        <option value="1">libero (1 px)</option><option value="4">4 px</option><option value="12">mezza casella (12)</option><option value="24">casella (24)</option>
+      </select>
+      <button class="btn sm" data-zoom="out" title="Allontana (−)">－</button>
+      <button class="btn sm" data-zoom="fit" title="Tutto il rione (0)">⤢</button>
+      <button class="btn sm" data-zoom="in" title="Avvicina (+)">＋</button>
+    </div>
+    <a class="btn" id="mp-play" href="/play/main/" target="_blank" rel="noopener" title="Apri il gioco di questa versione">▶ Prova</a>
+    <a class="btn" href="/" title="Torna allo Studio">← Studio</a>
+  </header>
+  <main class="mp-main">
+    <aside class="panel mp-left">
+      <div class="bubble" id="mp-hello"><b>Mappo:</b> trascina gli oggetti per spostarli, gira con la maniglia tonda (o <kbd>R</kbd>), cambia grafica dalla scheda a destra. Quando ti piace, salva: diventa una versione da provare.</div>
+      <h3>Strati</h3>
+      <div id="mp-layers"></div>
+      <label class="layer" style="margin-top:4px"><input type="checkbox" id="mp-removed"><span>Mostra gli oggetti tolti</span></label>
+      <h3>Aggiungi</h3>
+      <button class="btn" id="mp-add" title="Scegli una sprite e cliccala sulla mappa (A)">＋ Metti un arredo nuovo…</button>
+      <h3>Tasti</h3>
+      <ul class="keys">
+        <li><kbd>trascina</kbd> sposta · <kbd>Maiusc</kbd> blocca su orizz./vert.</li>
+        <li><kbd>←↑→↓</kbd> 1 px · con <kbd>Maiusc</kbd> 8 px</li>
+        <li><kbd>R</kbd> gira di 90° · <kbd>Maiusc R</kbd> indietro · <kbd>[</kbd> <kbd>]</kbd> 15°</li>
+        <li>maniglia tonda: gira a scatti di 15° · con <kbd>Maiusc</kbd> libero</li>
+        <li><kbd>D</kbd> duplica · <kbd>Canc</kbd> togli · <kbd>S</kbd> cambia sprite</li>
+        <li><kbd>⌘Z</kbd> annulla · <kbd>⌘⇧Z</kbd> rifai · <kbd>Esc</kbd> deseleziona</li>
+        <li>rotellina zoom · trascina il vuoto o <kbd>spazio</kbd> per muoverti</li>
+      </ul>
+    </aside>
+    <section class="mp-stage" id="mp-stage">
+      <canvas id="mp-map" aria-label="La mappa dei rioni"></canvas>
+      <div class="mp-tip" id="mp-tip"></div>
+      <div class="mp-status" id="mp-status"></div>
+      <div class="mp-loading" id="mp-loading">Mappo srotola la carta…</div>
+    </section>
+    <aside class="panel mp-right">
+      <div class="panel grow" id="mp-insp"></div>
+      <div class="panel" id="mp-changes-box">
+        <h3>Ritocchi da salvare <span class="muted" id="mp-nchg"></span></h3>
+        <div id="mp-changes"></div>
+        <div class="save">
+          <input id="mp-note" placeholder="Due parole su cosa hai cambiato (facoltativo)" maxlength="90" />
+          <button class="btn primary" id="mp-save" disabled>Salva come versione da provare</button>
+          <div class="muted" id="mp-save-hint" style="font-size:11.5px"></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+  <dialog id="mp-picker"><div class="pk">
+    <div class="pk-top"><b id="pk-title">Scegli la sprite</b>
+      <button class="btn sm" data-tab="borgo">Arredi del borgo</button><button class="btn sm" data-tab="rioni">Sprite dei rioni</button><button class="btn sm" data-tab="gioco">Del gioco</button><button class="btn sm" data-tab="nuove">Nuove</button>
+      <input id="pk-q" placeholder="Cerca (panchina, vaso, auto, finestra…)" />
+    </div>
+    <div class="pk-grid" id="pk-grid"></div>
+    <div class="pk-foot"><span class="muted" id="pk-hint"></span><span class="mp-spacer"></span><button class="btn" id="pk-close">Chiudi</button></div>
+  </div></dialog>
+  <script type="module" src="mappo.js"></script>
+</body>
+</html>

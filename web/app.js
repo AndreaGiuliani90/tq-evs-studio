@@ -120,6 +120,7 @@ function deskHTML(a) {
 }
 
 function renderFloor() {
+  const mb = $('#btn-mappo'); if (mb && S.agents.level?.name) mb.textContent = `🗺 ${S.agents.level.name}`;
   const f = $('#floor');
   f.innerHTML = visibleAgents().map(deskHTML).join('') || '<p class="muted">Nessun agente visibile.</p>';
   for (const d of f.querySelectorAll('.desk')) {
@@ -310,7 +311,7 @@ function card(r) {
       <div class="tt-btns">${play}${goto}</div>` };
   }
   if (canMerge(r)) {
-    return { u: 'later', html: `<div class="tt-what">${T} è finita${r.result === 'FAIL' ? ', ma l\'ultimo test NON è passato' : ' e testata'}.</div>
+    return { u: 'later', html: `<div class="tt-what">${T} ${r.mappo ? 'sono i ritocchi alla mappa fatti nell\'Ufficio di Mappo (non passano dal QA: provali tu nel Livello 3)' : `è finita${r.result === 'FAIL' ? ', ma l\'ultimo test NON è passato' : ' e testata'}`}.</div>
       ${changesHTML(r)}
       ${outputsHTML(r.id, r.report)}
       <div class="tt-ask">${outputsOf(r.report).length ? 'Scarica i file qui sopra; se vuoi che restino anche nel gioco, uniscila.' : 'Provala; se ti piace, uniscila al gioco.'}</div>
@@ -549,6 +550,7 @@ function renderDrawer() {
   const ch = av.character || {};
   d.innerHTML = `<div class="dr-head">${avatarHTML(a, { size: 64 })}<div><h2>${esc(a.name)}</h2><div class="muted">${esc(a.role)} · <code>${esc(a.id)}</code></div></div><button class="btn sm" data-act="close-drawer">✕</button></div>
     <div class="live">${drawerLive(a)}</div>
+    ${a.id === 'level' ? `<p><a class="btn primary" href="/mappo.html" target="_blank" rel="noopener">🗺 Entra nell'ufficio di ${esc(a.name)}: l'editor della mappa</a></p>` : ''}
     <h3>Configurazione</h3>
     <form id="agent-form" class="form">
       <label>Nome <input name="name" value="${esc(a.name)}"></label>

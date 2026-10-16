@@ -295,6 +295,28 @@ Nello stesso pannello, riquadro **Avatar**:
 
 Gli avatar caricati stanno in `data/avatars/`. Il disegno degli avatar è in `web/avatars.js` e `web/pixel.js`.
 
+## L'ufficio di Mappo (editor della mappa)
+
+Pulsante **🗺 Mappo** in alto (o dalla scheda di Mappo): si apre il suo ufficio, un editor della mappa a rioni del Livello 3,
+disegnata come nel gioco (terreno, case, porte e finestre, arredi con la grafica nuova, bersagli, persone, luci, nascondigli).
+
+- **Spostare**: trascina un oggetto (Maiusc = solo in orizzontale/verticale; «Passo» per gli scatti). Frecce = 1 px, con Maiusc 8.
+- **Girare**: maniglia tonda sopra l'oggetto (scatti di 15°, con Maiusc libero), oppure `R` / `Maiusc R` (90°) e `[` `]` (15°).
+- **Grandezza, grafica, togliere, duplicare**: dalla scheda a destra. «Cambia sprite…» (`S`) apre il catalogo: arredi del borgo,
+  sprite dei rioni, quelle del gioco e le nuove. «＋ Metti un arredo nuovo…» (`A`) e poi clic sulla mappa.
+- **Cosetta** disegna una sprite nuova dalla scheda dell'oggetto: scrivi cosa vuoi, lei usa la sprite di adesso come riferimento di
+  stile (GPT Image o Nano Banana: costa, e lo chiede prima); tu vedi l'anteprima già pulita e scegli «Usa questa».
+  Si può anche caricare un proprio PNG.
+- `⌘Z` / `⌘⇧Z` annulla e rifai; gli strati si nascondono o si bloccano (lucchetto) a sinistra.
+- **Salva come versione da provare**: diventa una richiesta come le altre (branch suo, «▶ Prova questa versione», poi «Unisci al
+  gioco» col Notaio). Finché non la unisci, gli altri salvataggi finiscono nella stessa bozza.
+
+Nel gioco i ritocchi stanno in `tools/mappo.json` e si riportano nei file del livello con `python3 tools/mappo_applica.py`
+(gli oggetti dei rioni nelle `correzioni` di `levels/rioni/index.json`, il resto in `levels/level3.json`). Al primo salvataggio lo
+Studio aggiunge quello script, 6 righe a `src/systems/Rioni.js` (grafica e grandezza nelle correzioni) e il rilancio in fondo a
+`tools/make_level3.py`, così una rigenerazione non cancella i ritocchi. Gli arredi «in serie» (panchine, lampioni, vasi, siepi,
+alberi) nel gioco hanno un modello per rione: l'editor lo mostra e permette di usare comunque un modello preciso.
+
 ## Effetti sonori (Rumore)
 
 Chiedi in chat, per esempio *«Rumore, fai i passi sui sampietrini (3 da alternare), il vetro rotto e il click del menu»*.

@@ -13,6 +13,7 @@ import { GitService } from './git.js';
 import { Knowledge } from './knowledge.js';
 import { Orchestrator } from './orchestrator.js';
 import { OfficeStore } from './office.js';
+import { MappoOffice } from './mappo.js';
 import { readJSON, writeFileAtomic, ensureDir } from './util.js';
 
 export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -68,7 +69,8 @@ export async function createStudio({ projectRoot, dataDir, providers, qaRunner, 
     writeFileAtomic(configFile, JSON.stringify(cur, null, 2));
     return config;
   };
-  return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch, office };
+  const mappo = new MappoOffice({ orch, git, store, events, agents, projectRoot, dataDir });
+  return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch, office, mappo };
 }
 
 const MIME = { '.zip': 'application/zip', '.txt': 'text/plain; charset=utf-8', '.pdf': 'application/pdf', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.webmanifest': 'application/manifest+json', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2' };
@@ -155,7 +157,7 @@ export function dismissAgent({ agents, store, orch }, id, toId, lookToId) {
 }
 
 export function createServer(studio) {
-  const { orch, agents, events, store, knowledge, git, providers, dataDir, projectRoot, office } = studio;
+  const { orch, agents, events, store, knowledge, git, providers, dataDir, projectRoot, office, mappo } = studio;
   const web = path.join(STUDIO_DIR, 'web');
 
   const snapshot = async () => ({
@@ -285,6 +287,12 @@ export function createServer(studio) {
       fs.writeFileSync(path.join(dir, name), g.png);
       return { url: `/artifacts/prove-immagini/${name}` };
     }],
+    // Ufficio di Mappo (editor della mappa): la scena da disegnare, le sprite nuove, il salvataggio come versione da provare
+    ['GET', /^\/api\/mappo\/scene$/, async (m, b, q) => mappo.scene(q.get('src') || 'main')],
+    ['POST', /^\/api\/mappo\/save$/, async (m, b) => { const r = await mappo.save(b || {}); return { request: { id: r.request.id, text: r.request.text }, lines: r.lines, notes: r.notes, commit: r.commit }; }],
+    ['POST', /^\/api\/mappo\/sprite$/, async (m, b) => mappo.savePending(b?.name, b?.dataUrl)],
+    ['GET', /^\/api\/mappo\/cosetta$/, async () => mappo.cosettaOptions()],
+    ['POST', /^\/api\/mappo\/cosetta$/, async (m, b) => mappo.cosetta(b || {})],
     ['GET', /^\/api\/config$/, async () => studio.config],
     ['PUT', /^\/api\/config$/, async (m, b) => studio.saveConfig(b)],
   ];
@@ -327,6 +335,7 @@ export function createServer(studio) {
       if (p.startsWith('/office-paint/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'office-paint'));
       if (p.startsWith('/audio/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'audio'));
       if (p.startsWith('/uploads/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'uploads'));
+      if (p.startsWith('/mappo-pending/')) return sendFile(res, path.join(dataDir, p), path.join(dataDir, 'mappo-pending'));
       return sendFile(res, path.join(web, p === '/' ? 'index.html' : p), web);
     } catch (e) {
       json(res, 400, { error: String(e.message || e) });
