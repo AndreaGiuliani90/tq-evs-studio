@@ -318,7 +318,7 @@ export class Orchestrator {
     return m;
   }
 
-  async handleUserMessage(text, { attachments = [], replyTo = null } = {}) {
+  async handleUserMessage(text, { attachments = [], replyTo = null, fresh = false, meta = null } = {}) {
     text = String(text || '').trim();
     if (!text && !attachments.length) throw new Error('messaggio vuoto');
     // «R-12: …» o «su R-12 …» all'inizio del messaggio (anche dettato) = aggancio a quella richiesta
@@ -347,7 +347,7 @@ export class Orchestrator {
     if (waiting.length && /^(ferma|fermala|annulla|lascia stare|lascia perdere|stop)$/.test(cmd)) { const r = waiting.sort((x, y) => y.id.localeCompare(x.id))[0]; this.chat('director', `Fermo ${r.id}: nessun altro tentativo.`, { agentId: 'director', requestId: r.id }); return this.cancel(r.id); }
     // messaggio senza aggancio: lo Stratega decide se è una cosa nuova, il seguito di un lavoro aperto o una risposta
     let asked = target;
-    if (!target) {
+    if (!target && !fresh) {
       const tri = await this.triage(text);
       if (tri.decision === 'seguito') {
         const f = this.followUp(tri.target, text, attachments, { by: tri });
@@ -371,7 +371,7 @@ export class Orchestrator {
       const action = cancel ? 'cancel' : lightW ? 'light' : (choice || /^(s[iì]\b|ok\b|okay|vai|procedi|conferm|approv|va bene|d'accordo|fallo)/.test(t)) ? 'approve' : null;
       if (action) return this.answerQuote(asked.id, action, { choice });
     }
-    const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [...(asked?.attachments || []), ...attachments] };
+    const req = { id: this.store.nextId('request', 'R'), text, status: 'PLANNING', createdAt: now(), taskIds: [], attachments: [...(asked?.attachments || []), ...attachments], ...(meta || {}) };
     if (asked) { req.continues = asked.id; req.originalText = asked.originalText || asked.text; asked.answeredBy = req.id; this.setRequest(asked, { status: 'ANSWERED' }); }
     this.S.requests[req.id] = req;
     this.store.save();

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server/index.js",
-    "test": "node --test test/studio.test.js test/mappo.test.js",
+    "test": "node --test test/studio.test.js test/mappo.test.js test/storia.test.js",
     "test:game": "node qa/game-test.mjs",
     "test:all": "npm test && node qa/game-test.mjs",
     "test:ui": "node qa/ui-smoke.mjs"

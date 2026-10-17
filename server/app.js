@@ -14,6 +14,7 @@ import { Knowledge } from './knowledge.js';
 import { Orchestrator } from './orchestrator.js';
 import { OfficeStore } from './office.js';
 import { MappoOffice } from './mappo.js';
+import { StoriaOffice } from './storia.js';
 import { readJSON, writeFileAtomic, ensureDir } from './util.js';
 
 export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,7 +71,8 @@ export async function createStudio({ projectRoot, dataDir, providers, qaRunner, 
     return config;
   };
   const mappo = new MappoOffice({ orch, git, store, events, agents, projectRoot, dataDir });
-  return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch, office, mappo };
+  const storia = new StoriaOffice({ orch, store, agents, projectRoot });
+  return { projectRoot, dataDir, config, saveConfig, events, store, agents, providers, git, knowledge, orch, office, mappo, storia };
 }
 
 const MIME = { '.zip': 'application/zip', '.txt': 'text/plain; charset=utf-8', '.pdf': 'application/pdf', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.webmanifest': 'application/manifest+json', '.md': 'text/markdown; charset=utf-8', '.woff2': 'font/woff2' };
@@ -157,7 +159,7 @@ export function dismissAgent({ agents, store, orch }, id, toId, lookToId) {
 }
 
 export function createServer(studio) {
-  const { orch, agents, events, store, knowledge, git, providers, dataDir, projectRoot, office, mappo } = studio;
+  const { orch, agents, events, store, knowledge, git, providers, dataDir, projectRoot, office, mappo, storia } = studio;
   const web = path.join(STUDIO_DIR, 'web');
 
   const snapshot = async () => ({
@@ -293,6 +295,9 @@ export function createServer(studio) {
     ['POST', /^\/api\/mappo\/sprite$/, async (m, b) => mappo.savePending(b?.name, b?.dataUrl)],
     ['GET', /^\/api\/mappo\/cosetta$/, async () => mappo.cosettaOptions()],
     ['POST', /^\/api\/mappo\/cosetta$/, async (m, b) => mappo.cosetta(b || {})],
+    // Ufficio della Storia (Enigma e Custode): la lavagna delle missioni e le richieste che la cambiano
+    ['GET', /^\/api\/storia$/, async (m, b, q) => storia.scene(q.get('src') || 'main')],
+    ['POST', /^\/api\/storia\/prompt$/, async (m, b) => storia.prompt(b || {})],
     ['GET', /^\/api\/config$/, async () => studio.config],
     ['PUT', /^\/api\/config$/, async (m, b) => studio.saveConfig(b)],
   ];

@@ -317,6 +317,24 @@ Studio aggiunge quello script, 6 righe a `src/systems/Rioni.js` (grafica e grand
 `tools/make_level3.py`, così una rigenerazione non cancella i ritocchi. Gli arredi «in serie» (panchine, lampioni, vasi, siepi,
 alberi) nel gioco hanno un modello per rione: l'editor lo mostra e permette di usare comunque un modello preciso.
 
+## L'Ufficio della Storia (Enigma e Custode)
+
+Pulsante **📜 Storia** in alto (o dalla scheda di Enigma o del Custode): una lavagna con tutte le missioni del gioco come
+diagramma di flusso, in verticale o in orizzontale. Ogni scheda è una missione (colore = tipo: principale, secondaria,
+lavoro, indagine, evento, finale; etichetta = nel gioco / in parte / progettata / idea). Le frecce dicono cosa serve prima
+(bianche) e cosa sblocca ogni soluzione (verde, giallo, rosso = etica alta, media, bassa; tratteggiate = chiude).
+
+- **Esplodere**: ▸ o doppio clic apre la scheda con sottomissioni e soluzioni; da ogni soluzione parte la sua freccia.
+  «Esplodi tutto» / «Chiudi tutto», filtri per tipo, ricerca (missione, personaggio, flag).
+- **Leggere**: passando sopra una scheda resta accesa la sua catena (da dove viene, dove porta); clic = scheda a destra con
+  obiettivo, cosa serve, come si risolve e cosa comporta ogni scelta, flag (✓ se esiste davvero nel gioco).
+- **Cambiare**: scrivi nel riquadro «Chiedi a Enigma e Custode» (riferito alla scheda scelta): diventa una richiesta dello
+  Studio; la lavagna nuova la vedi scegliendo la versione da provare in alto, e diventa quella del gioco quando la unisci.
+
+La lavagna è un file del gioco, `docs/memoria/STORIA.json`, che gli agenti tengono aggiornato quando cambiano missioni o
+soluzioni. Se manca, «Fate la lavagna» chiede a Enigma e Custode di ricostruirla dai livelli e dai documenti; se livelli,
+testi o documenti sono cambiati dopo il suo ultimo aggiornamento, un avviso propone «Aggiornatela».
+
 ## Effetti sonori (Rumore)
 
 Chiedi in chat, per esempio *«Rumore, fai i passi sui sampietrini (3 da alternare), il vetro rotto e il click del menu»*.

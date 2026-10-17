@@ -551,6 +551,7 @@ function renderDrawer() {
   d.innerHTML = `<div class="dr-head">${avatarHTML(a, { size: 64 })}<div><h2>${esc(a.name)}</h2><div class="muted">${esc(a.role)} · <code>${esc(a.id)}</code></div></div><button class="btn sm" data-act="close-drawer">✕</button></div>
     <div class="live">${drawerLive(a)}</div>
     ${a.id === 'level' ? `<p><a class="btn primary" href="/mappo.html" target="_blank" rel="noopener">🗺 Entra nell'ufficio di ${esc(a.name)}: l'editor della mappa</a></p>` : ''}
+    ${['puzzle', 'lore'].includes(a.id) ? `<p><a class="btn primary" href="/storia.html" target="_blank" rel="noopener">📜 Entra nell'Ufficio della Storia: la lavagna delle missioni</a></p>` : ''}
     <h3>Configurazione</h3>
     <form id="agent-form" class="form">
       <label>Nome <input name="name" value="${esc(a.name)}"></label>

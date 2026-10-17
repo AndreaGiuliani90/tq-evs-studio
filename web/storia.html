@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ufficio della Storia — GAME STUDIO</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2322302a'/><rect x='2' y='3' width='5' height='3' fill='%23f4ecd8'/><rect x='9' y='10' width='5' height='3' fill='%23f4ecd8'/><path d='M5 6 C5 9 11 7 11 10' stroke='%23ffd166' fill='none'/></svg>" />
+  <style>
+    :root {
+      --board: #233129; --board2: #1b2620; --chalk: rgba(240, 236, 220, .62); --frame: #5a3c22; --frame2: #3d2814;
+      --paper: #f4ecd8; --paper2: #e9dcbf; --ink: #2b2219; --ink2: #6b5a45; --gold: #d9a441;
+      --t-principale: #c0392b; --t-secondaria: #2e86ab; --t-lavoro: #8e6c3a; --t-indagine: #6c4fa3; --t-evento: #c99712; --t-finale: #1d1d1d;
+      --e-alta: #7bd88f; --e-media: #ffd166; --e-bassa: #ff7b6b;
+      --s-gioco: #3f8f4f; --s-parte: #c98a1a; --s-prog: #4a6f8a; --s-idea: #8a7f72;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--paper); background: var(--frame2); }
+    body { display: flex; flex-direction: column; background: repeating-linear-gradient(90deg, #3d2814 0 9px, #432c17 9px 17px); }
+    button, select, input, textarea { font: inherit; color: inherit; }
+    .btn { background: rgba(244,236,216,.12); border: 1px solid rgba(244,236,216,.35); color: var(--paper); border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+    .btn:hover { background: rgba(244,236,216,.22); }
+    .btn.on { background: var(--paper); color: var(--ink); }
+    .btn.primary { background: var(--gold); border-color: #a87a2c; color: #241605; font-weight: 700; }
+    .btn.sm { padding: 2px 7px; font-size: 12px; }
+    .btn:disabled { opacity: .45; cursor: default; }
+    /* testata */
+    .top { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: linear-gradient(#5a3c22, #46301a); border-bottom: 3px solid #2a1b0e; flex-wrap: wrap; }
+    .plate { display: flex; align-items: center; gap: 8px; background: linear-gradient(#e6b350, #b9862f); color: #2a1a08; border: 2px solid #7a5520; border-radius: 6px; padding: 3px 12px 3px 4px; box-shadow: 0 2px 0 rgba(0,0,0,.4); }
+    .plate .faces { display: flex; gap: 2px; }
+    .plate canvas { width: 36px; height: 36px; image-rendering: pixelated; background: #f3e6c8; border-radius: 4px; border: 1px solid #7a5520; }
+    .plate b { font: 700 16px Georgia, serif; display: block; }
+    .plate small { display: block; font-size: 11px; opacity: .85; }
+    .top select, .top input { background: rgba(244,236,216,.12); border: 1px solid rgba(244,236,216,.35); border-radius: 6px; padding: 3px 7px; color: var(--paper); }
+    .top select option { color: #222; }
+    .top input { width: 170px; }
+    .top label { font-size: 12px; opacity: .85; }
+    .grp { display: flex; gap: 4px; align-items: center; }
+    .spacer { flex: 1; }
+    .main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 360px; gap: 10px; padding: 10px; }
+    /* la lavagna */
+    .board { position: relative; overflow: hidden; border-radius: 6px; background: radial-gradient(ellipse at 30% 20%, #2c3d33, transparent 60%), radial-gradient(ellipse at 80% 90%, #1d2a22, transparent 55%), var(--board);
+      box-shadow: 0 0 0 7px var(--frame), 0 0 0 9px #2a1b0e, inset 0 0 60px rgba(0,0,0,.45); cursor: grab; touch-action: none; }
+    .board.drag { cursor: grabbing; }
+    .board::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: linear-gradient(#6b4a2a, #4a3018); box-shadow: 0 -2px 4px rgba(0,0,0,.4); pointer-events: none; }
+    .world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+    .world svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+    .lane { position: absolute; font: italic 15px Georgia, serif; color: rgba(240,236,220,.5); white-space: nowrap; pointer-events: none; }
+    .card { position: absolute; width: 230px; background: var(--paper); color: var(--ink); border-radius: 4px; box-shadow: 0 3px 8px rgba(0,0,0,.45); cursor: pointer; border-left: 7px solid var(--tc, #888); transition: opacity .15s, box-shadow .15s; }
+    .card.open { width: 330px; cursor: default; }
+    .card:hover { box-shadow: 0 0 0 2px rgba(255,209,102,.6), 0 3px 10px rgba(0,0,0,.5); }
+    .card.sel { box-shadow: 0 0 0 3px #ffd166, 0 4px 14px rgba(0,0,0,.6); }
+    .card.dim { opacity: .28; }
+    .card.st-progettata { background: #e9e4d6; }
+    .card.st-idea { background: rgba(244,236,216,.82); border-style: dashed; }
+    .card.t-finale { background: #2a2420; color: #f3e3bf; }
+    .card .pin { position: absolute; top: -6px; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ff9a8a, var(--tc, #888)); box-shadow: 0 2px 2px rgba(0,0,0,.4); }
+    .ch { padding: 8px 10px 7px; }
+    .ch .row1 { display: flex; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+    .tipo { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700; color: var(--tc); }
+    .card.t-finale .tipo { color: var(--gold); }
+    .stato { font-size: 10px; border-radius: 9px; padding: 0 7px; color: #fff; white-space: nowrap; }
+    .s-nel-gioco { background: var(--s-gioco); } .s-in-parte { background: var(--s-parte); } .s-progettata { background: var(--s-prog); } .s-idea { background: var(--s-idea); }
+    .ch h4 { margin: 0; font: 700 14.5px/1.25 Georgia, serif; }
+    .meta { font-size: 11px; color: var(--ink2); margin-top: 2px; }
+    .card.t-finale .meta { color: #c9b994; }
+    .counts { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 11px; color: var(--ink2); margin-top: 5px; }
+    .card.t-finale .counts { color: #c9b994; }
+    .xp { border: 1px solid currentColor; background: transparent; border-radius: 4px; font-size: 11px; padding: 0 6px; cursor: pointer; color: inherit; }
+    .ev { font-size: 10.5px; }
+    .ev.ok { color: var(--s-gioco); } .ev.ko { color: #b8402e; }
+    .cb { border-top: 1px dashed rgba(0,0,0,.18); padding: 7px 10px 9px; font-size: 12px; }
+    .card.t-finale .cb { border-color: rgba(255,255,255,.15); }
+    .cb p { margin: 0 0 6px; }
+    .cb .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink2); margin: 6px 0 3px; font-weight: 700; }
+    .sol { display: block; width: 100%; text-align: left; border: 1px solid rgba(0,0,0,.15); background: #fffaf0; border-radius: 5px; padding: 4px 7px; margin: 3px 0; cursor: pointer; color: var(--ink); font-size: 12px; position: relative; }
+    .sol:hover { border-color: #a87a2c; }
+    .sol .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+    .sol .to { display: block; font-size: 11px; color: var(--ink2); margin-left: 14px; }
+    .sub { border: 1px solid rgba(0,0,0,.14); border-left: 4px solid var(--tc, #999); border-radius: 4px; padding: 5px 7px; margin: 4px 0; background: rgba(255,255,255,.45); cursor: pointer; }
+    .sub b { font-family: Georgia, serif; font-size: 12.5px; }
+    .sub .sol { background: #fffdf7; }
+    /* pannello di destra */
+    .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+    .panel { background: var(--paper); color: var(--ink); border-radius: 4px; box-shadow: 0 0 0 1px #8f7448, 0 3px 10px rgba(0,0,0,.5); padding: 10px 12px; overflow: auto; }
+    .panel h3 { margin: 0 0 6px; font: 700 14px Georgia, serif; border-bottom: 1px solid var(--paper2); padding-bottom: 3px; }
+    .panel.grow { flex: 1 1 auto; min-height: 120px; }
+    .muted { color: var(--ink2); }
+    .det h2 { font: 700 17px Georgia, serif; margin: 2px 0 4px; }
+    .det .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink2); margin: 8px 0 2px; font-weight: 700; }
+    .det ul { margin: 2px 0; padding-left: 18px; }
+    .det .flags code { font: 11px ui-monospace, Menlo, monospace; background: #efe5cf; border-radius: 3px; padding: 0 4px; margin: 1px; display: inline-block; }
+    .det .flags code.ko { background: #f6d6cc; color: #8a2a1a; }
+    .det .flags code.ok::before { content: '✓ '; color: var(--s-gioco); }
+    .link { color: #7a4b24; cursor: pointer; text-decoration: underline; }
+    .ask textarea { width: 100%; min-height: 76px; resize: vertical; background: #fffaf0; border: 1px solid var(--paper2); border-radius: 4px; padding: 6px 8px; color: var(--ink); }
+    .ask .chip { display: inline-flex; align-items: center; gap: 4px; background: #efe5cf; border-radius: 10px; padding: 1px 8px; font-size: 12px; margin-bottom: 5px; }
+    .ask .chip button { border: 0; background: transparent; cursor: pointer; color: var(--ink2); }
+    .ask .acts { display: flex; gap: 6px; justify-content: space-between; align-items: center; margin-top: 6px; }
+    .ask .btn { color: var(--ink); border-color: var(--ink2); background: var(--paper2); }
+    .ask .btn.primary { background: var(--gold); color: #241605; }
+    .req { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: baseline; font-size: 12px; padding: 3px 0; border-bottom: 1px dotted var(--paper2); }
+    .req .st { font-size: 10.5px; border-radius: 8px; padding: 0 6px; background: #e3d7bc; white-space: nowrap; }
+    .req .st.RUNNING, .req .st.PLANNING, .req .st.QUEUED { background: #ffe1a6; } .req .st.DONE { background: #cfe9c8; } .req .st.NEEDS_USER { background: #ffd0c2; }
+    /* avvisi sulla lavagna */
+    .notice { position: absolute; left: 14px; top: 12px; right: 14px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; z-index: 3; }
+    .notice > div { pointer-events: auto; background: rgba(244,236,216,.95); color: var(--ink); border-radius: 6px; padding: 5px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.4); font-size: 12.5px; }
+    .notice .warn { background: #fde3b0; }
+    .notice .err { background: #f6d0c6; }
+    .notice .btn { color: var(--ink); border-color: var(--ink2); background: var(--paper2); }
+    .empty { position: absolute; inset: 0; display: grid; place-items: center; }
+    .empty > div { background: var(--paper); color: var(--ink); max-width: 520px; padding: 22px 26px; border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.5); text-align: center; }
+    .empty h2 { font: 700 20px Georgia, serif; margin: 0 0 8px; }
+    .legend { position: absolute; right: 14px; bottom: 18px; background: rgba(27,38,32,.85); border: 1px solid rgba(240,236,220,.25); border-radius: 6px; padding: 6px 10px; font-size: 11px; z-index: 3; line-height: 1.6; }
+    .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+    .zoomlbl { position: absolute; left: 14px; bottom: 18px; font: 11px ui-monospace, Menlo, monospace; color: rgba(240,236,220,.6); z-index: 3; }
+    @media (max-width: 1050px) { .main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .side { max-height: 42vh; } }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="plate"><span class="faces"><canvas id="f-puzzle" width="36" height="36"></canvas><canvas id="f-lore" width="36" height="36"></canvas></span><div><b>Ufficio della Storia</b><small id="who">Enigma e Custode · missioni, cosa sblocca cosa, come si risolvono</small></div></div>
+    <div class="grp"><label for="src">Versione</label><select id="src"></select></div>
+    <div class="grp">
+      <button class="btn sm" id="dir" title="Verticale o orizzontale">↓ Verticale</button>
+      <button class="btn sm" id="open-all" title="Apri tutte le schede">Esplodi tutto</button>
+      <button class="btn sm" id="close-all">Chiudi tutto</button>
+    </div>
+    <div class="grp" id="types"></div>
+    <input id="q" placeholder="Cerca missione, personaggio, flag…" />
+    <div class="spacer"></div>
+    <div class="grp"><button class="btn sm" data-z="out">－</button><button class="btn sm" data-z="fit" title="Tutta la lavagna (0)">⤢</button><button class="btn sm" data-z="in">＋</button></div>
+    <a class="btn" id="play" href="/play/main/" target="_blank" rel="noopener">▶ Prova</a>
+    <a class="btn" href="/">← Studio</a>
+  </header>
+  <main class="main">
+    <section class="board" id="board">
+      <div class="world" id="world"><svg id="edges"></svg></div>
+      <div class="notice" id="notice"></div>
+      <div class="legend" id="legend" hidden></div>
+      <div class="zoomlbl" id="zoomlbl"></div>
+    </section>
+    <aside class="side">
+      <div class="panel grow det" id="det"></div>
+      <div class="panel ask">
+        <h3>Chiedi a <span id="ask-who">Enigma e Custode</span></h3>
+        <div id="ask-chip"></div>
+        <textarea id="ask-text" placeholder="Es.: aggiungi una terza soluzione a «Il vicino Santino»: convincere Lori a testimoniare. Cosa sblocca? / Sposta la sagra dopo l'indagine sul catasto. / Il finale cattivo deve chiudere anche il lavoro della bici."></textarea>
+        <div class="acts"><span class="muted" style="font-size:11.5px">Diventa una richiesta dello Studio: la lavagna si aggiorna quando la unisci.</span><button class="btn primary" id="ask-send">Manda</button></div>
+      </div>
+      <div class="panel" id="reqs"></div>
+    </aside>
+  </main>
+  <script type="module" src="storia.js"></script>
+</body>
+</html>

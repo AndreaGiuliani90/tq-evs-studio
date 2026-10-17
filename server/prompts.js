@@ -1,4 +1,5 @@
 // Testi dei prompt. Tenuti qui (e non sparsi nel codice) per poterli ritoccare facilmente.
+import { STORIA_SCHEMA } from './storia.js';
 import { truncate, clip } from './util.js';
 
 export const TASK_KINDS = {
@@ -55,6 +56,7 @@ Puoi leggere i file del repository (sei nella cartella del gioco) se ti serve pe
 - Dopo ogni task che modifica il gioco (implement, narrative, art, level, audio, puzzle) ci deve essere un task "test" per il QA che dipende da esso.
 - Le richieste sull'ufficio o sull'aspetto dello Studio (arredi, colori, personaggi, interfaccia) vanno all'agente che ha quei tipi (oggi l'Art, Cosetta: tipo "office" per arredo e aspetto, "studio_ui" per il codice dell'interfaccia): NON serve un test del QA del gioco.
 - Quando cambiano personaggi, luoghi o fatti del mondo, aggiungi alla fine un task "lore" per il Custode della Bibbia (se c'è).
+- Quando cambiano missioni, enigmi, soluzioni o cosa sblocca cosa, nelle istruzioni dell'ultimo task di Enigma (puzzle) o del Custode (lore) scrivi di aggiornare anche la lavagna della storia docs/memoria/STORIA.json (l'Ufficio della Storia dello Studio). Le richieste che arrivano dall'Ufficio della Storia («[Ufficio della Storia …]») vanno a Enigma (puzzle) e al Custode (lore); se cambiano il gioco servono anche i task di sviluppo e test.
 - Le istruzioni di ogni task devono essere autosufficienti e concrete (file, comportamento atteso, criteri di accettazione).
 - Se la richiesta chiede di scegliere tu un miglioramento, sceglilo tu e scrivilo nelle istruzioni: non rimandare la scelta all'utente. Preferisci il più piccolo e sicuro possibile (un testo, un'indicazione a schermo, un valore di bilanciamento, un feedback visivo), con pochi casi limite e verificabile nel browser automatico (window.game).
 - Se la richiesta è ambigua in un modo che cambia il risultato (cosa esattamente, dove, quanto, che stile), NON tirare a indovinare: fai tu le domande, poche e precise (al massimo 3, numerate, ognuna con 2-3 opzioni suggerite), con "needsUser": true, "tasks": [] e le domande in "reply". Quando l'utente risponde, riceverai la richiesta originale insieme alla risposta.
@@ -96,6 +98,7 @@ export function taskPrompt({ task, req, agent, deps, contextList, qaCmd, extra }
     'Stai lavorando in un worktree git dedicato a questa richiesta (la cartella corrente). NON fare commit, push, checkout, reset: il commit lo fa lo Studio a tuo nome quando finisci.',
     qaCmd ? `Verifica rapida disponibile: \`${qaCmd} --no-browser\` (controlli statici), oppure senza --no-browser per provare il gioco nel browser.` : '',
   ];
+  if (req.storia || ['puzzle', 'lore'].includes(task.kind)) out.push('', STORIA_SCHEMA);
   if (extra) out.push('', extra);
   out.push('', '## Consegna',
     'Quando hai finito, scrivi un breve riepilogo e chiudi con UN blocco JSON:',
