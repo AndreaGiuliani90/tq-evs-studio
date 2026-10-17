@@ -48,6 +48,12 @@ test('scene: lavagna, flag del gioco, versione, avviso se è rimasta indietro', 
   w(root, 'levels/l1.json', { state: { chiave: 1 } }); sh(root, 'commit', '-qam', 'livello cambiato');
   sc = await st.storia.scene();
   assert.equal(sc.stale.commits, 1, 'un cambio ai livelli dopo la lavagna');
+  // più lavagne: la principale per prima, le altre (STORIA_<nome>.json) scegliibili; un file a caso no
+  w(root, 'docs/memoria/STORIA_altri.json', { titolo: 'Prototipi', missioni: [{ id: 'p1', titolo: 'P1', tipo: 'principale' }] }); sh(root, 'add', '-A'); sh(root, 'commit', '-qm', 'altra');
+  const sb = await st.storia.scene('main', 'docs/memoria/STORIA_altri.json');
+  assert.deepEqual(sb.boards.map((b) => [b.file, b.main]), [[STORIA_FILE, true], ['docs/memoria/STORIA_altri.json', false]]);
+  assert.equal(sb.storia.titolo, 'Prototipi');
+  assert.equal((await st.storia.scene('main', '../../etc/passwd')).file, STORIA_FILE);
   // lavagna rotta e lavagna assente
   w(root, STORIA_FILE, '{ rotto'); sh(root, 'commit', '-qam', 'rotta');
   assert.match((await st.storia.scene()).parseError, /JSON|token|property/i);

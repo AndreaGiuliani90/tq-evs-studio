@@ -296,7 +296,7 @@ export function createServer(studio) {
     ['GET', /^\/api\/mappo\/cosetta$/, async () => mappo.cosettaOptions()],
     ['POST', /^\/api\/mappo\/cosetta$/, async (m, b) => mappo.cosetta(b || {})],
     // Ufficio della Storia (Enigma e Custode): la lavagna delle missioni e le richieste che la cambiano
-    ['GET', /^\/api\/storia$/, async (m, b, q) => storia.scene(q.get('src') || 'main')],
+    ['GET', /^\/api\/storia$/, async (m, b, q) => storia.scene(q.get('src') || 'main', q.get('file') || undefined)],
     ['POST', /^\/api\/storia\/prompt$/, async (m, b) => storia.prompt(b || {})],
     ['GET', /^\/api\/config$/, async () => studio.config],
     ['PUT', /^\/api\/config$/, async (m, b) => studio.saveConfig(b)],

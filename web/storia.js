@@ -20,11 +20,11 @@ const STATO_CLS = (s) => `s-${String(s || 'idea').toLowerCase().replace(/\s+/g, 
 const slugT = (t) => (TIPI.includes(t) ? t : 'secondaria');
 
 const S = {
-  scene: null, src: 'main', open: new Set(), sel: null, hover: null, dir: 'v', hidden: new Set(), q: '',
+  scene: null, src: 'main', file: 'docs/memoria/STORIA.json', flow: 'tutto', open: new Set(), sel: null, hover: null, dir: 'v', hidden: new Set(), q: '',
   view: { s: 1, x: 0, y: 0 }, cards: new Map(), byId: new Map(), parentOf: new Map(), edges: [], flags: new Set(),
 };
-try { S.dir = localStorage.getItem('storia:dir') || 'v'; S.open = new Set(JSON.parse(localStorage.getItem('storia:open') || '[]')); S.hidden = new Set(JSON.parse(localStorage.getItem('storia:hidden') || '[]')); } catch { /* niente */ }
-const save = () => { try { localStorage.setItem('storia:dir', S.dir); localStorage.setItem('storia:open', JSON.stringify([...S.open])); localStorage.setItem('storia:hidden', JSON.stringify([...S.hidden])); } catch { /* */ } };
+try { S.file = localStorage.getItem('storia:file') || S.file; S.flow = localStorage.getItem('storia:flow') || 'tutto'; S.dir = localStorage.getItem('storia:dir') || 'v'; S.open = new Set(JSON.parse(localStorage.getItem('storia:open') || '[]')); S.hidden = new Set(JSON.parse(localStorage.getItem('storia:hidden') || '[]')); } catch { /* niente */ }
+const save = () => { try { localStorage.setItem('storia:file', S.file); localStorage.setItem('storia:flow', S.flow); localStorage.setItem('storia:dir', S.dir); localStorage.setItem('storia:open', JSON.stringify([...S.open])); localStorage.setItem('storia:hidden', JSON.stringify([...S.hidden])); } catch { /* */ } };
 
 // ─── il grafo ────────────────────────────────────────────────────────────────────────────────────────────────
 function index() {
@@ -37,6 +37,41 @@ function index() {
   }
   S.atti = (st.atti || []).filter((a) => a?.id);
   S.flags = new Set(S.scene.flags || []);
+  S.allEdges = edges();
+  if (!flowOptions().some((o) => o.id === S.flow)) S.flow = 'tutto';
+}
+
+// ─── i flussi: quale parte della storia si sta guardando ─────────────────────────────────────────────────────
+// tutta la lavagna · la trama principale · un atto · le strade verso un finale · la catena di una missione
+function linked(id, dir) {
+  const out = new Set([id]); let ch = true;
+  while (ch) { ch = false; for (const e of S.allEdges || []) { if (e.kind === 'chiude') continue; const [a, b] = dir === 'up' ? [e.to, e.from] : [e.from, e.to]; if (out.has(a) && !out.has(b)) { out.add(b); ch = true; } } }
+  return out;
+}
+function flowOptions() {
+  const ms = S.missions || [], o = [{ id: 'tutto', label: 'Tutta la lavagna' }];
+  if (ms.some((m) => m.tipo === 'principale')) o.push({ id: 'trama', label: 'Solo la trama principale', ids: () => new Set(ms.filter((m) => ['principale', 'finale'].includes(m.tipo)).map((m) => m.id)) });
+  if (ms.some((m) => m.tipo !== 'principale' && m.tipo !== 'finale')) o.push({ id: 'contorno', label: 'Solo secondarie, lavori, indagini, eventi', ids: () => new Set(ms.filter((m) => !['principale', 'finale'].includes(m.tipo)).map((m) => m.id)) });
+  for (const a of S.atti || []) if (ms.some((m) => m.atto === a.id)) o.push({ id: `atto:${a.id}`, label: `Atto: ${a.titolo || a.id}`, ids: () => new Set(ms.filter((m) => m.atto === a.id).map((m) => m.id)) });
+  for (const f of ms.filter((m) => m.tipo === 'finale')) o.push({ id: `finale:${f.id}`, label: `Strade verso il finale «${f.titolo || f.id}»`, ids: () => linked(f.id, 'up') });
+  if (S.flow.startsWith('catena:') && S.byId?.has(S.flow.slice(7))) { const id = S.flow.slice(7); o.push({ id: S.flow, label: `Catena di «${S.byId.get(id).titolo || id}»`, ids: () => new Set([...linked(id, 'up'), ...linked(id, 'down')]) }); }
+  return o;
+}
+function flowSet() { const o = flowOptions().find((x) => x.id === S.flow); return o?.ids ? o.ids() : null; }
+function renderFlows() {
+  const o = flowOptions();
+  $('#flow').innerHTML = o.map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
+  $('#flow').value = S.flow;
+  const b = (S.scene?.boards || []).find((x) => x.file === S.file);
+  const name = b ? boardName(b) : 'Lavagna';
+  $('#where').innerHTML = S.scene?.storia ? `📍 <b>${esc(name)}</b> › ${esc(o.find((x) => x.id === S.flow)?.label || '')}${S.flow !== 'tutto' ? ' <button class="btn sm" data-flow-all>mostra tutto</button>' : ''}` : '';
+}
+function boardName(b) { return b.main ? (b.titolo || 'Storia principale') : (b.titolo || b.file.replace(/^docs\/memoria\/STORIA_?/, '').replace(/\.json$/, '').replace(/_/g, ' ')); }
+function renderBoards() {
+  const bs = S.scene?.boards || [];
+  $('#board-sel').innerHTML = bs.map((b) => `<option value="${esc(b.file)}">${b.main ? '★ ' : ''}${esc(boardName(b))}</option>`).join('') || '<option>Storia principale</option>';
+  $('#board-sel').value = S.file;
+  $('#board-grp').hidden = bs.length < 2;
 }
 const top = (id) => S.parentOf.get(id) || id;
 // requisiti scritti come id di missione (gli altri — flag:…, testo — restano scritti nella scheda)
@@ -52,6 +87,13 @@ function edges() {
         for (const t of so.chiude || []) if (S.byId.has(t) && top(t) !== m.id) out.push({ from: m.id, to: top(t), kind: 'chiude', sol: so, solOf: x.id, toNode: t });
       }
     }
+  }
+  // requisiti scritti come flag («flag:colpa_nota>=1»): la freccia parte dalla missione la cui soluzione scrive quel flag
+  const writers = new Map();
+  for (const m of S.missions) for (const x of [m, ...(m.sottomissioni || [])]) for (const so of x.soluzioni || []) for (const fl of so.flag || []) (writers.get(fl) || writers.set(fl, new Set()).get(fl)).add(m.id);
+  for (const m of S.missions) for (const x of [m, ...(m.sottomissioni || [])]) for (const r of x.richiede || []) {
+    const fl = typeof r === 'string' && /^flag:/.test(r) ? r.slice(5).split(/[<>=!\s]/)[0] : null;
+    for (const from of writers.get(fl) || []) if (from !== m.id) out.push({ from, to: m.id, kind: 'req', fromNode: from, toNode: x.id, viaFlag: fl });
   }
   // doppioni (stesso requisito scritto due volte): uno solo
   const seen = new Set();
@@ -111,7 +153,7 @@ function cardHTML(m) {
   const meta = [m.rione, people(m)].filter(Boolean).join(' · ');
   const atto = S.atti.find((a) => a.id === m.atto);
   return `<div class="pin"></div><div class="ch">
-      <div class="row1"><span class="tipo">${esc(TIPO_IT[t])}${atto ? ` · ${esc(atto.titolo)}` : ''}</span><span class="stato ${STATO_CLS(m.stato)}">${esc(m.stato || 'idea')}</span></div>
+      <div class="row1"><span class="tipo" title="${esc(atto?.titolo || '')}">${esc(TIPO_IT[t])}</span><span class="stato ${STATO_CLS(m.stato)}">${esc(m.stato || 'idea')}</span></div>
       <h4>${esc(m.titolo || m.id)}</h4>
       ${meta ? `<div class="meta">${esc(meta)}</div>` : ''}
       <div class="counts"><span>${subs.length ? `${subs.length} sottomissioni · ` : ''}${nSol ? `${nSol} ${nSol === 1 ? 'soluzione' : 'soluzioni'}` : t === 'finale' ? '' : 'nessuna soluzione scritta'} ${evidence(m)}</span>${subs.length || sols.length || m.riassunto ? `<button class="xp" data-xp="${esc(m.id)}">${open ? '▾ chiudi' : '▸ apri'}</button>` : ''}</div>
@@ -129,6 +171,7 @@ function cardHTML(m) {
 const world = $('#world'), svg = $('#edges'), board = $('#board');
 function matches(m) {
   if (S.hidden.has(slugT(m.tipo))) return false;
+  if (S.fset && !S.fset.has(m.id)) return false;
   if (!S.q) return true;
   const hay = JSON.stringify([m.id, m.titolo, m.riassunto, m.personaggi, m.flag, m.rione, (m.soluzioni || []).map((s) => [s.titolo, s.flag]), (m.sottomissioni || []).map((x) => [x.titolo, x.id]), people(m)]).toLowerCase();
   return hay.includes(S.q);
@@ -138,9 +181,26 @@ function render({ keepView = true } = {}) {
   for (const el of world.querySelectorAll('.card, .lane')) el.remove();
   S.cards = new Map();
   if (!S.missions.length) { svg.innerHTML = ''; return; }
+  S.fset = flowSet();
   const vis = S.missions.filter(matches);
   const visIds = new Set(vis.map((m) => m.id));
   S.edges = edges().filter((e) => visIds.has(e.from) && visIds.has(e.to));
+  // con un flusso o un filtro, chi è nascosto in mezzo non spezza la catena: freccia «passando da…» fra le schede visibili
+  if (vis.length < S.missions.length) {
+    const fwd = (S.allEdges || []).filter((e) => e.kind !== 'chiude');
+    const have = new Set(S.edges.map((e) => `${e.from}>${e.to}`));
+    for (const a of vis) {
+      const seen = new Set([a.id]), q = fwd.filter((e) => e.from === a.id && !visIds.has(e.to)).map((e) => ({ id: e.to, via: [e.to] }));
+      while (q.length) {
+        const { id, via } = q.shift();
+        if (seen.has(id)) continue; seen.add(id);
+        for (const e of fwd.filter((x) => x.from === id)) {
+          if (visIds.has(e.to)) { if (e.to !== a.id && !have.has(`${a.id}>${e.to}`)) { have.add(`${a.id}>${e.to}`); S.edges.push({ from: a.id, to: e.to, kind: 'req', via }); } }
+          else if (!seen.has(e.to) && via.length < 8) q.push({ id: e.to, via: [...via, e.to] });
+        }
+      }
+    }
+  }
   const rk = ranks(S.edges);
   for (const m of vis) {
     const el = document.createElement('div');
@@ -230,9 +290,9 @@ function drawEdges() {
     if (!a || !b) return '';
     const col = e.kind === 'req' ? 'rgba(240,236,220,.55)' : e.kind === 'chiude' ? '#ff7b6b' : ETICA_HEX[e.sol?.etica] || '#cfc6b0';
     const mk = e.kind === 'req' ? 'req' : e.kind === 'chiude' ? 'chiude' : (ETICA_HEX[e.sol?.etica] ? e.sol.etica : 'neutra');
-    const label = e.sol && S.open.has(e.from) ? '' : e.sol ? esc(e.label ?? e.sol.titolo ?? '') : '';
+    const label = e.via ? esc(`passando da ${e.via.map((v) => S.byId.get(v)?.titolo || v).slice(0, 2).join(', ')}${e.via.length > 2 ? '…' : ''}`) : e.sol && S.open.has(e.from) ? '' : e.sol ? esc(e.label ?? e.sol.titolo ?? '') : '';
     const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    return `<g class="edge" data-e="${i}"><path d="${pathD(a, b)}" fill="none" stroke="${col}" stroke-width="${e.kind === 'req' ? 2 : 2.4}" ${e.kind === 'chiude' ? 'stroke-dasharray="6 5"' : e.kind === 'req' ? 'stroke-dasharray="1 0"' : ''} marker-end="url(#m-${mk})" stroke-linecap="round"/>${label ? `<text x="${mid[0]}" y="${mid[1] - 4}" text-anchor="middle" font-size="11" fill="${col}" stroke="#233129" stroke-width="3" paint-order="stroke" font-family="Georgia, serif" font-style="italic">${label.length > 34 ? label.slice(0, 33) + '…' : label}</text>` : ''}</g>`;
+    return `<g class="edge" data-e="${i}"><path d="${pathD(a, b)}" fill="none" stroke="${col}" stroke-width="${e.kind === 'req' ? 2 : 2.4}" ${e.kind === 'chiude' ? 'stroke-dasharray="6 5"' : e.via ? 'stroke-dasharray="2 5"' : ''} marker-end="url(#m-${mk})" stroke-linecap="round"/>${label ? `<text x="${mid[0]}" y="${mid[1] - 4}" text-anchor="middle" font-size="11" fill="${col}" stroke="#233129" stroke-width="3" paint-order="stroke" font-family="Georgia, serif" font-style="italic">${label.length > 34 ? label.slice(0, 33) + '…' : label}</text>` : ''}</g>`;
   }).join('');
   svg.innerHTML = defs + paths;
 }
@@ -248,7 +308,7 @@ function highlight() {
   const focus = S.hover || S.sel?.card || null;
   const on = focus ? chain(focus) : null;
   for (const [id, c] of S.cards) c.el.classList.toggle('dim', !!on && !on.has(id));
-  svg.querySelectorAll('.edge').forEach((g) => { const e = S.edges[Number(g.dataset.e)]; g.style.opacity = !on || (on.has(e.from) && on.has(e.to)) ? 1 : 0.12; });
+  svg.querySelectorAll('.edge').forEach((g) => { const e = S.edges[Number(g.dataset.e)]; g.style.opacity = on ? (on.has(e.from) && on.has(e.to)) || (e.kind === 'chiude' && (e.from === focus || e.to === focus)) ? 1 : 0.1 : e.kind === 'chiude' ? 0.3 : 1; });
 }
 
 // ─── vista ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -302,7 +362,7 @@ function renderDetail() {
     const st = S.scene.storia, n = S.missions.length, sub = S.missions.reduce((s, m) => s + (m.sottomissioni || []).length, 0);
     const sol = [...S.byId.values()].reduce((s, x) => s + (x.soluzioni || []).length, 0);
     const byStato = {}; for (const m of S.missions) byStato[m.stato || 'idea'] = (byStato[m.stato || 'idea'] || 0) + 1;
-    box.innerHTML = `<h3>La storia, oggi</h3>
+    box.innerHTML = `<h3>${esc(S.scene.storia.titolo || 'La storia, oggi')}</h3>
       <p>${n} missioni, ${sub} sottomissioni, ${sol} modi di risolverle.</p>
       <p>${Object.entries(byStato).map(([k, v]) => `<span class="stato ${STATO_CLS(k)}">${esc(k)}</span> ${v}`).join(' &nbsp; ')}</p>
       ${st.aggiornata ? `<p class="muted">Lavagna aggiornata alla versione ${esc(st.aggiornata.gioco || '?')}${st.aggiornata.nota ? `: ${esc(st.aggiornata.nota)}` : ''}.</p>` : ''}
@@ -326,7 +386,7 @@ function renderDetail() {
   const into = S.edges.filter((e) => e.to === top(x.id) && e.kind !== 'req').map((e) => `${link(e.from)} con «${esc(e.sol?.titolo || '')}»${e.kind === 'chiude' ? ' (la chiude)' : ''}`);
   box.innerHTML = `<div class="det">${parent ? `<div class="muted">Sottomissione di ${link(parent)}</div>` : `<div class="muted">${esc(TIPO_IT[slugT(x.tipo)])}${x.rione ? ` · ${esc(x.rione)}` : ''}</div>`}
     <h2>${esc(x.titolo || x.id)}</h2>
-    <p><span class="stato ${STATO_CLS(x.stato)}">${esc(x.stato || 'idea')}</span> <span class="muted">id ${esc(x.id)}</span></p>
+    <p><span class="stato ${STATO_CLS(x.stato)}">${esc(x.stato || 'idea')}</span> <span class="muted">id ${esc(x.id)}</span> <button class="btn sm" style="color:var(--ink);border-color:var(--ink2)" data-chain="${esc(top(x.id))}" title="Mostra solo da dove viene e dove porta">Solo la sua catena</button></p>
     ${x.riassunto ? `<p>${esc(x.riassunto)}</p>` : ''}
     ${x.obiettivo ? `<div class="lbl">Obiettivo</div><p>${esc(x.obiettivo)}</p>` : ''}
     ${x.personaggi?.length ? `<div class="lbl">Personaggi</div><p>${esc(people(x))}</p>` : ''}
@@ -338,9 +398,15 @@ function renderDetail() {
     ${x.fonti?.length ? `<div class="lbl">Dove sta scritto</div><p class="muted">${x.fonti.map(esc).join('<br>')}</p>` : ''}</div>`;
 }
 $('#det').addEventListener('click', (e) => {
+  const ch = e.target.closest('[data-chain]'); if (ch) { setFlow(`catena:${ch.dataset.chain}`); return; }
   const g = e.target.closest('[data-go]'); if (g) { const id = g.dataset.go; select({ card: top(id), node: id }); focusCard(top(id)); return; }
   const so = e.target.closest('[data-so]'); if (so) { const [owner, ...rest] = so.dataset.so.split('|'); select({ card: top(owner), node: owner, sol: rest.join('|') }); }
 });
+
+function setFlow(id) { S.flow = id; save(); renderFlows(); render({ keepView: false }); }
+$('#flow').addEventListener('change', (e) => setFlow(e.target.value));
+$('#board-sel').addEventListener('change', async (e) => { S.file = e.target.value; S.flow = 'tutto'; S.sel = null; save(); try { await load(S.src, { keepView: false }); } catch (err) { notice(err.message, 'err'); } });
+$('#where').addEventListener('click', (e) => { if (e.target.closest('[data-flow-all]')) setFlow('tutto'); });
 
 // ─── richieste a Enigma e Custode ────────────────────────────────────────────────────────────────────────────
 function setChip() {
@@ -357,7 +423,7 @@ async function send(mode) {
   const node = x ? (so ? { kind: 'soluzione', id: so.id || so.titolo, titolo: so.titolo, parent: x.id } : { kind: 'missione', id: x.id, titolo: x.titolo }) : null;
   const b = $('#ask-send'); b.disabled = true;
   try {
-    const r = await api('/api/storia/prompt', { text, node, mode });
+    const r = await api('/api/storia/prompt', { text, node, mode, file: S.file });
     $('#ask-text').value = '';
     await refresh();
     notice(`Mandata: ${r.request?.id || ''}. La segui qui sotto e nella chat dello Studio; quando la unisci, la lavagna si aggiorna.`, 'ok');
@@ -422,10 +488,10 @@ function renderSrc() {
 
 // ─── carica ──────────────────────────────────────────────────────────────────────────────────────────────────
 async function load(src = S.src, { keepView = true } = {}) {
-  const sc = await api(`/api/storia?src=${encodeURIComponent(src)}`);
-  S.scene = sc; S.src = sc.src;
+  const sc = await api(`/api/storia?src=${encodeURIComponent(src)}&file=${encodeURIComponent(S.file)}`);
+  S.scene = sc; S.src = sc.src; S.file = sc.file || S.file;
   index();
-  renderSrc(); renderTypes(); paintFaces(); renderNotices(); renderReqs(); renderDetail(); setChip();
+  renderBoards(); renderFlows(); renderSrc(); renderTypes(); paintFaces(); renderNotices(); renderReqs(); renderDetail(); setChip();
   render({ keepView });
 }
 async function refresh() { try { await load(S.src); } catch (e) { notice(e.message, 'err'); } }

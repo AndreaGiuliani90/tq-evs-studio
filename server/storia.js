@@ -8,6 +8,8 @@ import { spawn } from 'node:child_process';
 import { clip } from './util.js';
 
 export const STORIA_FILE = 'docs/memoria/STORIA.json';
+// altre lavagne accanto a quella principale (altri livelli, archivi): docs/memoria/STORIA_<qualcosa>.json, stessa forma
+export const isStoriaFile = (f) => /^docs\/memoria\/STORIA(_[\w-]+)?\.json$/.test(String(f || ''));
 export const STORIA_AGENTS = ['puzzle', 'lore'];
 
 export const STORIA_SCHEMA = `## La lavagna della storia: ${STORIA_FILE}
@@ -75,18 +77,19 @@ export class StoriaOffice {
   // versioni da provare che hanno cambiato la lavagna
   drafts() {
     return Object.values(this.S.requests).filter((r) => r.worktree && fs.existsSync(r.worktree) && !r.merged && !r.discarded
-      && (r.report?.filesChanged || []).some((f) => (f.file || f) === STORIA_FILE))
+      && (r.report?.filesChanged || []).some((f) => isStoriaFile(f.file || f)))
       .sort((a, b) => b.id.localeCompare(a.id)).map((r) => ({ id: r.id, text: clip(r.originalText || r.text, 70), status: r.status }));
   }
 
   // le richieste nate qui (o che hanno toccato la lavagna), le più recenti
   related() {
-    return Object.values(this.S.requests).filter((r) => r.storia || (r.report?.filesChanged || []).some((f) => (f.file || f) === STORIA_FILE))
+    return Object.values(this.S.requests).filter((r) => r.storia || (r.report?.filesChanged || []).some((f) => isStoriaFile(f.file || f)))
       .sort((a, b) => b.id.localeCompare(a.id)).slice(0, 12)
       .map((r) => ({ id: r.id, text: clip(r.storiaText || r.originalText || r.text, 90), status: r.status, merged: !!r.merged, discarded: !!r.discarded, node: r.storiaNode || null, at: r.updatedAt || r.createdAt }));
   }
 
-  async scene(src = 'main') {
+  async scene(src = 'main', file = STORIA_FILE) {
+    if (!isStoriaFile(file)) file = STORIA_FILE;
     let cwd = this.projectRoot, req = null;
     if (src && src !== 'main') {
       req = this.S.requests[src];
@@ -94,7 +97,16 @@ export class StoriaOffice {
       cwd = req.worktree;
     }
     const show = async (rel) => { const g = await gitOut(['show', `HEAD:${rel}`], cwd); return g.code === 0 ? g.text : null; };
-    const raw = await show(STORIA_FILE);
+    // le lavagne che ci sono (la principale per prima), col loro titolo
+    const listed = (await gitOut(['ls-tree', '--name-only', 'HEAD', 'docs/memoria/'], cwd)).text.split('\n').filter(isStoriaFile);
+    const boards = [];
+    for (const f of [STORIA_FILE, ...listed.filter((x) => x !== STORIA_FILE).sort()]) {
+      if (f !== STORIA_FILE && !listed.includes(f)) continue;
+      let titolo = null;
+      try { titolo = JSON.parse((await show(f)) || 'null')?.titolo || null; } catch { /* rotta: si vede aprendola */ }
+      boards.push({ file: f, titolo, main: f === STORIA_FILE, exists: listed.includes(f) });
+    }
+    const raw = await show(file);
     let storia = null, parseError = null;
     if (raw) { try { storia = JSON.parse(raw); } catch (e) { parseError = e.message; } }
     const version = ((await show('src/version.js')) || '').match(/VERSION\s*=\s*'([^']+)'/)?.[1] || null;
@@ -112,7 +124,7 @@ export class StoriaOffice {
     // la lavagna è rimasta indietro? commit sui livelli, sui testi e sui documenti di storia dopo il suo ultimo aggiornamento
     let stale = null;
     if (storia) {
-      const last = (await gitOut(['log', '-1', '--format=%H', 'HEAD', '--', STORIA_FILE], cwd)).text.trim();
+      const last = (await gitOut(['log', '-1', '--format=%H', 'HEAD', '--', file], cwd)).text.trim();
       if (last) {
         const after = (await gitOut(['log', '--format=%h %s', `${last}..HEAD`, '--', 'levels', 'strings', 'docs/memoria', 'src/systems/Vandalism.js', 'src/scenes/GameScene.js'], cwd)).text.split('\n').filter(Boolean);
         stale = { commits: after.length, recent: after.slice(0, 6) };
@@ -125,19 +137,21 @@ export class StoriaOffice {
     for (const p of people) if (strings[p]) names[p] = strings[p];
     return {
       src: req ? req.id : 'main', play: req ? `/play/${req.id}/` : '/play/main/', version, storia, parseError, problems: check.problems,
-      flags: [...flags], stale, names, drafts: this.drafts(), related: this.related(),
+      file, boards, flags: [...flags], stale, names, drafts: this.drafts(), related: this.related(),
       agents: Object.fromEntries(STORIA_AGENTS.map((id) => [id, this.agents.get(id)]).filter(([, a]) => a).map(([id, a]) => [id, { id, name: a.name, role: a.role, avatar: a.avatar, status: a.runtime?.status }])),
     };
   }
 
   // una richiesta dall'ufficio: va alla Regia con il contesto (la missione scelta) e le regole della lavagna
-  async prompt({ text, node, mode } = {}) {
+  async prompt({ text, node, mode, file } = {}) {
+    if (!isStoriaFile(file)) file = STORIA_FILE;
     text = String(text || '').trim();
     const names = STORIA_AGENTS.map((id) => this.agents.get(id)?.name).filter(Boolean);
     const who = names.length ? names.join(' e ') : 'l\'Enigmista e il Custode';
     if (mode === 'rebuild') text = text || `Ricostruisci la lavagna della storia (${STORIA_FILE}) dallo stato attuale del gioco: leggi i livelli (levels/*.json: dialoghi, bersagli, lavori, eventi, traccia, uscita), strings/it.json e i documenti di storia (docs/memoria/TRACCIA_PRINCIPALE.md, PUZZLES.md, INDAGINE_*.md, NARRATIVE_BIBLE.md, docs/indagini/). Segna per ogni missione e soluzione se è nel gioco o solo progettata. Non cambiare il gioco: solo questo file.`;
     if (!text) throw new Error('scrivi cosa vuoi cambiare nella storia');
-    const ctx = node?.id ? `\n\nRiferito alla lavagna della storia: ${node.kind === 'soluzione' ? 'soluzione' : 'missione'} «${clip(node.titolo || node.id, 80)}» (id ${node.id}${node.parent ? `, nella missione ${node.parent}` : ''}).` : '';
+    const onBoard = file !== STORIA_FILE ? `\n\nLavagna: ${file} (non quella principale).` : '';
+    const ctx = onBoard + (node?.id ? `\n\nRiferito alla lavagna della storia: ${node.kind === 'soluzione' ? 'soluzione' : 'missione'} «${clip(node.titolo || node.id, 80)}» (id ${node.id}${node.parent ? `, nella missione ${node.parent}` : ''}).` : '');
     const msg = `[Ufficio della Storia — per ${who}] ${text}${ctx}`;
     // niente smistamento automatico: dall'ufficio è sempre una richiesta nuova (lo schema della lavagna arriva ai task)
     const req = await this.orch.handleUserMessage(msg, { fresh: true, meta: { storia: true, storiaText: clip(text, 300), storiaNode: node?.id || null } });

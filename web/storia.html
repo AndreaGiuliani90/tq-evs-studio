@@ -30,6 +30,7 @@
     .plate canvas { width: 36px; height: 36px; image-rendering: pixelated; background: #f3e6c8; border-radius: 4px; border: 1px solid #7a5520; }
     .plate b { font: 700 16px Georgia, serif; display: block; }
     .plate small { display: block; font-size: 11px; opacity: .85; }
+    .top select { max-width: 240px; }
     .top select, .top input { background: rgba(244,236,216,.12); border: 1px solid rgba(244,236,216,.35); border-radius: 6px; padding: 3px 7px; color: var(--paper); }
     .top select option { color: #222; }
     .top input { width: 170px; }
@@ -102,7 +103,10 @@
     .req .st { font-size: 10.5px; border-radius: 8px; padding: 0 6px; background: #e3d7bc; white-space: nowrap; }
     .req .st.RUNNING, .req .st.PLANNING, .req .st.QUEUED { background: #ffe1a6; } .req .st.DONE { background: #cfe9c8; } .req .st.NEEDS_USER { background: #ffd0c2; }
     /* avvisi sulla lavagna */
-    .notice { position: absolute; left: 14px; top: 12px; right: 14px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; z-index: 3; }
+    .where { position: absolute; left: 14px; top: 10px; z-index: 4; background: rgba(27,38,32,.9); border: 1px solid rgba(240,236,220,.3); border-radius: 6px; padding: 4px 10px; font-size: 13px; }
+    .where:empty { display: none; }
+    .where b { font-family: Georgia, serif; color: #ffd166; }
+    .notice { position: absolute; left: 14px; top: 46px; right: 14px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; z-index: 3; }
     .notice > div { pointer-events: auto; background: rgba(244,236,216,.95); color: var(--ink); border-radius: 6px; padding: 5px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.4); font-size: 12.5px; }
     .notice .warn { background: #fde3b0; }
     .notice .err { background: #f6d0c6; }
@@ -119,6 +123,8 @@
 <body>
   <header class="top">
     <div class="plate"><span class="faces"><canvas id="f-puzzle" width="36" height="36"></canvas><canvas id="f-lore" width="36" height="36"></canvas></span><div><b>Ufficio della Storia</b><small id="who">Enigma e Custode · missioni, cosa sblocca cosa, come si risolvono</small></div></div>
+    <div class="grp" id="board-grp"><label for="board-sel">Lavagna</label><select id="board-sel" title="Quale storia: la principale (★) o le altre lavagne"></select></div>
+    <div class="grp"><label for="flow">Flusso</label><select id="flow" title="Quale parte della storia guardare"></select></div>
     <div class="grp"><label for="src">Versione</label><select id="src"></select></div>
     <div class="grp">
       <button class="btn sm" id="dir" title="Verticale o orizzontale">↓ Verticale</button>
@@ -135,6 +141,7 @@
   <main class="main">
     <section class="board" id="board">
       <div class="world" id="world"><svg id="edges"></svg></div>
+      <div class="where" id="where"></div>
       <div class="notice" id="notice"></div>
       <div class="legend" id="legend" hidden></div>
       <div class="zoomlbl" id="zoomlbl"></div>

@@ -324,6 +324,11 @@ diagramma di flusso, in verticale o in orizzontale. Ogni scheda è una missione 
 lavoro, indagine, evento, finale; etichetta = nel gioco / in parte / progettata / idea). Le frecce dicono cosa serve prima
 (bianche) e cosa sblocca ogni soluzione (verde, giallo, rosso = etica alta, media, bassa; tratteggiate = chiude).
 
+- **Quale storia, quale flusso**: «Lavagna» sceglie la storia (★ = la principale, `STORIA.json`; le altre sono i file
+  `docs/memoria/STORIA_<nome>.json`, es. gli altri livelli). «Flusso» sceglie cosa guardare: tutta la lavagna, solo la
+  trama principale, solo il contorno, un atto, le strade verso un finale, o la catena di una missione («Solo la sua
+  catena» nella scheda). In alto a sinistra c'è sempre scritto dove sei; chi resta nascosto in mezzo diventa una
+  freccia a puntini «passando da…».
 - **Esplodere**: ▸ o doppio clic apre la scheda con sottomissioni e soluzioni; da ogni soluzione parte la sua freccia.
   «Esplodi tutto» / «Chiudi tutto», filtri per tipo, ricerca (missione, personaggio, flag).
 - **Leggere**: passando sopra una scheda resta accesa la sua catena (da dove viene, dove porta); clic = scheda a destra con
