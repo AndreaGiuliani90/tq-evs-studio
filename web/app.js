@@ -47,6 +47,7 @@ async function boot() {
   window.studioOffice = S.office;   // per le prove automatiche e per sperimentare dalla console
   await loadOffice();
   renderAll();
+  refreshDeploy();
   connect();
 }
 
@@ -98,10 +99,21 @@ function onEvent(e) {
   if (t === 'releases.updated' && $('#modal-box')?.querySelector('h2')?.textContent === 'Registro delle unioni') openModal('releases');
   if (t === 'backlog.updated') { S.backlog = e.backlog; S.office?.setBoards({ backlog: e.backlog }); if ($('#backlog-box') && !document.activeElement?.closest('#backlog-box form')) { const sl = $('.fl-wrap')?.scrollLeft || 0; openModal('backlog').then?.(() => { const w = $('.fl-wrap'); if (w) w.scrollLeft = sl; }); } }
   if ((t === 'task.updated' && ['DONE', 'FAILED'].includes(e.task?.status)) || t === 'agent.updated' || t === 'releases.updated' || (t === 'agent.status' && ['strategist', 'release'].includes(e.agentId) && e.status === 'IDLE')) refreshTeam();
+  if (t === 'deploy.updated' || t === 'git.merge') { refreshDeploy(); if ($('#deploy-box') && t === 'deploy.updated') openModal('deploy'); }
   if (t === 'costs.updated') { S.costs = e.costs; S.office?.setCosts(e.costs); if ($('#costs-box')) openModal('costs'); }
   if (!['agent.status', 'task.updated', 'agent.updated'].includes(t)) { S.log.unshift(e); if (S.log.length > 300) S.log.pop(); renderLog(); }
 }
 
+function renderDeployBadge(d) {
+  const b = $('#dep-badge'); if (!b || !d) return;
+  const n = d.ok ? d.pending?.filter((p) => p.versionHead).length || (d.ahead ? 1 : 0) : 0;
+  b.hidden = !d.running && !n;
+  b.classList.toggle('run', !!d.running);
+  b.textContent = d.running ? '…' : String(n);
+  $('#btn-deploy').title = d.running ? 'Pubblicazione in corso' : n ? `${n} versioni non ancora online (online: v${d.online?.version || '?'})` : 'Tutto online';
+}
+let depT = null;
+function refreshDeploy() { clearTimeout(depT); depT = setTimeout(() => api('GET', '/api/deploy').then(renderDeployBadge).catch(() => {}), 1500); }
 function renderAll() { renderFloor(); renderDirector(); renderChat(); renderTasks(); renderLog(); }
 
 // ─── lo studio (postazioni) ──────────────────────────────────────────────────────────────────────
@@ -799,6 +811,33 @@ let teamT = null;
 function refreshTeam() { clearTimeout(teamT); teamT = setTimeout(async () => { try { S.team = await api('GET', '/api/team'); S.office?.setBoards({ team: S.team }); if ($('#team-box')) openModal('team'); } catch { /* niente */ } }, 1500); }
 
 async function openModal(which) {
+  if (which === 'deploy') {
+    modal('<h2>🚀 Online</h2><p class="muted">Controllo cosa c\'è su GitHub…</p>');
+    const d = await api('GET', '/api/deploy?fetch=1');
+    renderDeployBadge(d);
+    if (!d.ok) { modal(`<h2>🚀 Online</h2><p>${esc(d.error)}</p>`); return; }
+    const fmt = (iso) => new Date(iso).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const live = d.live ? (d.live.error ? `<span class="bad">${esc(d.live.error)}</span>` : `<b class="${d.live.version === d.online?.version ? 'ok' : 'warn'}">v${esc(d.live.version || '?')}</b><span class="muted small">${d.live.version === d.online?.version ? 'aggiornato' : 'Railway sta ancora pubblicando, o non è collegato a GitHub'}</span>`) : '<span class="muted small">Per vederlo: metti STUDIO_BETA_URL (indirizzo della beta) nel .env dello Studio, con BETA_PASSWORD</span>';
+    const rows = d.pending.map((p) => `<div class="dep-row ${p.versionHead ? '' : 'minor'}"><span class="v">${p.versionHead ? `v${esc(p.version)}` : ''}</span><span>${esc(p.subject)} <span class="muted small">· ${fmt(p.at)} · <code>${esc(p.short)}</code></span></span>${p.versionHead ? `<button class="btn sm" data-dep="${esc(p.hash)}" title="Pubblica tutto fino a qui (le versioni più vecchie comprese)">Pubblica fino a qui</button>` : '<span></span>'}</div>`).join('');
+    modal(`<div id="deploy-box"><h2>🚀 Online</h2>
+      <p class="muted">Le versioni che unisci restano sul tuo computer finché non le pubblichi: vanno su GitHub (${esc(d.url)}) e Railway le mette online da solo, di solito in pochi minuti.</p>
+      ${d.fetchError ? `<p class="bad">GitHub non risponde: ${esc(d.fetchError)}. Lo stato qui sotto potrebbe essere vecchio.</p>` : ''}
+      <div class="dep-state">
+        <div><span class="muted small">Sul tuo computer (main)</span><b>v${esc(d.local.version || '?')}</b><span class="muted small"><code>${esc(d.local.commit)}</code></span></div>
+        <div><span class="muted small">Su GitHub (pubblicata)</span><b class="${d.ahead ? 'warn' : 'ok'}">v${esc(d.online?.version || '—')}</b><span class="muted small">${d.ahead ? `${d.ahead} commit da pubblicare` : 'tutto pubblicato'}${d.behind ? ` · ⚠ GitHub ha ${d.behind} commit che il tuo main non ha` : ''}</span></div>
+        <div><span class="muted small">Online davvero (beta)</span>${live}</div>
+      </div>
+      ${d.running ? `<p><b>Pubblicazione in corso</b> della v${esc(d.running.version || d.running.commit)} (partita alle ${fmt(d.running.startedAt)})…</p>` : d.ahead ? `<p><button class="btn primary" data-dep="">Pubblica tutto (v${esc(d.local.version || '')})</button> <span class="muted small">oppure scegli una versione più vecchia qui sotto</span></p>` : ''}
+      ${d.pending.length ? `<h3>Non ancora online</h3><div class="dep-list">${rows}</div>${d.ahead > d.pending.length ? `<p class="muted small">…e altri ${d.ahead - d.pending.length} commit più vecchi.</p>` : ''}` : ''}
+      ${d.ledger.length ? `<h3>Pubblicazioni</h3><table class="costs"><tbody>${d.ledger.map((e) => `<tr><td class="small">${fmt(e.at)}</td><td><b>v${esc(e.version || '?')}</b> <code>${esc(e.commit)}</code></td><td class="small">${e.ok ? `✔ ${e.commits ?? ''} commit` : `<span class="bad">✘ ${esc(e.error || '')}</span>`}</td></tr>`).join('')}</tbody></table>` : ''}</div>`);
+    for (const x of document.querySelectorAll('[data-dep]')) x.onclick = act(async () => {
+      const v = x.dataset.dep ? d.pending.find((p) => p.hash === x.dataset.dep)?.version : d.local.version;
+      if (!confirm(`Pubblico online la versione ${v || ''}? Chi gioca la beta la vedrà fra pochi minuti.`)) return;
+      await api('POST', '/api/deploy', { commit: x.dataset.dep || null });
+      openModal('deploy');
+    });
+    return;
+  }
   if (which === 'releases') {
     const r = await api('GET', '/api/releases');
     modal(`<h2>Registro delle unioni</h2><p class="muted">Tenuto dal Notaio: ogni aggiornamento entra nel gioco uno alla volta, dopo una prova in una copia a parte e il controllo che non si perda nessuna riga.</p>

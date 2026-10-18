@@ -340,6 +340,15 @@ La lavagna è un file del gioco, `docs/memoria/STORIA.json`, che gli agenti teng
 soluzioni. Se manca, «Fate la lavagna» chiede a Enigma e Custode di ricostruirla dai livelli e dai documenti; se livelli,
 testi o documenti sono cambiati dopo il suo ultimo aggiornamento, un avviso propone «Aggiornatela».
 
+## Pubblicare online (🚀 Online)
+
+Le versioni che unisci restano nel main del gioco sul tuo computer: online (la beta su Railway) arrivano solo quando
+vanno su GitHub, perché Railway pubblica da solo ogni volta che il ramo main di GitHub cambia.
+Il pulsante **🚀 Online** (col numero delle versioni non ancora pubblicate) mostra la versione sul tuo computer, quella su
+GitHub e — se nel `.env` dello Studio metti `STUDIO_BETA_URL=https://…` e `BETA_PASSWORD=…` — quella che gira davvero
+online. «Pubblica tutto» o «Pubblica fino a qui» su una versione più vecchia: lo Studio fa `git push` (mai forzato: se su
+GitHub c'è qualcosa che il tuo main non ha, si ferma e te lo dice). L'elenco delle pubblicazioni resta nello stesso riquadro.
+
 ## Effetti sonori (Rumore)
 
 Chiedi in chat, per esempio *«Rumore, fai i passi sui sampietrini (3 da alternare), il vetro rotto e il click del menu»*.
