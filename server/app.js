@@ -16,7 +16,7 @@ import { OfficeStore } from './office.js';
 import { MappoOffice } from './mappo.js';
 import { StoriaOffice } from './storia.js';
 import { DeployDesk } from './deploy.js';
-import { readJSON, writeFileAtomic, ensureDir } from './util.js';
+import { readJSON, writeFileAtomic, ensureDir, run } from './util.js';
 
 export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // il QA harness lanciato dagli agenti dentro un worktree trova qui Playwright
@@ -135,6 +135,40 @@ function sendFile(res, file, root) {
   fs.createReadStream(f).pipe(res);
 }
 
+// ─── allegati grandi (zip di personaggi, video…): il file arriva così com'è (PUT, niente base64) e si scrive a pezzi
+// sul disco. Limite: config.uploadMaxMB (predefinito 1024). Uno zip si estrae anche accanto, così gli agenti vedono
+// subito i file (data/uploads/<id>/<nome>/).
+const safeName = (n) => (path.basename(String(n || 'file')).replace(/[^\w.\- ()àèéìòù]/gi, '_') || 'file').slice(0, 120);
+async function rawUpload(req, url, dataDir, config = {}) {
+  const max = Math.max(1, Number(config.uploadMaxMB) || 1024) * 1024 * 1024;
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > max) { req.resume(); throw new Error(`file troppo grande (massimo ${Math.round(max / 1048576)} MB)`); }
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  const name = safeName(url.searchParams.get('name'));
+  const dir = ensureDir(path.join(dataDir, 'uploads', id));
+  const file = path.join(dir, name);
+  let size = 0;
+  await new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(file);
+    req.on('data', (c) => { size += c.length; if (size > max) { req.destroy(); out.destroy(); reject(new Error(`file troppo grande (massimo ${Math.round(max / 1048576)} MB)`)); } });
+    req.on('error', reject);
+    out.on('error', reject);
+    out.on('finish', resolve);
+    req.pipe(out);
+  }).catch((e) => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* */ } throw e; });
+  const res = { id, name, type: url.searchParams.get('type') || '', size, url: `/uploads/${id}/${encodeURIComponent(name)}` };
+  if (/\.zip$/i.test(name)) {
+    const into = path.join(dir, name.replace(/\.zip$/i, ''));
+    const r = await run('unzip', ['-q', '-o', file, '-d', into], { timeoutMs: 10 * 60 * 1000 });
+    if (fs.existsSync(into)) {
+      let n = 0; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.isDirectory()) walk(path.join(d, e.name)); else n++; } };
+      walk(into);
+      Object.assign(res, { extracted: n, ...(r.code !== 0 ? { extractWarning: (r.stderr || '').slice(0, 200) } : {}) });
+    }
+  }
+  return res;
+}
+
 function json(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -186,7 +220,8 @@ export function createServer(studio) {
       const attachments = (Array.isArray(b.attachments) ? b.attachments : []).map((a) => {
         const f = path.resolve(up, String(a.id || ''), path.basename(String(a.name || '')));
         if (!f.startsWith(up + path.sep) || !fs.existsSync(f)) throw new Error(`allegato non trovato: ${a.name}`);
-        return { id: a.id, name: path.basename(f), type: a.type || '', size: fs.statSync(f).size, path: f, url: `/uploads/${a.id}/${encodeURIComponent(path.basename(f))}` };
+        const dir = /\.zip$/i.test(f) && fs.existsSync(f.replace(/\.zip$/i, '')) ? f.replace(/\.zip$/i, '') : null;   // zip già estratto accanto
+        return { id: a.id, name: path.basename(f), type: a.type || '', size: fs.statSync(f).size, path: f, ...(dir ? { dir } : {}), url: `/uploads/${a.id}/${encodeURIComponent(path.basename(f))}` };
       });
       return { request: await orch.handleUserMessage(b.text, { attachments, replyTo: b.replyTo || null }) };
     }],
@@ -321,6 +356,7 @@ export function createServer(studio) {
         req.on('close', () => { off(); clearInterval(ping); });
         return;
       }
+      if (p === '/api/uploads/raw' && req.method === 'PUT') return json(res, 200, await rawUpload(req, url, dataDir, studio.config));
       if (p.startsWith('/api/')) {
         for (const [method, re, fn] of routes) {
           const m = p.match(re);

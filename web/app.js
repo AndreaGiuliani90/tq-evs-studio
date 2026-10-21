@@ -424,17 +424,29 @@ S.pending = [];   // allegati caricati, in attesa di invio
 function renderPending() {
   const box = $('#att-preview');
   box.classList.toggle('hidden', !S.pending.length);
-  box.innerHTML = S.pending.map((a, i) => `<span class="att ${a.uploading ? 'uploading' : ''}">${/^image\//.test(a.type) && a.url ? `<img src="${esc(a.url)}" alt="">` : '📄'}<span>${esc(a.name)}</span><button type="button" data-rm="${i}" title="Togli">✕</button></span>`).join('');
+  box.innerHTML = S.pending.map((a, i) => `<span class="att ${a.uploading ? 'uploading' : ''}">${/^image\//.test(a.type) && a.url ? `<img src="${esc(a.url)}" alt="">` : /\.zip$/i.test(a.name) ? '🗜' : '📄'}<span>${esc(a.name)}${a.pct != null && a.uploading ? ` · ${a.pct}%` : ''}${a.extracted ? ` · ${a.extracted} file` : ''}</span><button type="button" data-rm="${i}" title="Togli">✕</button></span>`).join('');
   for (const b of box.querySelectorAll('[data-rm]')) b.onclick = () => { S.pending.splice(Number(b.dataset.rm), 1); renderPending(); };
 }
+// i file vanno su così come sono (niente base64): fino a 1 GB, con la percentuale mentre caricano
+function uploadRaw(f, item) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', `/api/uploads/raw?name=${encodeURIComponent(item.name)}&type=${encodeURIComponent(f.type || '')}`);
+    x.upload.onprogress = (e) => { if (e.lengthComputable && f.size > 5e6) { item.pct = Math.round((e.loaded / e.total) * 100); renderPending(); } };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch { /* */ } if (x.status >= 400 || j.error) reject(new Error(j.error || `errore ${x.status}`)); else resolve(j); };
+    x.onerror = () => reject(new Error('caricamento interrotto'));
+    x.send(f);
+  });
+}
 async function addFiles(files) {
+  const max = (S.config?.uploadMaxMB || 1024) * 1024 * 1024;
   for (const f of files) {
-    if (f.size > 40 * 1024 * 1024) { toast(`${f.name}: troppo grande (massimo 40 MB)`, true); continue; }
+    if (f.size > max) { toast(`${f.name}: troppo grande (massimo ${Math.round(max / 1048576)} MB)`, true); continue; }
     const item = { name: f.name || 'incollato.png', type: f.type, uploading: true };
     S.pending.push(item); renderPending();
     try {
-      const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
-      Object.assign(item, await api('POST', '/api/uploads', { name: item.name, type: f.type, dataUrl }), { uploading: false });
+      Object.assign(item, await uploadRaw(f, item), { uploading: false, pct: null });
+      if (item.extracted) toast(`${item.name}: caricato ed estratto (${item.extracted} file)`);
     } catch (e) { S.pending.splice(S.pending.indexOf(item), 1); toast(`${item.name}: ${e.message}`, true); }
     renderPending();
   }
